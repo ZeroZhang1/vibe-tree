@@ -1,62 +1,55 @@
 # Vibe Bonsai
 
-Vibe Bonsai is a tiny desktop companion for vibe coding. It turns local coding-agent token usage into a floating bonsai tree:
+简体中文 | [English](README.en.md)
 
-- Total XP drives the tree's level and growth stage.
-- Recent XP/min drives the desktop weather.
-- The bonsai lives in a transparent always-on-top window.
-- A manager window shows usage, sources, history, and settings.
+桌面常驻的 Token 天气树。它把本地 coding agent 的 token 消耗变成一棵可以养成的小树：
 
-## Quick Start
+- 累计 XP 决定等级和成长阶段。
+- 最近 XP/min 决定桌面天气。
+- 小树以透明悬浮窗常驻桌面，管理窗口负责数据、来源和调试。
 
-macOS, Linux, and Windows:
+## 运行
+
+macOS / Linux / Windows:
 
 ```bash
 npm install
 npm start
 ```
 
-Development mode:
+开发模式：
 
 ```bash
 npm run dev
 ```
 
-Validation:
+验证：
 
 ```bash
 npm run typecheck
 npm run build
 ```
 
-## Current Scope
+## 当前 v1 范围
 
-This first version focuses on making local usage tracking dependable and pleasant to keep running:
-
-- Floating Electron pet window: transparent, draggable, lockable, and always-on-top.
-- Electron manager window: level, weather, active sessions, source stats, and recent 7-day usage.
-- Device-level settings: bonsai size, lock/always-on-top, launch on startup, silent startup, and source path overrides.
-- Tray status panel for quick app status and controls.
-- Manual feeding for testing growth and weather feedback.
-- Automatic usage import from local Codex, Claude Code, OpenClaw, and OpenCode session files.
-
-## XP Rules
-
-Vibe Bonsai tracks real agent usage as:
-
-```text
-XP = inputTokens + outputTokens
-```
-
-`cacheReadTokens` and `cacheWriteTokens` are stored for source details, but they are not counted as XP.
-
-By default, the bonsai starts counting from the app's install day. Session history before that day is ignored so a new install does not immediately inherit old usage.
+- Electron 桌面宠物窗口：透明、置顶、可拖动、可锁定。
+- Electron 管理窗口：显示等级、天气、活跃会话、来源统计和最近 7 天。
+- 设备级设置：小树大小、锁定/置顶、开机启动、静默启动和来源路径覆盖。
+- XP 规则：
+  - 真实 agent 用量：`XP = inputTokens + outputTokens`
+  - `cacheReadTokens` / `cacheWriteTokens` 只记录来源明细，暂不计入 XP。
+- 自动来源：
+  - Codex session 文件。
+  - Claude Code session 文件。
+  - OpenClaw session 文件。
+  - OpenCode message 文件。
+- 手动喂养：用于测试成长和天气反馈。
 
 ## Source Watchers
 
-The app reads local session files from the current system user directory.
+默认使用当前系统用户目录：
 
-Codex:
+Codex Desktop:
 
 ```text
 macOS:   ~/.codex/sessions/**/*.jsonl
@@ -84,13 +77,9 @@ macOS:   ~/.local/share/opencode/storage/message/**/*.json
 Windows: %LOCALAPPDATA%\opencode\storage\message\**\*.json
 ```
 
-Source paths can also be overridden from the manager window.
+默认从应用安装当天开始统计，安装日前的历史不会计入小树成长。
 
-### Optional History Import
-
-To force-import today's history on startup, use these environment variables.
-
-macOS / Linux:
+可选强制导入当天历史，macOS / Linux:
 
 ```bash
 VIBE_CODEX_IMPORT_HISTORY=today \
@@ -110,9 +99,9 @@ $env:VIBE_OPENCODE_IMPORT_HISTORY="today"
 npm start
 ```
 
-## Assets
+## 资产
 
-The runtime currently uses the confirmed pure-SVG pixel bonsai assets:
+运行时只保留当前确定的纯 SVG 像素树资产：
 
 ```text
 public/assets/trees/vibe-bonsai/
@@ -128,37 +117,35 @@ public/assets/trees/vibe-bonsai/
     06-full-layered-idle.svg
 ```
 
-Old PNGs, image-generation candidates, experimental preview pages, and visual checkpoints are not part of the current runtime path.
+旧 PNG、image2 候选图、实验预览页和视觉 checkpoint 不属于当前产品运行链路。
 
 ## Game Balance
 
-Growth, weather, and activity windows are configured here:
+成长、天气和活跃窗口统一由这个文件配置：
 
 ```text
 public/assets/trees/vibe-bonsai/config/game-balance.json
 ```
 
-It contains:
+当前包含：
 
-- XP level curve: `levelBase`, `levelExponent`, `maxLevel`
-- Weather thresholds by `minXpPerMinute`
-- Growth stage thresholds by `minLevel`
-- Activity windows for recent and peak usage
+- XP 等级曲线：`levelBase`、`levelExponent`、`maxLevel`
+- 天气阈值：按 `minXpPerMinute`
+- 阶段阈值：按 `minLevel`
+- 活跃窗口：active window / peak window
 
 ## Persistence
 
-Electron stores local app data in its user data directory. In development this may be the default Electron app data path, while packaged builds should use the app's own identity.
+Electron 数据目录里会保存：
 
-The app writes:
+- `usage-events.jsonl`：append-only usage 事件库
+- `usage-meta.json`：安装日期等 usage 元信息
+- `device-settings.json`：本机设备级设置
+- `codex-session-watcher.json`：Codex watcher offset
+- `claude-session-watcher.json`：Claude watcher offset
+- `openclaw-session-watcher.json`：OpenClaw watcher offset
+- `opencode-session-watcher.json`：OpenCode watcher state
 
-- `usage-events.jsonl`: append-only usage event store
-- `usage-meta.json`: install date and usage metadata
-- `device-settings.json`: machine-local settings
-- `codex-session-watcher.json`: Codex watcher offsets and state
-- `claude-session-watcher.json`: Claude watcher offsets and state
-- `openclaw-session-watcher.json`: OpenClaw watcher offsets and state
-- `opencode-session-watcher.json`: OpenCode watcher offsets and state
+## 产品方向
 
-## Product Direction
-
-Vibe Bonsai is not meant to be just another token dashboard. The goal is to make the cost, rhythm, and activity of vibe coding feel visible through a small desktop companion. The first version prioritizes reliable local ingestion for Codex, Claude Code, OpenClaw, and OpenCode; future work can continue improving the pet behavior, weather feedback, packaging, and game balance.
+Vibe Bonsai 不是单纯 token dashboard，而是把 vibe coding 的消耗、节奏和活跃度变成桌面宠物反馈。第一版先把本地 Codex / Claude Code / OpenClaw / OpenCode 的自动读取做顺，再继续打磨桌宠表现、天气反馈和养成数值。
