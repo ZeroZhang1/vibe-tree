@@ -8,20 +8,22 @@
 
 ## 运行
 
-```powershell
+macOS / Linux / Windows:
+
+```bash
 npm install
 npm start
 ```
 
 开发模式：
 
-```powershell
+```bash
 npm run dev
 ```
 
 验证：
 
-```powershell
+```bash
 npm run typecheck
 npm run build
 ```
@@ -30,43 +32,68 @@ npm run build
 
 - Electron 桌面宠物窗口：透明、置顶、可拖动、可锁定。
 - Electron 管理窗口：显示等级、天气、活跃会话、来源统计和最近 7 天。
+- 设备级设置：小树大小、锁定/置顶、开机启动、静默启动和来源路径覆盖。
 - XP 规则：
-  - 真实 agent 用量：`XP = inputTokens + outputTokens * 2`
+  - 真实 agent 用量：`XP = inputTokens + outputTokens`
   - `cacheReadTokens` / `cacheWriteTokens` 只记录来源明细，暂不计入 XP。
 - 自动来源：
   - Codex session 文件。
   - Claude Code session 文件。
   - OpenClaw session 文件。
+  - OpenCode message 文件。
 - 手动喂养：用于测试成长和天气反馈。
 
 ## Source Watchers
 
+默认使用当前系统用户目录：
+
 Codex Desktop:
 
 ```text
-%USERPROFILE%\.codex\sessions\**\*.jsonl
+macOS:   ~/.codex/sessions/**/*.jsonl
+Windows: %USERPROFILE%\.codex\sessions\**\*.jsonl
 ```
 
 Claude Code:
 
 ```text
-%USERPROFILE%\.claude\projects\**\*.jsonl
+macOS:   ~/.claude/projects/**/*.jsonl
+Windows: %USERPROFILE%\.claude\projects\**\*.jsonl
 ```
 
 OpenClaw:
 
 ```text
-%USERPROFILE%\.openclaw\agents\**\sessions\*.jsonl
+macOS:   ~/.openclaw/agents/**/sessions/*.jsonl
+Windows: %USERPROFILE%\.openclaw\agents\**\sessions\*.jsonl
 ```
 
-默认都是 tail-only：启动时不导入旧历史，只记录运行期间新产生的 usage。
+OpenCode:
 
-可选导入当天历史：
+```text
+macOS:   ~/.local/share/opencode/storage/message/**/*.json
+Windows: %LOCALAPPDATA%\opencode\storage\message\**\*.json
+```
+
+默认从应用安装当天开始统计，安装日前的历史不会计入小树成长。
+
+可选强制导入当天历史，macOS / Linux:
+
+```bash
+VIBE_CODEX_IMPORT_HISTORY=today \
+VIBE_CLAUDE_IMPORT_HISTORY=today \
+VIBE_OPENCLAW_IMPORT_HISTORY=today \
+VIBE_OPENCODE_IMPORT_HISTORY=today \
+npm start
+```
+
+Windows PowerShell:
 
 ```powershell
 $env:VIBE_CODEX_IMPORT_HISTORY="today"
 $env:VIBE_CLAUDE_IMPORT_HISTORY="today"
 $env:VIBE_OPENCLAW_IMPORT_HISTORY="today"
+$env:VIBE_OPENCODE_IMPORT_HISTORY="today"
 npm start
 ```
 
@@ -109,11 +136,14 @@ public/assets/trees/vibe-bonsai/config/game-balance.json
 
 Electron 数据目录里会保存：
 
-- `ledger.json`：XP/usage 总账和窗口设置
+- `usage-events.jsonl`：append-only usage 事件库
+- `usage-meta.json`：安装日期等 usage 元信息
+- `device-settings.json`：本机设备级设置
 - `codex-session-watcher.json`：Codex watcher offset
 - `claude-session-watcher.json`：Claude watcher offset
 - `openclaw-session-watcher.json`：OpenClaw watcher offset
+- `opencode-session-watcher.json`：OpenCode watcher state
 
 ## 产品方向
 
-Vibe Bonsai 不是单纯 token dashboard，而是把 vibe coding 的消耗、节奏和活跃度变成桌面宠物反馈。第一版先把本地 Codex / Claude Code / OpenClaw 的自动读取做顺，再继续打磨桌宠表现、天气反馈和养成数值。
+Vibe Bonsai 不是单纯 token dashboard，而是把 vibe coding 的消耗、节奏和活跃度变成桌面宠物反馈。第一版先把本地 Codex / Claude Code / OpenClaw / OpenCode 的自动读取做顺，再继续打磨桌宠表现、天气反馈和养成数值。

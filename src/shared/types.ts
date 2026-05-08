@@ -16,16 +16,23 @@ export interface LedgerEntry {
 export interface Settings {
   locked: boolean;
   alwaysOnTop: boolean;
-  scale: 1 | 1.5 | 2 | number;
+  scale: 0.5 | 1 | 1.5 | 2 | number;
+  launchOnStartup: boolean;
+  silentStartup: boolean;
   windowPosition?: {
     x: number;
     y: number;
   };
+  codexSessionsDir?: string;
+  claudeSessionsDir?: string;
+  openclawSessionsDir?: string;
+  opencodeSessionsDir?: string;
 }
 
 export interface LedgerFile {
   entries: LedgerEntry[];
   settings: Settings;
+  installedAt: string;
 }
 
 export interface UsageEvent {
@@ -49,6 +56,7 @@ export interface UsageStatus {
   codexSession: SessionMonitorStatus;
   claudeSession: SessionMonitorStatus;
   openclawSession: SessionMonitorStatus;
+  opencodeSession: SessionMonitorStatus;
 }
 
 export interface SessionMonitorStatus {
@@ -58,6 +66,7 @@ export interface SessionMonitorStatus {
   filesWatched: number;
   eventsImported: number;
   importHistory: boolean;
+  historyStartAt?: string;
   lastScanAt?: string;
   lastEventAt?: string;
 }

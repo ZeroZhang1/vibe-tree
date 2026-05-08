@@ -1,9 +1,9 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LedgerEntry, LedgerFile, Settings, UsageEvent, UsageStatus, WindowBounds } from "../shared/types.js";
-import { startClaudeSessionWatcher, startOpenClawSessionWatcher } from "./agentSessionWatchers.js";
+import { startClaudeSessionWatcher, startOpenClawSessionWatcher, startOpenCodeSessionWatcher } from "./agentSessionWatchers.js";
 import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -15,17 +15,32 @@ const APP_NAME = "Vibe Bonsai";
 const DEFAULT_SETTINGS: Settings = {
   locked: false,
   alwaysOnTop: true,
-  scale: 2,
+  scale: 0.5,
+  launchOnStartup: false,
+  silentStartup: false,
   windowPosition: undefined,
 };
+
+const WEATHER_THRESHOLDS = [
+  { id: "clear", label: "晴朗", minXpPerMinute: 0 },
+  { id: "breeze", label: "微风", minXpPerMinute: 10_000 },
+  { id: "drizzle", label: "细雨", minXpPerMinute: 50_000 },
+  { id: "rain", label: "大雨", minXpPerMinute: 150_000 },
+  { id: "thunder", label: "雷雨", minXpPerMinute: 500_000 },
+  { id: "storm", label: "风暴", minXpPerMinute: 1_000_000 },
+] as const;
+const LEVEL_BASE = 100_000;
+const LEVEL_EXPONENT = 1.65;
+const MAX_LEVEL = 120;
 
 let petWindow: BrowserWindow | null = null;
 let managerWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS };
+let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS, installedAt: startOfLocalDayIso(new Date()) };
 let codexSessionWatcher: ReturnType<typeof startCodexSessionWatcher> | null = null;
 let claudeSessionWatcher: ReturnType<typeof startClaudeSessionWatcher> | null = null;
 let openclawSessionWatcher: ReturnType<typeof startOpenClawSessionWatcher> | null = null;
+let opencodeSessionWatcher: ReturnType<typeof startOpenCodeSessionWatcher> | null = null;
 let codexSessionStatus: UsageStatus["codexSession"] = {
   running: false,
   sessionsRoot: "",
@@ -50,6 +65,14 @@ let openclawSessionStatus: UsageStatus["openclawSession"] = {
   eventsImported: 0,
   importHistory: false,
 };
+let opencodeSessionStatus: UsageStatus["opencodeSession"] = {
+  running: false,
+  sessionsRoot: "",
+  exists: false,
+  filesWatched: 0,
+  eventsImported: 0,
+  importHistory: false,
+};
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const rendererFile = join(__dirname, "../renderer/index.html");
@@ -59,26 +82,145 @@ function ledgerPath() {
   return join(app.getPath("userData"), "ledger.json");
 }
 
+function usageEventsPath() {
+  return join(app.getPath("userData"), "usage-events.jsonl");
+}
+
+function usageMetaPath() {
+  return join(app.getPath("userData"), "usage-meta.json");
+}
+
+function deviceSettingsPath() {
+  return join(app.getPath("userData"), "device-settings.json");
+}
+
 function readLedger(): LedgerFile {
+  const legacy = readLegacyLedger();
+  const installedAt = readInstalledAt(legacy);
+  const settings = readDeviceSettings(legacy?.settings);
+  let entries = readUsageEntries();
+
+  if (!entries.length && legacy?.entries?.length) {
+    entries = legacy.entries.filter(isEntry);
+    for (const entry of entries.slice().reverse()) {
+      appendUsageEntryToStore(entry);
+    }
+  }
+
+  return {
+    entries: entries.filter((entry) => entryTime(entry) >= Date.parse(installedAt)),
+    settings,
+    installedAt,
+  };
+}
+
+function readLegacyLedger(): Partial<LedgerFile> | undefined {
   try {
     const raw = readFileSync(ledgerPath(), "utf8");
-    const parsed = JSON.parse(raw) as Partial<LedgerFile>;
-    return {
-      entries: Array.isArray(parsed.entries) ? parsed.entries.filter(isEntry) : [],
-      settings: {
-        ...DEFAULT_SETTINGS,
-        ...(parsed.settings ?? {}),
-      },
-    };
+    return JSON.parse(raw) as Partial<LedgerFile>;
   } catch {
-    return { entries: [], settings: DEFAULT_SETTINGS };
+    return undefined;
   }
 }
 
-function writeLedger() {
-  const path = ledgerPath();
+function readInstalledAt(legacy: Partial<LedgerFile> | undefined) {
+  const existing = readJsonFile<{ installedAt?: string }>(usageMetaPath());
+  if (typeof existing?.installedAt === "string" && Number.isFinite(Date.parse(existing.installedAt))) {
+    return existing.installedAt;
+  }
+
+  const legacyInstalledAt =
+    typeof legacy?.installedAt === "string" && Number.isFinite(Date.parse(legacy.installedAt))
+      ? legacy.installedAt
+      : legacyInstallDate();
+  const installedAt = startOfLocalDayIso(new Date(legacyInstalledAt));
+  writeJsonAtomic(usageMetaPath(), { version: 1, installedAt });
+  return installedAt;
+}
+
+function legacyInstallDate() {
+  try {
+    if (existsSync(ledgerPath())) {
+      const stats = statSync(ledgerPath());
+      return new Date(stats.birthtimeMs || stats.mtimeMs).toISOString();
+    }
+  } catch {
+    // Fall back to first run time below.
+  }
+  return new Date().toISOString();
+}
+
+function readDeviceSettings(legacySettings: Partial<Settings> | undefined): Settings {
+  const stored = readJsonFile<Partial<Settings>>(deviceSettingsPath());
+  const settings = normalizeSettings({
+    ...DEFAULT_SETTINGS,
+    ...(legacySettings ?? {}),
+    ...(stored ?? {}),
+  });
+  if (!stored) {
+    writeDeviceSettings(settings);
+  }
+  return settings;
+}
+
+function writeDeviceSettings(settings = ledger.settings) {
+  writeJsonAtomic(deviceSettingsPath(), normalizeSettings(settings));
+}
+
+function normalizeSettings(settings: Partial<Settings>): Settings {
+  const scale = typeof settings.scale === "number" && [0.5, 1, 1.5, 2].includes(settings.scale) ? settings.scale : 0.5;
+  return {
+    ...DEFAULT_SETTINGS,
+    ...settings,
+    locked: Boolean(settings.locked),
+    alwaysOnTop: settings.alwaysOnTop !== false,
+    launchOnStartup: Boolean(settings.launchOnStartup),
+    silentStartup: Boolean(settings.silentStartup),
+    scale,
+    codexSessionsDir: cleanPath(settings.codexSessionsDir),
+    claudeSessionsDir: cleanPath(settings.claudeSessionsDir),
+    openclawSessionsDir: cleanPath(settings.openclawSessionsDir),
+    opencodeSessionsDir: cleanPath(settings.opencodeSessionsDir),
+  };
+}
+
+function cleanPath(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readUsageEntries() {
+  if (!existsSync(usageEventsPath())) return [];
+  const byId = new Map<string, LedgerEntry>();
+  const raw = readFileSync(usageEventsPath(), "utf8");
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const parsed = parseJson(line);
+    if (isEntry(parsed)) {
+      byId.set(parsed.id, parsed);
+    }
+  }
+  return [...byId.values()].sort((a, b) => entryTime(b) - entryTime(a));
+}
+
+function appendUsageEntryToStore(entry: LedgerEntry) {
+  const path = usageEventsPath();
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(ledger, null, 2), "utf8");
+  appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
+}
+
+function writeJsonAtomic(path: string, value: unknown) {
+  mkdirSync(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.tmp`;
+  writeFileSync(tempPath, JSON.stringify(value, null, 2), "utf8");
+  renameSync(tempPath, path);
+}
+
+function readJsonFile<T>(path: string): T | undefined {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 function isEntry(value: unknown): value is LedgerEntry {
@@ -92,8 +234,25 @@ function isEntry(value: unknown): value is LedgerEntry {
   );
 }
 
+function parseJson(value: string) {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function entryTime(entry: LedgerEntry) {
+  const time = Date.parse(entry.createdAt);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function startOfLocalDayIso(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString();
+}
+
 function petSize(scale = ledger.settings.scale) {
-  const safeScale = [1, 1.5, 2].includes(scale) ? scale : DEFAULT_SETTINGS.scale;
+  const safeScale = [0.5, 1, 1.5, 2].includes(scale) ? scale : DEFAULT_SETTINGS.scale;
   return {
     width: Math.round(PET_BASE.width * safeScale),
     height: Math.round(PET_BASE.height * safeScale),
@@ -225,7 +384,7 @@ function persistPetPosition() {
   if (!petWindow) return;
   const [x, y] = petWindow.getPosition();
   ledger.settings.windowPosition = clampPetPosition({ x, y });
-  writeLedger();
+  writeDeviceSettings();
 }
 
 function petWindowPosition() {
@@ -276,7 +435,19 @@ function createAppIcon() {
 
 function refreshTrayMenu() {
   if (!tray) return;
+  const trayStats = getTrayStats();
   const template = Menu.buildFromTemplate([
+    {
+      label: `Vibe Bonsai · Lv.${trayStats.level} · ${trayStats.weatherLabel}`,
+      enabled: false,
+    },
+    {
+      label: `${formatCompact(trayStats.totalXp)} XP · 今日 +${formatCompact(trayStats.todayXp)} · ${formatCompact(
+        trayStats.xpPerMinute,
+      )} XP/min`,
+      enabled: false,
+    },
+    { type: "separator" },
     {
       label: "打开管理窗口",
       click: showManager,
@@ -298,21 +469,21 @@ function refreshTrayMenu() {
     },
     { type: "separator" },
     {
-      label: `Codex 登录用量: ${codexSessionStatus.running ? "监控中" : "检查中"}`,
+      label: sourceStatusLabel("Codex", codexSessionStatus, "codex-session"),
       enabled: false,
     },
     {
-      label: `Claude Code 用量: ${claudeSessionStatus.running ? "监控中" : "检查中"}`,
+      label: sourceStatusLabel("Claude Code", claudeSessionStatus, "claude-session"),
       enabled: false,
     },
     {
-      label: `OpenClaw 用量: ${openclawSessionStatus.running ? "监控中" : "检查中"}`,
+      label: sourceStatusLabel("OpenClaw", openclawSessionStatus, "openclaw-session"),
       enabled: false,
     },
     { type: "separator" },
     {
       label: "小树大小",
-      submenu: [1, 1.5, 2].map((scale) => ({
+      submenu: [0.5, 1, 1.5, 2].map((scale) => ({
         label: `${scale}x`,
         type: "radio",
         checked: ledger.settings.scale === scale,
@@ -331,6 +502,18 @@ function refreshTrayMenu() {
       checked: ledger.settings.alwaysOnTop,
       click: () => updateSettings({ alwaysOnTop: !ledger.settings.alwaysOnTop }),
     },
+    {
+      label: "开机启动",
+      type: "checkbox",
+      checked: ledger.settings.launchOnStartup,
+      click: () => updateSettings({ launchOnStartup: !ledger.settings.launchOnStartup }),
+    },
+    {
+      label: "静默启动",
+      type: "checkbox",
+      checked: ledger.settings.silentStartup,
+      click: () => updateSettings({ silentStartup: !ledger.settings.silentStartup }),
+    },
     { type: "separator" },
     {
       label: "退出",
@@ -338,13 +521,116 @@ function refreshTrayMenu() {
     },
   ]);
   tray.setContextMenu(template);
+  tray.setToolTip(`Vibe Bonsai · Lv.${trayStats.level} · ${trayStats.weatherLabel}`);
+}
+
+function getTrayStats() {
+  const now = Date.now();
+  const totalXp = ledger.entries.reduce((total, entry) => total + xpForEntry(entry), 0);
+  const todayKey = dateKey(new Date());
+  const todayXp = ledger.entries
+    .filter((entry) => dateKey(new Date(entry.createdAt)) === todayKey)
+    .reduce((total, entry) => total + xpForEntry(entry), 0);
+  const recentXp = ledger.entries
+    .filter((entry) => now - entryTime(entry) <= 60_000)
+    .reduce((total, entry) => total + xpForEntry(entry), 0);
+  const xpPerMinute = recentXp;
+  const weather = WEATHER_THRESHOLDS.reduce((current, candidate) => {
+    return xpPerMinute >= candidate.minXpPerMinute ? candidate : current;
+  }, WEATHER_THRESHOLDS[0]);
+
+  return {
+    level: getLevel(totalXp),
+    totalXp,
+    todayXp,
+    xpPerMinute,
+    weatherLabel: weather.label,
+  };
+}
+
+function sourceStatusLabel(label: string, status: UsageStatus["codexSession"], source: string) {
+  const entries = ledger.entries.filter((entry) => entry.source === source);
+  const state = status.exists && status.running ? "监控中" : status.running ? "未找到" : "已停止";
+  const eventText = status.lastEventAt ? ` · ${formatRelativeTime(status.lastEventAt)}` : "";
+  return `${label}: ${state} · ${status.filesWatched} 文件 · ${entries.length} 条${eventText}`;
+}
+
+function xpForEntry(entry: LedgerEntry) {
+  if (
+    entry.inputTokens === undefined &&
+    entry.outputTokens === undefined &&
+    entry.cacheReadTokens === undefined &&
+    entry.cacheWriteTokens === undefined
+  ) {
+    return safeTokens(entry.tokens);
+  }
+  return safeTokens(entry.inputTokens ?? 0) + safeTokens(entry.outputTokens ?? 0);
+}
+
+function safeTokens(value: number) {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function getLevel(totalXp: number) {
+  let level = 1;
+  let remaining = totalXp;
+  let needed = xpForNextLevel(level);
+  while (remaining >= needed && level < MAX_LEVEL) {
+    remaining -= needed;
+    level += 1;
+    needed = xpForNextLevel(level);
+  }
+  return level;
+}
+
+function xpForNextLevel(level: number) {
+  return Math.round(LEVEL_BASE * level ** LEVEL_EXPONENT);
+}
+
+function dateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatCompact(value: number) {
+  const absolute = Math.abs(value);
+  if (absolute < 1_000) return `${Math.round(value)}`;
+  if (absolute < 1_000_000) return `${trimNumber(absolute / 1_000)}k`;
+  return `${trimNumber(absolute / 1_000_000)}m`;
+}
+
+function trimNumber(value: number) {
+  return value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1).replace(/\.0$/, "") : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function formatRelativeTime(isoTime: string) {
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(isoTime)) / 1000));
+  if (elapsedSeconds < 60) return "刚刚";
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) return `${elapsedMinutes} 分钟前`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  return `${elapsedHours} 小时前`;
 }
 
 function updateSettings(partial: Partial<Settings>) {
-  ledger.settings = { ...ledger.settings, ...partial };
+  const previous = ledger.settings;
+  ledger.settings = normalizeSettings({ ...ledger.settings, ...partial });
   petWindow?.setAlwaysOnTop(ledger.settings.alwaysOnTop, "floating");
-  if (partial.scale) resizePetWindow();
-  writeLedger();
+  if (partial.scale !== undefined) resizePetWindow();
+  writeDeviceSettings();
+  if (partial.launchOnStartup !== undefined || partial.silentStartup !== undefined) {
+    applyLoginItemSettings();
+  }
+  if (
+    previous.codexSessionsDir !== ledger.settings.codexSessionsDir ||
+    previous.claudeSessionsDir !== ledger.settings.claudeSessionsDir ||
+    previous.openclawSessionsDir !== ledger.settings.openclawSessionsDir ||
+    previous.opencodeSessionsDir !== ledger.settings.opencodeSessionsDir
+  ) {
+    restartUsageWatchers();
+  }
   refreshTrayMenu();
   broadcast("bonsai:ledger", ledger);
 }
@@ -352,7 +638,7 @@ function updateSettings(partial: Partial<Settings>) {
 function appendUsageEvent(event: UsageEvent) {
   if (ledger.entries.some((entry) => entry.id === event.id)) return;
 
-  ledger.entries.unshift({
+  const entry: LedgerEntry = {
     id: event.id,
     createdAt: event.createdAt,
     source: event.source,
@@ -365,9 +651,11 @@ function appendUsageEvent(event: UsageEvent) {
     outputTokens: event.outputTokens,
     cacheReadTokens: event.cacheReadTokens,
     cacheWriteTokens: event.cacheWriteTokens,
-  });
-  writeLedger();
+  };
+  ledger.entries.unshift(entry);
+  appendUsageEntryToStore(entry);
   broadcast("bonsai:ledger", ledger);
+  refreshTrayMenu();
 }
 
 function broadcast(channel: string, ...args: unknown[]) {
@@ -382,7 +670,93 @@ function getUsageStatus(): UsageStatus {
     codexSession: codexSessionStatus,
     claudeSession: claudeSessionStatus,
     openclawSession: openclawSessionStatus,
+    opencodeSession: opencodeSessionStatus,
   };
+}
+
+function startUsageWatchers() {
+  stopUsageWatchers();
+  const common = {
+    userDataPath: app.getPath("userData"),
+    historyStartAt: ledger.installedAt,
+  };
+
+  codexSessionWatcher = startCodexSessionWatcher({
+    ...common,
+    sessionsRoot: ledger.settings.codexSessionsDir,
+    onUsage: appendUsageEvent,
+    onStatus: (status) => {
+      codexSessionStatus = status;
+      refreshTrayMenu();
+      broadcast("bonsai:usage-status", getUsageStatus());
+    },
+  });
+  claudeSessionWatcher = startClaudeSessionWatcher({
+    ...common,
+    sessionsRoot: ledger.settings.claudeSessionsDir,
+    onUsage: appendUsageEvent,
+    onStatus: (status) => {
+      claudeSessionStatus = status;
+      refreshTrayMenu();
+      broadcast("bonsai:usage-status", getUsageStatus());
+    },
+  });
+  openclawSessionWatcher = startOpenClawSessionWatcher({
+    ...common,
+    sessionsRoot: ledger.settings.openclawSessionsDir,
+    onUsage: appendUsageEvent,
+    onStatus: (status) => {
+      openclawSessionStatus = status;
+      refreshTrayMenu();
+      broadcast("bonsai:usage-status", getUsageStatus());
+    },
+  });
+  opencodeSessionWatcher = startOpenCodeSessionWatcher({
+    ...common,
+    sessionsRoot: ledger.settings.opencodeSessionsDir,
+    onUsage: appendUsageEvent,
+    onStatus: (status) => {
+      opencodeSessionStatus = status;
+      refreshTrayMenu();
+      broadcast("bonsai:usage-status", getUsageStatus());
+    },
+  });
+}
+
+function stopUsageWatchers() {
+  codexSessionWatcher?.close();
+  claudeSessionWatcher?.close();
+  openclawSessionWatcher?.close();
+  opencodeSessionWatcher?.close();
+  codexSessionWatcher = null;
+  claudeSessionWatcher = null;
+  openclawSessionWatcher = null;
+  opencodeSessionWatcher = null;
+}
+
+function restartUsageWatchers() {
+  if (!app.isReady()) return;
+  startUsageWatchers();
+}
+
+function applyLoginItemSettings() {
+  if (!app.isReady()) return;
+  if (!ledger.settings.launchOnStartup) {
+    app.setLoginItemSettings({ openAtLogin: false });
+    return;
+  }
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    openAsHidden: ledger.settings.silentStartup,
+    path: process.execPath,
+    args: loginItemArgs(),
+  });
+}
+
+function loginItemArgs() {
+  if (app.isPackaged) return [];
+  const entry = process.argv.find((arg, index) => index > 0 && /dist[\\/]electron[\\/]main\.js$/.test(arg));
+  return entry ? [entry] : [];
 }
 
 app.whenReady().then(() => {
@@ -390,38 +764,13 @@ app.whenReady().then(() => {
   app.setAppUserModelId("com.vibetree.bonsai");
   Menu.setApplicationMenu(null);
   ledger = readLedger();
+  applyLoginItemSettings();
   createPetWindow();
-  createManagerWindow();
+  if (!ledger.settings.silentStartup) {
+    createManagerWindow();
+  }
   createTray();
-  setTimeout(() => {
-    codexSessionWatcher = startCodexSessionWatcher({
-      userDataPath: app.getPath("userData"),
-      onUsage: appendUsageEvent,
-      onStatus: (status) => {
-        codexSessionStatus = status;
-        refreshTrayMenu();
-        broadcast("bonsai:usage-status", getUsageStatus());
-      },
-    });
-    claudeSessionWatcher = startClaudeSessionWatcher({
-      userDataPath: app.getPath("userData"),
-      onUsage: appendUsageEvent,
-      onStatus: (status) => {
-        claudeSessionStatus = status;
-        refreshTrayMenu();
-        broadcast("bonsai:usage-status", getUsageStatus());
-      },
-    });
-    openclawSessionWatcher = startOpenClawSessionWatcher({
-      userDataPath: app.getPath("userData"),
-      onUsage: appendUsageEvent,
-      onStatus: (status) => {
-        openclawSessionStatus = status;
-        refreshTrayMenu();
-        broadcast("bonsai:usage-status", getUsageStatus());
-      },
-    });
-  }, 500);
+  setTimeout(startUsageWatchers, 500);
 
   app.on("activate", () => {
     createPetWindow();
@@ -434,9 +783,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  codexSessionWatcher?.close();
-  claudeSessionWatcher?.close();
-  openclawSessionWatcher?.close();
+  stopUsageWatchers();
 });
 
 ipcMain.handle("ledger:get", () => ledger);
@@ -446,15 +793,17 @@ ipcMain.handle("ledger:add-entry", (_event, input: { tokens: number; note?: stri
   const tokens = Math.max(0, Math.round(Number(input.tokens)));
   if (!tokens) return ledger;
 
-  ledger.entries.unshift({
+  const entry: LedgerEntry = {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     source: "manual",
     tokens,
     note: input.note?.trim() || undefined,
-  });
-  writeLedger();
+  };
+  ledger.entries.unshift(entry);
+  appendUsageEntryToStore(entry);
   broadcast("bonsai:ledger", ledger);
+  refreshTrayMenu();
   return ledger;
 });
 

@@ -251,7 +251,7 @@ button {
 
 .pet-preview-panel {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   gap: 16px;
   position: sticky;
   top: 18px;
@@ -314,6 +314,31 @@ h3 {
   grid-template-columns: 1fr 90px;
   gap: 10px;
   align-items: end;
+}
+
+.device-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.toggle-row {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.64);
+  font-size: 0.8rem;
+}
+
+.toggle-row input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
 }
 
 .scale-select {
@@ -583,6 +608,23 @@ label {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   gap: 10px;
+}
+
+.path-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.path-settings label {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.path-settings input {
+  min-height: 32px;
+  font-size: 0.72rem;
+  font-family: Consolas, "Cascadia Mono", monospace;
 }
 
 .source-list article {

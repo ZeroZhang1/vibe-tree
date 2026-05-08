@@ -3,7 +3,7 @@ import "./styles.css";
 
 type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
 type ViewMode = "pet" | "manager";
-type HistoryFilter = "all" | "codex" | "openclaw" | "claude";
+type HistoryFilter = "all" | "codex" | "openclaw" | "opencode" | "claude";
 
 interface WeatherState {
   id: WeatherId;
@@ -115,10 +115,22 @@ if (viewMode === "pet") {
           <label class="scale-select">
             大小
             <select id="scaleSelect">
+              <option value="0.5">0.5x</option>
               <option value="1">1x</option>
               <option value="1.5">1.5x</option>
               <option value="2">2x</option>
             </select>
+          </label>
+        </div>
+
+        <div class="device-controls" aria-label="设备设置">
+          <label class="toggle-row">
+            <input id="launchOnStartupInput" type="checkbox" />
+            <span>开机启动</span>
+          </label>
+          <label class="toggle-row">
+            <input id="silentStartupInput" type="checkbox" />
+            <span>静默启动</span>
           </label>
         </div>
       </aside>
@@ -187,6 +199,31 @@ if (viewMode === "pet") {
               </div>
               <p id="openclawSourceMeta">读取本机 OpenClaw session</p>
             </article>
+            <article>
+              <div>
+                <span>OpenCode</span>
+                <strong id="opencodeSourceStatus">检查中</strong>
+              </div>
+              <p id="opencodeSourceMeta">读取本机 OpenCode message</p>
+            </article>
+          </div>
+          <div class="path-settings">
+            <label>
+              Codex 路径
+              <input id="codexSessionsDirInput" type="text" placeholder="~/.codex/sessions" />
+            </label>
+            <label>
+              Claude 路径
+              <input id="claudeSessionsDirInput" type="text" placeholder="~/.claude/projects" />
+            </label>
+            <label>
+              OpenClaw 路径
+              <input id="openclawSessionsDirInput" type="text" placeholder="~/.openclaw/agents" />
+            </label>
+            <label>
+              OpenCode 路径
+              <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/storage/message" />
+            </label>
           </div>
           <div class="source-breakdown" id="sourceBreakdown"></div>
         </section>
@@ -226,6 +263,12 @@ const tokensInput = document.querySelector<HTMLInputElement>("#tokensInput");
 const noteInput = document.querySelector<HTMLInputElement>("#noteInput");
 const lockButton = document.querySelector<HTMLButtonElement>("#lockButton");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
+const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
+const silentStartupInput = document.querySelector<HTMLInputElement>("#silentStartupInput");
+const codexSessionsDirInput = document.querySelector<HTMLInputElement>("#codexSessionsDirInput");
+const claudeSessionsDirInput = document.querySelector<HTMLInputElement>("#claudeSessionsDirInput");
+const openclawSessionsDirInput = document.querySelector<HTMLInputElement>("#openclawSessionsDirInput");
+const opencodeSessionsDirInput = document.querySelector<HTMLInputElement>("#opencodeSessionsDirInput");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -247,6 +290,7 @@ function setupHistoryCard() {
         <button type="button" data-history-filter="all">全部</button>
         <button type="button" data-history-filter="codex">Codex</button>
         <button type="button" data-history-filter="openclaw">OpenClaw</button>
+        <button type="button" data-history-filter="opencode">OpenCode</button>
         <button type="button" data-history-filter="claude">Claude Code</button>
       </div>
     </div>
@@ -333,6 +377,29 @@ function bindEvents() {
     render();
   });
 
+  launchOnStartupInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({ launchOnStartup: launchOnStartupInput.checked });
+    render();
+  });
+
+  silentStartupInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({ silentStartup: silentStartupInput.checked });
+    render();
+  });
+
+  codexSessionsDirInput?.addEventListener("change", () => updatePathSetting("codexSessionsDir", codexSessionsDirInput));
+  claudeSessionsDirInput?.addEventListener("change", () =>
+    updatePathSetting("claudeSessionsDir", claudeSessionsDirInput),
+  );
+  openclawSessionsDirInput?.addEventListener("change", () =>
+    updatePathSetting("openclawSessionsDir", openclawSessionsDirInput),
+  );
+  opencodeSessionsDirInput?.addEventListener("change", () =>
+    updatePathSetting("opencodeSessionsDir", opencodeSessionsDirInput),
+  );
+
   historyTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-history-filter]");
     if (!button) return;
@@ -354,6 +421,16 @@ function bindEvents() {
     tokenForm.reset();
     render();
   });
+}
+
+async function updatePathSetting(
+  key: "codexSessionsDir" | "claudeSessionsDir" | "openclawSessionsDir" | "opencodeSessionsDir",
+  input: HTMLInputElement,
+) {
+  if (!ledger) return;
+  const value = input.value.trim() || undefined;
+  ledger = await window.bonsai.updateSettings({ [key]: value });
+  render();
 }
 
 function render() {
@@ -390,6 +467,12 @@ function render() {
   if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
   if (lockButton) lockButton.textContent = ledger.settings.locked ? "解锁小树" : "锁定小树";
   if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
+  if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
+  if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
+  syncInputValue(codexSessionsDirInput, ledger.settings.codexSessionsDir ?? "");
+  syncInputValue(claudeSessionsDirInput, ledger.settings.claudeSessionsDir ?? "");
+  syncInputValue(openclawSessionsDirInput, ledger.settings.openclawSessionsDir ?? "");
+  syncInputValue(opencodeSessionsDirInput, ledger.settings.opencodeSessionsDir ?? "");
 
   if (lastWeatherId !== stats.weather.id) {
     lastWeatherId = stats.weather.id;
@@ -413,7 +496,10 @@ function renderUsageStatus() {
   const codexEntries = ledger?.entries.filter((entry) => entry.source === "codex-session").length ?? 0;
   const claudeEntries = ledger?.entries.filter((entry) => entry.source === "claude-session").length ?? 0;
   const openclawEntries = ledger?.entries.filter((entry) => entry.source === "openclaw-session").length ?? 0;
-  const activeSources = [codexEntries > 0, claudeEntries > 0, openclawEntries > 0].filter(Boolean).length;
+  const opencodeEntries = ledger?.entries.filter((entry) => entry.source === "opencode-session").length ?? 0;
+  const activeSources = [codexEntries > 0, claudeEntries > 0, openclawEntries > 0, opencodeEntries > 0].filter(
+    Boolean,
+  ).length;
   text("#sourceSummary", activeSources ? `${activeSources} 个来源有记录` : "等待 token");
 
   const codex = usageStatus.codexSession;
@@ -443,6 +529,14 @@ function renderUsageStatus() {
       : `${openclaw.filesWatched} 个文件 · 等待新 token`,
   );
 
+  const opencode = usageStatus.opencodeSession;
+  text("#opencodeSourceStatus", opencode.exists && opencode.running ? "监控中" : "未找到");
+  text(
+    "#opencodeSourceMeta",
+    opencode.lastEventAt
+      ? `${opencode.filesWatched} 个文件 · ${formatRelativeTime(opencode.lastEventAt)}`
+      : `${opencode.filesWatched} 个文件 · 等待新 token`,
+  );
 }
 
 function renderSourceBreakdown(rows: SourceBreakdown[]) {
@@ -638,6 +732,9 @@ function sourceMatchesHistoryFilter(entry: LedgerEntry, filter: HistoryFilter) {
   if (filter === "openclaw") {
     return entry.source === "openclaw-session" || entry.agent === "openclaw";
   }
+  if (filter === "opencode") {
+    return entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"));
+  }
   return entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"));
 }
 
@@ -674,6 +771,8 @@ function sourceLabel(id: string, source: string) {
   if (id === "claude-code" || source === "claude-session") return "Claude Code";
   if (id === "codex-desktop" || source === "codex-session") return "Codex";
   if (id === "openclaw" || source === "openclaw-session") return "OpenClaw";
+  if (id.startsWith("opencode:")) return `OpenCode ${id.replace("opencode:", "")}`;
+  if (id === "opencode" || source === "opencode-session") return "OpenCode";
   return id;
 }
 
@@ -682,6 +781,7 @@ function renderHistoryChart(rows: Array<{ label: string; tokens: number }>, filt
     all: "全部来源",
     codex: "Codex",
     openclaw: "OpenClaw",
+    opencode: "OpenCode",
     claude: "Claude Code",
   };
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
@@ -913,6 +1013,11 @@ function clamp(value: number, min: number, max: number) {
 function text(selector: string, value: string) {
   const element = document.querySelector(selector);
   if (element) element.textContent = value;
+}
+
+function syncInputValue(input: HTMLInputElement | null, value: string) {
+  if (!input || document.activeElement === input) return;
+  input.value = value;
 }
 
 function escapeHtml(value: string) {
