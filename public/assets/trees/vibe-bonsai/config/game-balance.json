@@ -1,0 +1,30 @@
+{
+  "xp": {
+    "levelBase": 100000,
+    "levelExponent": 1.65,
+    "maxLevel": 120
+  },
+  "weather": {
+    "rateWindowSeconds": 60,
+    "thresholds": [
+      { "id": "clear", "label": "晴朗", "minXpPerMinute": 0 },
+      { "id": "breeze", "label": "微风", "minXpPerMinute": 10000 },
+      { "id": "drizzle", "label": "细雨", "minXpPerMinute": 50000 },
+      { "id": "rain", "label": "大雨", "minXpPerMinute": 150000 },
+      { "id": "thunder", "label": "雷雨", "minXpPerMinute": 500000 },
+      { "id": "storm", "label": "风暴", "minXpPerMinute": 1000000 }
+    ]
+  },
+  "activity": {
+    "activeWindowSeconds": 90,
+    "peakWindowSeconds": 300
+  },
+  "stages": [
+    { "minLevel": 1, "id": "sprout", "label": "新芽" },
+    { "minLevel": 5, "id": "seedling", "label": "幼苗" },
+    { "minLevel": 10, "id": "young", "label": "小树" },
+    { "minLevel": 20, "id": "medium", "label": "成长期" },
+    { "minLevel": 40, "id": "lush", "label": "茂盛" },
+    { "minLevel": 70, "id": "full", "label": "完全体" }
+  ]
+}

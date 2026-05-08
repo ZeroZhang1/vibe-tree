@@ -1,0 +1,40 @@
+{
+  "id": "vibe-bonsai-pure-svg",
+  "version": 1,
+  "baseViewBox": {
+    "width": 96,
+    "height": 96
+  },
+  "stages": [
+    {
+      "id": "sprout",
+      "label": "01 sprout",
+      "asset": "/assets/trees/vibe-bonsai/pure-svg/01-sprout-layered-idle.svg"
+    },
+    {
+      "id": "seedling",
+      "label": "02 seedling",
+      "asset": "/assets/trees/vibe-bonsai/pure-svg/02-seedling-layered-idle.svg"
+    },
+    {
+      "id": "young",
+      "label": "03 young",
+      "asset": "/assets/trees/vibe-bonsai/pure-svg/03-young-layered-idle.svg"
+    },
+    {
+      "id": "medium",
+      "label": "04 medium",
+      "asset": "/assets/trees/vibe-bonsai/pure-svg/04-medium-layered-idle.svg"
+    },
+    {
+      "id": "lush",
+      "label": "05 lush",
+      "asset": "/assets/trees/vibe-bonsai/pure-svg/05-lush-layered-idle.svg"
+    },
+    {
+      "id": "full",
+      "label": "06 full",
+      "asset": "/assets/trees/vibe-bonsai/pure-svg/06-full-layered-idle.svg"
+    }
+  ]
+}

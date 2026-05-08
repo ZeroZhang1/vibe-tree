@@ -1,0 +1,107 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="vibe bonsai sprout idle animation">
+  <style>
+    svg { overflow: visible; image-rendering: pixelated; shape-rendering: crispEdges; }
+    .float { transform-origin: 48px 78px; animation: float-sprout 1.70s steps(2, end) infinite; }
+    .leaves { transform-origin: 48px 47px; }
+    .trunk { transform-origin: 48px 66px; }
+    .shadow { transform-origin: 48px 84px; animation: shadow-sprout 1.70s steps(2, end) infinite; }
+    @keyframes float-sprout {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-1px); }
+    }
+    @keyframes leaves-sprout {
+      0%, 100% { transform: translateX(0); }
+      50% { transform: translateX(1px); }
+    }
+    @keyframes trunk-sprout {
+      0%, 100% { transform: scaleY(1); }
+      50% { transform: scaleY(0.992); }
+    }
+    @keyframes shadow-sprout {
+      0%, 100% { opacity: 0.18; transform: scaleX(1); }
+      50% { opacity: 0.12; transform: scaleX(0.94); }
+    }
+  </style>
+  <rect width="96" height="96" fill="none"/>
+  <ellipse class="shadow" cx="48" cy="84" rx="22" ry="4" fill="#000000"/>
+  <g class="float">
+    <g class="island">
+      <rect x="6" y="68" width="5" height="3" fill="#070807"/>
+      <rect x="85" y="68" width="5" height="3" fill="#070807"/>
+      <rect x="11" y="71" width="5" height="9" fill="#070807"/>
+      <rect x="80" y="71" width="5" height="9" fill="#070807"/>
+      <rect x="16" y="71" width="64" height="9" fill="#292b26"/>
+      <rect x="16" y="80" width="64" height="5" fill="#070807"/>
+    </g>
+    <g class="trunk">
+      <rect x="48" y="22" width="5" height="9" fill="#54321f"/>
+      <rect x="62" y="26" width="1" height="5" fill="#54321f"/>
+      <rect x="44" y="31" width="9" height="4" fill="#54321f"/>
+      <rect x="62" y="35" width="1" height="5" fill="#54321f"/>
+      <rect x="44" y="35" width="4" height="6" fill="#c6843e"/>
+      <rect x="48" y="35" width="5" height="7" fill="#54321f"/>
+      <rect x="45" y="41" width="1" height="1" fill="#8e572d"/>
+      <rect x="44" y="41" width="1" height="1" fill="#c6843e"/>
+      <rect x="46" y="41" width="2" height="1" fill="#c6843e"/>
+      <rect x="10" y="46" width="1" height="1" fill="#54321f"/>
+      <rect x="44" y="42" width="9" height="5" fill="#54321f"/>
+      <rect x="85" y="63" width="5" height="5" fill="#070807"/>
+      <rect x="6" y="63" width="5" height="5" fill="#070807"/>
+      <rect x="11" y="58" width="74" height="13" fill="#54321f"/>
+    </g>
+    <g class="leaves">
+      <rect x="53" y="11" width="14" height="5" fill="#070807"/>
+      <rect x="30" y="11" width="17" height="5" fill="#070807"/>
+      <rect x="34" y="16" width="10" height="6" fill="#d9f46a"/>
+      <rect x="58" y="16" width="4" height="6" fill="#addb3f"/>
+      <rect x="53" y="16" width="5" height="6" fill="#d9f46a"/>
+      <rect x="44" y="16" width="9" height="6" fill="#070807"/>
+      <rect x="53" y="22" width="1" height="1" fill="#6ea63c"/>
+      <rect x="54" y="22" width="4" height="1" fill="#addb3f"/>
+      <rect x="58" y="22" width="4" height="1" fill="#6ea63c"/>
+      <rect x="62" y="16" width="1" height="10" fill="#2f6731"/>
+      <rect x="34" y="22" width="5" height="4" fill="#6ea63c"/>
+      <rect x="63" y="16" width="4" height="10" fill="#070807"/>
+      <rect x="57" y="23" width="5" height="3" fill="#6ea63c"/>
+      <rect x="53" y="23" width="4" height="3" fill="#addb3f"/>
+      <rect x="44" y="22" width="4" height="4" fill="#6ea63c"/>
+      <rect x="39" y="22" width="5" height="4" fill="#addb3f"/>
+      <rect x="30" y="16" width="4" height="10" fill="#070807"/>
+      <rect x="39" y="26" width="9" height="4" fill="#6ea63c"/>
+      <rect x="39" y="30" width="4" height="1" fill="#6ea63c"/>
+      <rect x="44" y="30" width="4" height="1" fill="#6ea63c"/>
+      <rect x="53" y="26" width="9" height="5" fill="#070807"/>
+      <rect x="43" y="30" width="1" height="1" fill="#2f6731"/>
+      <rect x="34" y="26" width="5" height="5" fill="#070807"/>
+      <rect x="20" y="35" width="14" height="5" fill="#070807"/>
+      <rect x="63" y="35" width="13" height="5" fill="#070807"/>
+      <rect x="22" y="40" width="3" height="1" fill="#d9f46a"/>
+      <rect x="21" y="40" width="1" height="1" fill="#addb3f"/>
+      <rect x="71" y="40" width="4" height="1" fill="#6ea63c"/>
+      <rect x="75" y="40" width="1" height="1" fill="#addb3f"/>
+      <rect x="25" y="40" width="9" height="1" fill="#addb3f"/>
+      <rect x="20" y="40" width="1" height="1" fill="#d9f46a"/>
+      <rect x="20" y="41" width="14" height="1" fill="#addb3f"/>
+      <rect x="39" y="31" width="5" height="11" fill="#070807"/>
+      <rect x="53" y="31" width="5" height="11" fill="#070807"/>
+      <rect x="62" y="40" width="1" height="2" fill="#d9f46a"/>
+      <rect x="10" y="42" width="10" height="4" fill="#070807"/>
+      <rect x="71" y="41" width="5" height="6" fill="#6ea63c"/>
+      <rect x="62" y="42" width="1" height="5" fill="#6ea63c"/>
+      <rect x="53" y="42" width="9" height="5" fill="#070807"/>
+      <rect x="76" y="42" width="10" height="5" fill="#070807"/>
+      <rect x="20" y="42" width="1" height="5" fill="#addb3f"/>
+      <rect x="21" y="42" width="4" height="5" fill="#d9f46a"/>
+      <rect x="25" y="42" width="9" height="5" fill="#addb3f"/>
+      <rect x="11" y="46" width="9" height="1" fill="#070807"/>
+      <rect x="34" y="42" width="10" height="5" fill="#070807"/>
+      <rect x="63" y="40" width="8" height="7" fill="#addb3f"/>
+      <rect x="11" y="47" width="5" height="5" fill="#d9f46a"/>
+      <rect x="16" y="47" width="69" height="5" fill="#addb3f"/>
+      <rect x="11" y="52" width="74" height="6" fill="#addb3f"/>
+      <rect x="6" y="47" width="5" height="16" fill="#070807"/>
+      <rect x="85" y="47" width="5" height="16" fill="#070807"/>
+    </g>
+  </g>
+</svg>
+
