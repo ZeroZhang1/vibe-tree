@@ -5,13 +5,13 @@ import { fileURLToPath } from "node:url";
 import type { LedgerEntry, LedgerFile, Settings, UsageEvent, UsageStatus, WindowBounds } from "../shared/types.js";
 import { startClaudeSessionWatcher, startOpenClawSessionWatcher } from "./agentSessionWatchers.js";
 import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
-import { startUsageGateway, type UsageGatewayStatus } from "./usageGateway.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PET_BASE = { width: 192, height: 208 };
-const MANAGER_SIZE = { width: 980, height: 720 };
-const MANAGER_MIN_SIZE = { width: 760, height: 560 };
+const MANAGER_SIZE = { width: 1120, height: 760 };
+const MANAGER_MIN_SIZE = { width: 860, height: 620 };
+const APP_NAME = "Vibe Bonsai";
 const DEFAULT_SETTINGS: Settings = {
   locked: false,
   alwaysOnTop: true,
@@ -23,16 +23,9 @@ let petWindow: BrowserWindow | null = null;
 let managerWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS };
-let usageGateway: ReturnType<typeof startUsageGateway> | null = null;
 let codexSessionWatcher: ReturnType<typeof startCodexSessionWatcher> | null = null;
 let claudeSessionWatcher: ReturnType<typeof startClaudeSessionWatcher> | null = null;
 let openclawSessionWatcher: ReturnType<typeof startOpenClawSessionWatcher> | null = null;
-let usageGatewayStatus: UsageGatewayStatus = {
-  running: false,
-  port: 18790,
-  targetBaseUrl: "https://api.openai.com",
-  hasUpstreamKey: false,
-};
 let codexSessionStatus: UsageStatus["codexSession"] = {
   running: false,
   sessionsRoot: "",
@@ -154,7 +147,8 @@ function createPetWindow() {
     height: size.height,
     x: position.x,
     y: position.y,
-    title: "Vibe Bonsai Pet",
+    title: `${APP_NAME} Pet`,
+    icon: createAppIcon(),
     frame: false,
     transparent: true,
     resizable: false,
@@ -193,7 +187,8 @@ function createManagerWindow() {
     height: MANAGER_SIZE.height,
     minWidth: MANAGER_MIN_SIZE.width,
     minHeight: MANAGER_MIN_SIZE.height,
-    title: "Vibe Bonsai",
+    title: APP_NAME,
+    icon: createAppIcon(),
     frame: true,
     transparent: false,
     resizable: true,
@@ -211,6 +206,9 @@ function createManagerWindow() {
     managerWindow = null;
     refreshTrayMenu();
   });
+  managerWindow.webContents.setZoomFactor(1);
+  managerWindow.webContents.on("zoom-changed", (event) => event.preventDefault());
+  void managerWindow.webContents.setVisualZoomLevelLimits(1, 1);
   void loadRenderer(managerWindow, "manager");
   return managerWindow;
 }
@@ -247,21 +245,30 @@ function resizePetWindow() {
 }
 
 function createTray() {
-  tray = new Tray(createTrayIcon());
-  tray.setToolTip("Vibe Bonsai");
+  tray = new Tray(createAppIcon());
+  tray.setToolTip(APP_NAME);
   tray.on("click", showManager);
   refreshTrayMenu();
 }
 
-function createTrayIcon() {
+function createAppIcon() {
   const svg = encodeURIComponent(`
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
       <rect width="32" height="32" fill="none"/>
-      <rect x="13" y="13" width="6" height="10" fill="#7a4f2b"/>
-      <rect x="8" y="9" width="16" height="8" fill="#5bbf7a"/>
-      <rect x="11" y="5" width="10" height="8" fill="#82dc8f"/>
-      <rect x="9" y="23" width="14" height="5" fill="#b76f3b"/>
-      <rect x="7" y="21" width="18" height="3" fill="#f2a541"/>
+      <rect x="10" y="25" width="13" height="3" fill="#0a0c09"/>
+      <rect x="8" y="22" width="17" height="4" fill="#5a3824"/>
+      <rect x="7" y="20" width="19" height="3" fill="#a7ea3e"/>
+      <rect x="12" y="14" width="4" height="8" fill="#6f4425"/>
+      <rect x="15" y="12" width="3" height="10" fill="#9a602f"/>
+      <rect x="8" y="12" width="8" height="6" fill="#0a0c09"/>
+      <rect x="10" y="10" width="8" height="6" fill="#a7ea3e"/>
+      <rect x="12" y="9" width="5" height="3" fill="#d7ff57"/>
+      <rect x="17" y="8" width="8" height="7" fill="#0a0c09"/>
+      <rect x="16" y="6" width="8" height="7" fill="#a7ea3e"/>
+      <rect x="18" y="5" width="5" height="3" fill="#d7ff57"/>
+      <rect x="21" y="13" width="7" height="6" fill="#0a0c09"/>
+      <rect x="20" y="11" width="7" height="6" fill="#94db3d"/>
+      <rect x="22" y="10" width="4" height="2" fill="#d7ff57"/>
     </svg>
   `);
   return nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${svg}`);
@@ -269,10 +276,6 @@ function createTrayIcon() {
 
 function refreshTrayMenu() {
   if (!tray) return;
-  const gatewayLabel = usageGatewayStatus.running
-    ? `Token 网关: 127.0.0.1:${usageGatewayStatus.port}`
-    : `Token 网关: 未启动${usageGatewayStatus.error ? ` (${usageGatewayStatus.error})` : ""}`;
-
   const template = Menu.buildFromTemplate([
     {
       label: "打开管理窗口",
@@ -294,10 +297,6 @@ function refreshTrayMenu() {
       },
     },
     { type: "separator" },
-    {
-      label: gatewayLabel,
-      enabled: false,
-    },
     {
       label: `Codex 登录用量: ${codexSessionStatus.running ? "监控中" : "检查中"}`,
       enabled: false,
@@ -380,7 +379,6 @@ function broadcast(channel: string, ...args: unknown[]) {
 
 function getUsageStatus(): UsageStatus {
   return {
-    gateway: usageGatewayStatus,
     codexSession: codexSessionStatus,
     claudeSession: claudeSessionStatus,
     openclawSession: openclawSessionStatus,
@@ -388,17 +386,10 @@ function getUsageStatus(): UsageStatus {
 }
 
 app.whenReady().then(() => {
+  app.setName(APP_NAME);
+  app.setAppUserModelId("com.vibetree.bonsai");
   Menu.setApplicationMenu(null);
   ledger = readLedger();
-  usageGateway = startUsageGateway({
-    userDataPath: app.getPath("userData"),
-    onUsage: appendUsageEvent,
-    onStatus: (status) => {
-      usageGatewayStatus = status;
-      refreshTrayMenu();
-      broadcast("bonsai:usage-status", getUsageStatus());
-    },
-  });
   createPetWindow();
   createManagerWindow();
   createTray();
@@ -446,7 +437,6 @@ app.on("before-quit", () => {
   codexSessionWatcher?.close();
   claudeSessionWatcher?.close();
   openclawSessionWatcher?.close();
-  void usageGateway?.close();
 });
 
 ipcMain.handle("ledger:get", () => ledger);

@@ -187,13 +187,6 @@ if (viewMode === "pet") {
               </div>
               <p id="openclawSourceMeta">读取本机 OpenClaw session</p>
             </article>
-            <article>
-              <div>
-                <span>本地网关</span>
-                <strong id="gatewaySourceStatus">检查中</strong>
-              </div>
-              <input id="gatewayUrl" type="text" readonly value="http://127.0.0.1:18790/v1" />
-            </article>
           </div>
           <div class="source-breakdown" id="sourceBreakdown"></div>
         </section>
@@ -420,9 +413,7 @@ function renderUsageStatus() {
   const codexEntries = ledger?.entries.filter((entry) => entry.source === "codex-session").length ?? 0;
   const claudeEntries = ledger?.entries.filter((entry) => entry.source === "claude-session").length ?? 0;
   const openclawEntries = ledger?.entries.filter((entry) => entry.source === "openclaw-session").length ?? 0;
-  const gatewayEntries = ledger?.entries.filter((entry) => entry.source === "gateway:codex").length ?? 0;
-  const activeSources = [codexEntries > 0, claudeEntries > 0, openclawEntries > 0, gatewayEntries > 0].filter(Boolean)
-    .length;
+  const activeSources = [codexEntries > 0, claudeEntries > 0, openclawEntries > 0].filter(Boolean).length;
   text("#sourceSummary", activeSources ? `${activeSources} 个来源有记录` : "等待 token");
 
   const codex = usageStatus.codexSession;
@@ -452,10 +443,6 @@ function renderUsageStatus() {
       : `${openclaw.filesWatched} 个文件 · 等待新 token`,
   );
 
-  const gateway = usageStatus.gateway;
-  text("#gatewaySourceStatus", gateway.running ? (gateway.hasUpstreamKey ? "可转发" : "缺少上游 key") : "未启动");
-  const gatewayUrl = document.querySelector<HTMLInputElement>("#gatewayUrl");
-  if (gatewayUrl) gatewayUrl.value = `http://127.0.0.1:${gateway.port}/v1`;
 }
 
 function renderSourceBreakdown(rows: SourceBreakdown[]) {
@@ -474,10 +461,10 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
         <article>
           <div>
             <strong>${escapeHtml(row.label)}</strong>
-            <span>${formatNumber(row.xp)} XP</span>
+            <span>${formatCompact(row.xp)} XP</span>
           </div>
           <div class="source-meter"><span style="width:${percent}%"></span></div>
-          <p>in ${formatNumber(row.inputTokens)} · out ${formatNumber(row.outputTokens)} · cache ${formatNumber(row.cacheReadTokens)}</p>
+          <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
         </article>
       `;
     })
@@ -646,7 +633,7 @@ function getSevenDayRows(entries: LedgerEntry[], filter: HistoryFilter = "all") 
 function sourceMatchesHistoryFilter(entry: LedgerEntry, filter: HistoryFilter) {
   if (filter === "all") return true;
   if (filter === "codex") {
-    return entry.source === "codex-session" || entry.source === "gateway:codex" || entry.agent === "codex-desktop";
+    return entry.source === "codex-session" || entry.agent === "codex-desktop";
   }
   if (filter === "openclaw") {
     return entry.source === "openclaw-session" || entry.agent === "openclaw";
@@ -687,7 +674,6 @@ function sourceLabel(id: string, source: string) {
   if (id === "claude-code" || source === "claude-session") return "Claude Code";
   if (id === "codex-desktop" || source === "codex-session") return "Codex";
   if (id === "openclaw" || source === "openclaw-session") return "OpenClaw";
-  if (source.startsWith("gateway:")) return "本地网关";
   return id;
 }
 
@@ -701,7 +687,7 @@ function renderHistoryChart(rows: Array<{ label: string; tokens: number }>, filt
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
   const max = Math.max(1, ...rows.map((row) => row.tokens));
 
-  text("#historySummary", `${labels[filter]} · ${formatNumber(total)} XP`);
+  text("#historySummary", `${labels[filter]} · ${formatCompact(total)} XP`);
 
   historyTabs?.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
     const active = button.dataset.historyFilter === filter;
@@ -887,11 +873,22 @@ function formatNumber(value: number) {
 }
 
 function formatCompact(value: number) {
-  if (value <= 0) return "0";
-  return new Intl.NumberFormat("zh-CN", {
-    notation: "compact",
-    maximumFractionDigits: value >= 10_000 ? 1 : 0,
-  }).format(Math.round(value));
+  const sign = value < 0 ? "-" : "";
+  const absolute = Math.abs(value);
+  if (absolute < 1_000) return `${Math.round(value)}`;
+
+  const units = [
+    { value: 1_000_000_000, suffix: "b" },
+    { value: 1_000_000, suffix: "m" },
+    { value: 1_000, suffix: "k" },
+  ];
+  const unit = units.find((item) => absolute >= item.value);
+  if (!unit) return `${Math.round(value)}`;
+
+  const scaled = absolute / unit.value;
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  const formatted = scaled.toFixed(digits).replace(/\.0+$|(\.\d*[1-9])0+$/, "$1");
+  return `${sign}${formatted}${unit.suffix}`;
 }
 
 function assetUrl(path: string) {

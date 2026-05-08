@@ -38,7 +38,37 @@ npm run build
   - Claude Code session 文件。
   - OpenClaw session 文件。
 - 手动喂养：用于测试成长和天气反馈。
-- 本地 `/v1` 网关原型：预留给 OpenAI-compatible API 代理接入。
+
+## Source Watchers
+
+Codex Desktop:
+
+```text
+%USERPROFILE%\.codex\sessions\**\*.jsonl
+```
+
+Claude Code:
+
+```text
+%USERPROFILE%\.claude\projects\**\*.jsonl
+```
+
+OpenClaw:
+
+```text
+%USERPROFILE%\.openclaw\agents\**\sessions\*.jsonl
+```
+
+默认都是 tail-only：启动时不导入旧历史，只记录运行期间新产生的 usage。
+
+可选导入当天历史：
+
+```powershell
+$env:VIBE_CODEX_IMPORT_HISTORY="today"
+$env:VIBE_CLAUDE_IMPORT_HISTORY="today"
+$env:VIBE_OPENCLAW_IMPORT_HISTORY="today"
+npm start
+```
 
 ## 资产
 
@@ -58,22 +88,32 @@ public/assets/trees/vibe-bonsai/
     06-full-layered-idle.svg
 ```
 
-旧 PNG、image2 候选图、实验预览页和视觉 checkpoint 不属于当前产品运行链路，已经从仓库主线移除。
+旧 PNG、image2 候选图、实验预览页和视觉 checkpoint 不属于当前产品运行链路。
 
-## 主要目录
+## Game Balance
+
+成长、天气和活跃窗口统一由这个文件配置：
 
 ```text
-src/electron/              Electron 主进程、窗口、session 监控、本地网关
-src/renderer/              小树和管理面板 UI
-src/shared/                共享类型
-public/assets/trees/       当前运行时树资产和数值配置
-scripts/                   开发和构建辅助脚本
+public/assets/trees/vibe-bonsai/config/game-balance.json
 ```
+
+当前包含：
+
+- XP 等级曲线：`levelBase`、`levelExponent`、`maxLevel`
+- 天气阈值：按 `minXpPerMinute`
+- 阶段阈值：按 `minLevel`
+- 活跃窗口：active window / peak window
+
+## Persistence
+
+Electron 数据目录里会保存：
+
+- `ledger.json`：XP/usage 总账和窗口设置
+- `codex-session-watcher.json`：Codex watcher offset
+- `claude-session-watcher.json`：Claude watcher offset
+- `openclaw-session-watcher.json`：OpenClaw watcher offset
 
 ## 产品方向
 
-Vibe Bonsai 不是单纯 token dashboard，而是把 vibe coding 的消耗和活跃度变成桌面宠物反馈：
-
-- 长期 token 消耗推动小树成长。
-- 短期 token 速率改变天气强度。
-- 不同 agent 的消耗会被拆分成来源，后续可以扩展成更完整的养成记录。
+Vibe Bonsai 不是单纯 token dashboard，而是把 vibe coding 的消耗、节奏和活跃度变成桌面宠物反馈。第一版先把本地 Codex / Claude Code / OpenClaw 的自动读取做顺，再继续打磨桌宠表现、天气反馈和养成数值。

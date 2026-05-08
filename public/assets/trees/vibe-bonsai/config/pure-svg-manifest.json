@@ -36,5 +36,32 @@
       "label": "06 full",
       "asset": "/assets/trees/vibe-bonsai/pure-svg/06-full-layered-idle.svg"
     }
-  ]
+  ],
+  "weather": [
+    {
+      "id": "clear",
+      "rate": "0 token/h"
+    },
+    {
+      "id": "breeze",
+      "rate": "1-5k token/h"
+    },
+    {
+      "id": "drizzle",
+      "rate": "5k-30k token/h"
+    },
+    {
+      "id": "rain",
+      "rate": "30k-100k token/h"
+    },
+    {
+      "id": "thunder",
+      "rate": "100k-300k token/h"
+    },
+    {
+      "id": "storm",
+      "rate": "300k+ token/h"
+    }
+  ],
+  "weatherOffsets": "/assets/trees/vibe-bonsai/config/weather-offsets.json"
 }

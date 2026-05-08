@@ -31,7 +31,7 @@ export interface LedgerFile {
 export interface UsageEvent {
   id: string;
   createdAt: string;
-  source: "gateway:codex" | string;
+  source: string;
   agent: string;
   provider: string;
   model?: string;
@@ -46,13 +46,6 @@ export interface UsageEvent {
 }
 
 export interface UsageStatus {
-  gateway: {
-    running: boolean;
-    port: number;
-    targetBaseUrl: string;
-    hasUpstreamKey: boolean;
-    error?: string;
-  };
   codexSession: SessionMonitorStatus;
   claudeSession: SessionMonitorStatus;
   openclawSession: SessionMonitorStatus;
