@@ -67,6 +67,7 @@ interface GameBalance {
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app");
+document.title = "Vibe Tree";
 
 const viewMode: ViewMode = new URLSearchParams(location.search).get("view") === "manager" ? "manager" : "pet";
 let ledger: LedgerFile | null = null;
@@ -74,6 +75,9 @@ let tree: TreeAsset | null = null;
 let gameBalance: GameBalance | null = null;
 let usageStatus: UsageStatus | null = null;
 let lastWeatherId: WeatherId | null = null;
+let lastRenderedLevel: number | null = null;
+let levelUpTimer: number | undefined;
+let pendingLevelUp: { from: number; to: number } | null = null;
 let historyFilter: HistoryFilter = "all";
 let dragState: null | {
   startMouse: { x: number; y: number };
@@ -83,13 +87,17 @@ let dragState: null | {
 if (viewMode === "pet") {
   app.innerHTML = `
     <main class="pet-root" data-locked="false" data-weather="clear" data-active="false">
-      <section class="pet-stage" id="petStage" aria-label="Vibe Bonsai">
+      <section class="pet-stage" id="petStage" aria-label="Vibe Tree">
         <div class="weather-layer weather-back" id="weatherBack"></div>
         <div class="pet-aura"></div>
-        <img class="tree-image" id="treeImage" alt="Vibe Bonsai" draggable="false" />
+        <img class="tree-image" id="treeImage" alt="Vibe Tree" draggable="false" />
         <div class="weather-layer weather-front" id="weatherFront"></div>
+        <div class="level-up-toast" aria-hidden="true">
+          <strong>LEVEL UP!</strong>
+          <span id="petLevelUpText">Lv.1 -> Lv.2</span>
+        </div>
         <div class="level-badge" id="petLevelBadge">Lv.1</div>
-        <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开 Vibe Bonsai"></button>
+        <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开 Vibe Tree"></button>
       </section>
     </main>
   `;
@@ -98,15 +106,19 @@ if (viewMode === "pet") {
     <main class="manager-root" data-weather="clear" data-active="false">
       <aside class="pet-preview-panel">
         <header class="app-title">
-          <p>Vibe Bonsai</p>
+          <p>Vibe Tree</p>
           <h1>Token 天气树</h1>
         </header>
 
         <section class="preview-stage" aria-label="桌面小树预览">
           <div class="weather-layer weather-back" id="previewWeatherBack"></div>
           <div class="pet-aura"></div>
-          <img class="tree-image" id="previewTreeImage" alt="Vibe Bonsai preview" draggable="false" />
+          <img class="tree-image" id="previewTreeImage" alt="Vibe Tree preview" draggable="false" />
           <div class="weather-layer weather-front" id="previewWeatherFront"></div>
+          <div class="level-up-toast" aria-hidden="true">
+            <strong>LEVEL UP!</strong>
+            <span id="previewLevelUpText">Lv.1 -> Lv.2</span>
+          </div>
           <div class="level-badge preview-level" id="previewLevelBadge">Lv.1</div>
         </section>
 
@@ -436,6 +448,11 @@ async function updatePathSetting(
 function render() {
   if (!ledger || !tree || !gameBalance) return;
   const stats = calculateStats(ledger.entries, tree, gameBalance);
+  const leveledUp = lastRenderedLevel !== null && stats.level > lastRenderedLevel;
+  if (leveledUp && lastRenderedLevel !== null) {
+    pendingLevelUp = { from: lastRenderedLevel, to: stats.level };
+  }
+  lastRenderedLevel = stats.level;
 
   root.dataset.weather = stats.weather.id;
   root.dataset.locked = String(ledger.settings.locked);
@@ -478,8 +495,23 @@ function render() {
     lastWeatherId = stats.weather.id;
     renderWeatherLayers(stats.weather.id);
   }
+  if (pendingLevelUp) triggerLevelUpAnimation(pendingLevelUp);
   renderUsageStatus();
   renderHistoryChart(getSevenDayRows(ledger.entries, historyFilter), historyFilter);
+}
+
+function triggerLevelUpAnimation(levels: { from: number; to: number }) {
+  text("#petLevelUpText", `Lv.${levels.from} -> Lv.${levels.to}`);
+  text("#previewLevelUpText", `Lv.${levels.from} -> Lv.${levels.to}`);
+  pendingLevelUp = null;
+  root.classList.remove("level-up");
+  void root.offsetWidth;
+  root.classList.add("level-up");
+  if (levelUpTimer) window.clearTimeout(levelUpTimer);
+  levelUpTimer = window.setTimeout(() => {
+    root.classList.remove("level-up");
+    levelUpTimer = undefined;
+  }, 2200);
 }
 
 function renderWeatherLayers(weather: WeatherId) {
@@ -577,7 +609,7 @@ function buildTreeAsset(manifest: PureSvgManifest): TreeAsset {
 
   return {
     id: "vibe-bonsai",
-    displayName: "Vibe Bonsai",
+    displayName: "Vibe Tree",
     baseSize: { width: 96, height: 96 },
     defaultScale: 2,
     palette: {

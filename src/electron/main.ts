@@ -11,7 +11,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PET_BASE = { width: 192, height: 208 };
 const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
-const APP_NAME = "Vibe Bonsai";
+const APP_NAME = "Vibe Tree";
+const APP_ID = "com.vibetree.app";
+const APP_ICON_PATHS = [
+  join(__dirname, "../renderer/assets/app-icon.png"),
+  join(__dirname, "../renderer/assets/app-icon.ico"),
+  join(__dirname, "../../public/assets/app-icon.png"),
+  join(__dirname, "../../public/assets/app-icon.ico"),
+];
 const DEFAULT_SETTINGS: Settings = {
   locked: false,
   alwaysOnTop: true,
@@ -411,6 +418,16 @@ function createTray() {
 }
 
 function createAppIcon() {
+  for (const iconPath of APP_ICON_PATHS) {
+    try {
+      if (!existsSync(iconPath)) continue;
+      const icon = nativeImage.createFromPath(iconPath);
+      if (!icon.isEmpty()) return icon;
+    } catch {
+      // Fall back to the embedded icon below.
+    }
+  }
+
   const svg = encodeURIComponent(`
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
       <rect width="32" height="32" fill="none"/>
@@ -438,7 +455,7 @@ function refreshTrayMenu() {
   const trayStats = getTrayStats();
   const template = Menu.buildFromTemplate([
     {
-      label: `Vibe Bonsai · Lv.${trayStats.level} · ${trayStats.weatherLabel}`,
+      label: `${APP_NAME} · Lv.${trayStats.level} · ${trayStats.weatherLabel}`,
       enabled: false,
     },
     {
@@ -521,7 +538,7 @@ function refreshTrayMenu() {
     },
   ]);
   tray.setContextMenu(template);
-  tray.setToolTip(`Vibe Bonsai · Lv.${trayStats.level} · ${trayStats.weatherLabel}`);
+  tray.setToolTip(`${APP_NAME} · Lv.${trayStats.level} · ${trayStats.weatherLabel}`);
 }
 
 function getTrayStats() {
@@ -761,7 +778,7 @@ function loginItemArgs() {
 
 app.whenReady().then(() => {
   app.setName(APP_NAME);
-  app.setAppUserModelId("com.vibetree.bonsai");
+  app.setAppUserModelId(APP_ID);
   Menu.setApplicationMenu(null);
   ledger = readLedger();
   applyLoginItemSettings();

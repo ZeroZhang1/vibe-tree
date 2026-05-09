@@ -1,8 +1,8 @@
-# Vibe Bonsai
+# Vibe Tree
 
 [简体中文](README.md) | English
 
-Vibe Bonsai is a tiny desktop companion for vibe coding. It turns local coding-agent token usage into a floating bonsai tree:
+Vibe Tree is a tiny desktop companion for vibe coding. It turns local coding-agent token usage into a floating weather tree:
 
 - Total XP drives the tree's level and growth stage.
 - Recent XP/min drives the desktop weather.
@@ -44,7 +44,7 @@ This first version focuses on making local usage tracking dependable and pleasan
 
 ## XP Rules
 
-Vibe Bonsai tracks real agent usage as:
+Vibe Tree tracks real agent usage as:
 
 ```text
 XP = inputTokens + outputTokens
@@ -163,4 +163,4 @@ The app writes:
 
 ## Product Direction
 
-Vibe Bonsai is not meant to be just another token dashboard. The goal is to make the cost, rhythm, and activity of vibe coding feel visible through a small desktop companion. The first version prioritizes reliable local ingestion for Codex, Claude Code, OpenClaw, and OpenCode; future work can continue improving the pet behavior, weather feedback, packaging, and game balance.
+Vibe Tree is not meant to be just another token dashboard. The goal is to make the cost, rhythm, and activity of vibe coding feel visible through a small desktop companion. The first version prioritizes reliable local ingestion for Codex, Claude Code, OpenClaw, and OpenCode; future work can continue improving the pet behavior, weather feedback, packaging, and game balance.

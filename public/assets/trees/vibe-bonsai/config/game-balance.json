@@ -21,10 +21,10 @@
   },
   "stages": [
     { "minLevel": 1, "id": "sprout", "label": "新芽" },
-    { "minLevel": 5, "id": "seedling", "label": "幼苗" },
-    { "minLevel": 10, "id": "young", "label": "小树" },
-    { "minLevel": 20, "id": "medium", "label": "成长期" },
-    { "minLevel": 40, "id": "lush", "label": "茂盛" },
-    { "minLevel": 70, "id": "full", "label": "完全体" }
+    { "minLevel": 20, "id": "seedling", "label": "幼苗" },
+    { "minLevel": 40, "id": "young", "label": "小树" },
+    { "minLevel": 60, "id": "medium", "label": "成长期" },
+    { "minLevel": 80, "id": "lush", "label": "茂盛" },
+    { "minLevel": 100, "id": "full", "label": "完全体" }
   ]
 }

@@ -1,9 +1,10 @@
 {
-  "name": "vibe-bonsai",
+  "name": "vibe-tree",
   "version": "0.1.0",
+  "productName": "Vibe Tree",
   "private": true,
   "type": "module",
-  "description": "A floating desktop token weather bonsai for vibe coding.",
+  "description": "A floating desktop token weather tree for vibe coding.",
   "main": "dist/electron/main.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",

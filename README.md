@@ -1,4 +1,4 @@
-# Vibe Bonsai
+# Vibe Tree
 
 简体中文 | [English](README.en.md)
 
@@ -148,4 +148,4 @@ Electron 数据目录里会保存：
 
 ## 产品方向
 
-Vibe Bonsai 不是单纯 token dashboard，而是把 vibe coding 的消耗、节奏和活跃度变成桌面宠物反馈。第一版先把本地 Codex / Claude Code / OpenClaw / OpenCode 的自动读取做顺，再继续打磨桌宠表现、天气反馈和养成数值。
+Vibe Tree 不是单纯 token dashboard，而是把 vibe coding 的消耗、节奏和活跃度变成桌面宠物反馈。第一版先把本地 Codex / Claude Code / OpenClaw / OpenCode 的自动读取做顺，再继续打磨桌宠表现、天气反馈和养成数值。

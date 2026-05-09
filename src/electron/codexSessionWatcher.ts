@@ -29,6 +29,7 @@ interface WatchState {
   version?: number;
   files: Record<string, number>;
   cumulativeTokens: Record<string, CumulativeUsage | number>;
+  acceptedCumulativeKeys: Record<string, boolean>;
   currentModels: Record<string, string>;
   historyStartAt?: string;
 }
@@ -57,7 +58,7 @@ interface ParsedTokenEvent extends UsageEvent {
 const POLL_INTERVAL_MS = 10_000;
 const READ_CHUNK_SIZE = 64 * 1024;
 const DEFAULT_SESSIONS_ROOT = join(homedir(), ".codex", "sessions");
-const WATCH_STATE_VERSION = 2;
+const WATCH_STATE_VERSION = 6;
 
 export function startCodexSessionWatcher(options: CodexSessionWatcherOptions) {
   const sessionsRoot = options.sessionsRoot || process.env.VIBE_CODEX_SESSIONS_DIR || DEFAULT_SESSIONS_ROOT;
@@ -68,6 +69,7 @@ export function startCodexSessionWatcher(options: CodexSessionWatcherOptions) {
   if (state.version !== WATCH_STATE_VERSION || state.historyStartAt !== options.historyStartAt) {
     state.files = {};
     state.cumulativeTokens = {};
+    state.acceptedCumulativeKeys = {};
     state.currentModels = {};
     state.historyStartAt = options.historyStartAt;
     state.version = WATCH_STATE_VERSION;
@@ -149,28 +151,43 @@ function scanFile(
 
   let currentModel = state.currentModels[filePath];
   imported += scanNewLines(filePath, offset, stats.size, (line, lineOffset) => {
-    currentModel = parseCodexModelLine(line) ?? currentModel;
+    const turnContext = parseCodexTurnContextLine(line);
+    if (turnContext) {
+      currentModel = turnContext.model ?? currentModel;
+    }
     const event = parseCodexTokenCountLine(line, filePath, lineOffset, currentModel);
     if (event) {
+      if (isBeforeHistoryStart(event.createdAt, settings.historyStartAtMs)) {
+        const baselineUsage = event.cumulativeUsage ?? event.deltaUsage;
+        if (baselineUsage) {
+          state.cumulativeTokens[event.cumulativeKey] = baselineUsage;
+        }
+        return 0;
+      }
+
       const exactPreviousTotal = normalizeStoredUsage(state.cumulativeTokens[event.cumulativeKey]);
-      const legacyPreviousTotal = exactPreviousTotal
-        ? undefined
-        : bestKnownCumulativeUsageForFile(state.cumulativeTokens, filePath);
+      const legacyPreviousTotal = undefined;
       const previousTotal = exactPreviousTotal ?? legacyPreviousTotal;
-      const deltaUsage =
-        event.cumulativeUsage && exactPreviousTotal
-          ? subtractUsage(event.cumulativeUsage, exactPreviousTotal)
-          : event.deltaUsage ??
-            (event.cumulativeUsage && legacyPreviousTotal
-              ? subtractUsage(event.cumulativeUsage, legacyPreviousTotal)
-              : event.cumulativeUsage);
+      const hasAcceptedKey = Boolean(state.acceptedCumulativeKeys[event.cumulativeKey]);
+      if (!hasAcceptedKey) {
+        const baselineUsage = event.cumulativeUsage ?? event.deltaUsage;
+        if (baselineUsage) {
+          state.cumulativeTokens[event.cumulativeKey] = baselineUsage;
+        }
+        state.acceptedCumulativeKeys[event.cumulativeKey] = true;
+        return 0;
+      }
+      const deltaUsage = previousTotal
+        ? getDeltaUsage(event, exactPreviousTotal, legacyPreviousTotal)
+        : event.deltaUsage ?? event.cumulativeUsage;
       if (event.cumulativeUsage) {
         state.cumulativeTokens[event.cumulativeKey] = maxUsage(event.cumulativeUsage, previousTotal);
+      } else if (event.deltaUsage) {
+        state.cumulativeTokens[event.cumulativeKey] = event.deltaUsage;
       }
       if (!deltaUsage) return 0;
       const totalTokens = usageTotal(deltaUsage);
       if (totalTokens <= 0) return 0;
-      if (isBeforeHistoryStart(event.createdAt, settings.historyStartAtMs)) return 0;
       options.onUsage({
         ...event,
         inputTokens: deltaUsage.inputTokens,
@@ -247,12 +264,15 @@ function initialOffset(
   return stats.size;
 }
 
-function parseCodexModelLine(line: string) {
+function parseCodexTurnContextLine(line: string) {
   if (!line.includes("\"turn_context\"")) return undefined;
   const parsed = parseJson(line);
   if (!parsed || parsed.type !== "turn_context") return undefined;
   const payload = asRecord(parsed.payload);
-  return stringValue(payload?.model) || stringValue(asRecord(payload?.info)?.model);
+  return {
+    createdAt: typeof parsed.timestamp === "string" ? parsed.timestamp : new Date().toISOString(),
+    model: stringValue(payload?.model) || stringValue(asRecord(payload?.info)?.model),
+  };
 }
 
 function parseCodexTokenCountLine(
@@ -284,7 +304,7 @@ function parseCodexTokenCountLine(
     limitName ||
     currentModel ||
     (limitId && limitId !== "codex" ? limitId : undefined);
-  const cumulativeKey = filePath;
+  const cumulativeKey = totalUsage ? `${filePath}:total` : `${filePath}:last`;
   const hashBasis = `${filePath}:${lineOffset}:${model}:${usage ? usageTotal(usage) : 0}:${
     totalUsage ? usageTotal(totalUsage) : 0
   }`;
@@ -327,6 +347,26 @@ function parseUsage(usage: TokenUsage | undefined): CumulativeUsage | undefined 
 
 function usageTotal(usage: CumulativeUsage) {
   return usage.inputTokens + usage.outputTokens;
+}
+
+function getDeltaUsage(
+  event: ParsedTokenEvent,
+  exactPreviousTotal: CumulativeUsage | undefined,
+  legacyPreviousTotal: CumulativeUsage | undefined,
+): CumulativeUsage | undefined {
+  if (event.cumulativeUsage && exactPreviousTotal) {
+    return subtractUsage(event.cumulativeUsage, exactPreviousTotal);
+  }
+  if (event.deltaUsage) {
+    if (exactPreviousTotal && usageTotal(event.deltaUsage) >= usageTotal(exactPreviousTotal)) {
+      return subtractUsage(event.deltaUsage, exactPreviousTotal);
+    }
+    return event.deltaUsage;
+  }
+  if (event.cumulativeUsage && legacyPreviousTotal) {
+    return subtractUsage(event.cumulativeUsage, legacyPreviousTotal);
+  }
+  return event.cumulativeUsage;
 }
 
 function subtractUsage(current: CumulativeUsage, previous: CumulativeUsage | undefined): CumulativeUsage {
@@ -395,12 +435,22 @@ function readState(path: string): WatchState {
       files: parsed.files && typeof parsed.files === "object" ? parsed.files : {},
       cumulativeTokens:
         parsed.cumulativeTokens && typeof parsed.cumulativeTokens === "object" ? parsed.cumulativeTokens : {},
+      acceptedCumulativeKeys:
+        parsed.acceptedCumulativeKeys && typeof parsed.acceptedCumulativeKeys === "object"
+          ? (parsed.acceptedCumulativeKeys as Record<string, boolean>)
+          : {},
       currentModels: parsed.currentModels && typeof parsed.currentModels === "object" ? parsed.currentModels : {},
       historyStartAt: typeof parsed.historyStartAt === "string" ? parsed.historyStartAt : undefined,
       version: numberValue(parsed.version),
     };
   } catch {
-    return { version: WATCH_STATE_VERSION, files: {}, cumulativeTokens: {}, currentModels: {} };
+    return {
+      version: WATCH_STATE_VERSION,
+      files: {},
+      cumulativeTokens: {},
+      acceptedCumulativeKeys: {},
+      currentModels: {},
+    };
   }
 }
 
