@@ -151,18 +151,6 @@ if (viewMode === "pet") {
           </div>
         </section>
 
-        <div class="pet-controls">
-          <button class="secondary-button" id="lockButton" type="button">锁定小树</button>
-          <label class="scale-select">
-            大小
-            <select id="scaleSelect">
-              <option value="0.5">0.5x</option>
-              <option value="1">1x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2">2x</option>
-            </select>
-          </label>
-        </div>
       </aside>
       <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置">⚙</button>
 
@@ -229,6 +217,25 @@ if (viewMode === "pet") {
             </div>
             <button class="icon-button" id="settingsCloseButton" type="button" aria-label="关闭设置">×</button>
           </header>
+
+          <section class="settings-section">
+            <h4>桌面小树</h4>
+            <div class="pet-settings" aria-label="桌面小树设置">
+              <label class="scale-select">
+                大小
+                <select id="scaleSelect">
+                  <option value="0.5">0.5x</option>
+                  <option value="1">1x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
+                </select>
+              </label>
+              <label class="toggle-row">
+                <input id="lockInput" type="checkbox" />
+                <span>锁定小树位置</span>
+              </label>
+            </div>
+          </section>
 
           <section class="settings-section">
             <h4>牌子显示</h4>
@@ -309,7 +316,7 @@ const previewWeatherBack = document.querySelector<HTMLElement>("#previewWeatherB
 const previewWeatherFront = document.querySelector<HTMLElement>("#previewWeatherFront");
 const petLevelBadge = document.querySelector<HTMLElement>("#petLevelBadge");
 const previewLevelBadge = document.querySelector<HTMLElement>("#previewLevelBadge");
-const lockButton = document.querySelector<HTMLButtonElement>("#lockButton");
+const lockInput = document.querySelector<HTMLInputElement>("#lockInput");
 const settingsButton = document.querySelector<HTMLButtonElement>("#settingsButton");
 const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settingsCloseButton");
 const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
@@ -436,9 +443,9 @@ function bindEvents() {
     });
   }
 
-  lockButton?.addEventListener("click", async () => {
+  lockInput?.addEventListener("change", async () => {
     if (!ledger) return;
-    ledger = await window.bonsai.updateSettings({ locked: !ledger.settings.locked });
+    ledger = await window.bonsai.updateSettings({ locked: lockInput.checked });
     render();
   });
 
@@ -602,7 +609,7 @@ function render() {
 
   const progressBar = document.querySelector<HTMLElement>("#progressBar");
   if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
-  if (lockButton) lockButton.textContent = ledger.settings.locked ? "解锁小树" : "锁定小树";
+  if (lockInput) lockInput.checked = ledger.settings.locked;
   if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
   if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
   if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;

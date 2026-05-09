@@ -9,6 +9,7 @@ import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PET_BASE = { width: 192, height: 208 };
+const MAC_TRAY_ICON_SIZE = 18;
 const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
@@ -425,10 +426,17 @@ function resizePetWindow() {
 }
 
 function createTray() {
-  tray = new Tray(createAppIcon());
+  tray = new Tray(createTrayIcon());
   tray.setToolTip(APP_NAME);
   tray.on("click", showManager);
   refreshTrayMenu();
+}
+
+function createTrayIcon() {
+  const icon = createAppIcon();
+  if (process.platform !== "darwin") return icon;
+  const resized = icon.resize({ width: MAC_TRAY_ICON_SIZE, height: MAC_TRAY_ICON_SIZE });
+  return resized.isEmpty() ? icon : resized;
 }
 
 function createAppIcon() {

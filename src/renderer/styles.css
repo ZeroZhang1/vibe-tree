@@ -472,13 +472,6 @@ h4 {
   padding: 52px;
 }
 
-.pet-controls {
-  display: grid;
-  grid-template-columns: 1fr 90px;
-  gap: 10px;
-  align-items: end;
-}
-
 .settings-fab {
   position: fixed;
   left: 18px;
@@ -498,10 +491,15 @@ h4 {
   font-weight: 900;
 }
 
+.pet-settings,
 .device-controls {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.pet-settings .scale-select {
+  min-width: 0;
 }
 
 .badge-settings {
@@ -1178,10 +1176,6 @@ label {
     aspect-ratio: 1 / 1;
   }
 
-  .pet-controls {
-    align-self: stretch;
-  }
-
   .dashboard {
     grid-template-rows: none;
   }
@@ -1233,7 +1227,7 @@ label {
     grid-template-columns: 1fr;
   }
 
-  .pet-controls,
+  .pet-settings,
   .badge-settings,
   .device-controls {
     grid-template-columns: 1fr;
