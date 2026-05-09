@@ -6,7 +6,7 @@
 
 - 累计 XP 决定等级和成长阶段。
 - 最近 XP/min 决定桌面天气。
-- 小树以透明悬浮窗常驻桌面，管理窗口负责数据、来源和调试。
+- 小树以透明悬浮窗常驻桌面，管理窗口负责数据、来源、图表和设置。
 
 ## 运行
 
@@ -33,8 +33,9 @@ npm run build
 ## 当前 v1 范围
 
 - Electron 桌面宠物窗口：透明、置顶、可拖动、可锁定。
-- Electron 管理窗口：显示等级、天气、活跃会话、来源统计和最近 7 天。
-- 设备级设置：小树大小、锁定/置顶、开机启动、静默启动和来源路径覆盖。
+- Electron 管理窗口：显示等级、天气、活跃会话、来源统计、模型占比和最近 7 天。
+- 设置面板：小树大小、锁定/置顶、开机启动、静默启动、来源路径覆盖和等级牌显示偏好。
+- 等级牌：支持立体翻牌，可配置正面/背面显示等级、累计 token 或 token/s。
 - XP 规则：
   - 真实 agent 用量：`XP = inputTokens + outputTokens`
   - `cacheReadTokens` / `cacheWriteTokens` 只记录来源明细，暂不计入 XP。
@@ -43,7 +44,13 @@ npm run build
   - Claude Code session 文件。
   - OpenClaw session 文件。
   - OpenCode message 文件。
-- 手动喂养：用于测试成长和天气反馈。
+- 最近 7 天图表：
+  - 全部视图显示不同 agent 的 XP 占比。
+  - 单 agent 视图显示 input / output / cache hit / cache write。
+
+## 更新记录
+
+查看 [CHANGELOG.md](CHANGELOG.md)。
 
 ## Source Watchers
 

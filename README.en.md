@@ -36,11 +36,18 @@ npm run build
 This first version focuses on making local usage tracking dependable and pleasant to keep running:
 
 - Floating Electron pet window: transparent, draggable, lockable, and always-on-top.
-- Electron manager window: level, weather, active sessions, source stats, and recent 7-day usage.
-- Device-level settings: bonsai size, lock/always-on-top, launch on startup, silent startup, and source path overrides.
+- Electron manager window: level, weather, active sessions, source stats, model breakdowns, and recent 7-day usage.
+- Settings panel: bonsai size, lock/always-on-top, launch on startup, silent startup, source path overrides, and badge display preferences.
+- Level badge: 3D flip badge with configurable front/back faces for level, total token, or token/s.
 - Tray status panel for quick app status and controls.
-- Manual feeding for testing growth and weather feedback.
 - Automatic usage import from local Codex, Claude Code, OpenClaw, and OpenCode session files.
+- Recent 7-day charts:
+  - All sources view shows XP share by agent.
+  - Single-agent views show input, output, cache hit, and cache write.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## XP Rules
 
