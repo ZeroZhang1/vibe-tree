@@ -23,6 +23,9 @@ const DEFAULT_SETTINGS: Settings = {
   locked: false,
   alwaysOnTop: true,
   scale: 0.5,
+  badgeFrontMetric: "level",
+  badgeBackMetric: "total",
+  totalDisplayUnit: "m",
   launchOnStartup: false,
   silentStartup: false,
   windowPosition: undefined,
@@ -184,11 +187,22 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
     scale,
+    badgeFrontMetric: normalizeBadgeMetric(settings.badgeFrontMetric, "level"),
+    badgeBackMetric: normalizeBadgeMetric(settings.badgeBackMetric, "total"),
+    totalDisplayUnit: normalizeTotalDisplayUnit(settings.totalDisplayUnit),
     codexSessionsDir: cleanPath(settings.codexSessionsDir),
     claudeSessionsDir: cleanPath(settings.claudeSessionsDir),
     openclawSessionsDir: cleanPath(settings.openclawSessionsDir),
     opencodeSessionsDir: cleanPath(settings.opencodeSessionsDir),
   };
+}
+
+function normalizeBadgeMetric(value: unknown, fallback: Settings["badgeFrontMetric"]) {
+  return value === "level" || value === "total" || value === "rate" ? value : fallback;
+}
+
+function normalizeTotalDisplayUnit(value: unknown): Settings["totalDisplayUnit"] {
+  return value === "k" || value === "m" ? value : "m";
 }
 
 function cleanPath(value: unknown) {

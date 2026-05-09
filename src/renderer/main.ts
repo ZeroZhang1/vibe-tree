@@ -4,6 +4,8 @@ import "./styles.css";
 type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
 type ViewMode = "pet" | "manager";
 type HistoryFilter = "all" | "codex" | "openclaw" | "opencode" | "claude";
+type BadgeMetric = "level" | "total" | "rate";
+type TotalDisplayUnit = "k" | "m";
 
 interface WeatherState {
   id: WeatherId;
@@ -26,9 +28,21 @@ interface Stats {
   lastFiveMinuteXp: number;
   recentXp: number;
   activeSessions: number;
-  sevenDays: Array<{ label: string; tokens: number }>;
+  sevenDays: HistoryDayRow[];
   sourceBreakdown: SourceBreakdown[];
 }
+
+interface HistoryDayRow {
+  label: string;
+  tokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  sources: Record<HistorySourceId, number>;
+}
+
+type HistorySourceId = "codex" | "openclaw" | "opencode" | "claude";
 
 interface SourceBreakdown {
   id: string;
@@ -78,7 +92,12 @@ let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
 let levelUpTimer: number | undefined;
 let pendingLevelUp: { from: number; to: number } | null = null;
+const AUTO_BADGE_FLIP_MS = 30_000;
+const BADGE_TOKEN_HOLD_MS = 1_800;
+const badgeFlipTimers = new Map<string, number>();
+let badgeAutoFlipTimer: number | undefined;
 let historyFilter: HistoryFilter = "all";
+let expandedSourceKey: string | null = null;
 let dragState: null | {
   startMouse: { x: number; y: number };
   startBounds: WindowBounds;
@@ -96,7 +115,12 @@ if (viewMode === "pet") {
           <strong>LEVEL UP!</strong>
           <span id="petLevelUpText">Lv.1 -> Lv.2</span>
         </div>
-        <div class="level-badge" id="petLevelBadge">Lv.1</div>
+        <div class="level-badge" id="petLevelBadge">
+          <span class="badge-card">
+            <span class="badge-face badge-front">Lv.1</span>
+            <span class="badge-face badge-back">0</span>
+          </span>
+        </div>
         <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开 Vibe Tree"></button>
       </section>
     </main>
@@ -119,7 +143,12 @@ if (viewMode === "pet") {
             <strong>LEVEL UP!</strong>
             <span id="previewLevelUpText">Lv.1 -> Lv.2</span>
           </div>
-          <div class="level-badge preview-level" id="previewLevelBadge">Lv.1</div>
+          <div class="level-badge preview-level" id="previewLevelBadge">
+            <span class="badge-card">
+              <span class="badge-face badge-front">Lv.1</span>
+              <span class="badge-face badge-back">0</span>
+            </span>
+          </div>
         </section>
 
         <div class="pet-controls">
@@ -134,18 +163,8 @@ if (viewMode === "pet") {
             </select>
           </label>
         </div>
-
-        <div class="device-controls" aria-label="设备设置">
-          <label class="toggle-row">
-            <input id="launchOnStartupInput" type="checkbox" />
-            <span>开机启动</span>
-          </label>
-          <label class="toggle-row">
-            <input id="silentStartupInput" type="checkbox" />
-            <span>静默启动</span>
-          </label>
-        </div>
       </aside>
+      <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置">⚙</button>
 
       <section class="dashboard">
         <header class="dashboard-header">
@@ -189,68 +208,8 @@ if (viewMode === "pet") {
             <h3>数据来源</h3>
             <span id="sourceSummary">等待 token</span>
           </div>
-          <div class="source-list">
-            <article>
-              <div>
-                <span>Codex</span>
-                <strong id="codexSourceStatus">检查中</strong>
-              </div>
-              <p id="codexSourceMeta">读取本机 session token_count</p>
-            </article>
-            <article>
-              <div>
-                <span>Claude Code</span>
-                <strong id="claudeSourceStatus">检查中</strong>
-              </div>
-              <p id="claudeSourceMeta">读取本机 Claude session</p>
-            </article>
-            <article>
-              <div>
-                <span>OpenClaw</span>
-                <strong id="openclawSourceStatus">检查中</strong>
-              </div>
-              <p id="openclawSourceMeta">读取本机 OpenClaw session</p>
-            </article>
-            <article>
-              <div>
-                <span>OpenCode</span>
-                <strong id="opencodeSourceStatus">检查中</strong>
-              </div>
-              <p id="opencodeSourceMeta">读取本机 OpenCode message</p>
-            </article>
-          </div>
-          <div class="path-settings">
-            <label>
-              Codex 路径
-              <input id="codexSessionsDirInput" type="text" placeholder="~/.codex/sessions" />
-            </label>
-            <label>
-              Claude 路径
-              <input id="claudeSessionsDirInput" type="text" placeholder="~/.claude/projects" />
-            </label>
-            <label>
-              OpenClaw 路径
-              <input id="openclawSessionsDirInput" type="text" placeholder="~/.openclaw/agents" />
-            </label>
-            <label>
-              OpenCode 路径
-              <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/storage/message" />
-            </label>
-          </div>
-          <div class="source-breakdown" id="sourceBreakdown"></div>
+          <div class="source-rows" id="sourceBreakdown"></div>
         </section>
-
-        <form class="token-form" id="tokenForm">
-          <label>
-            添加 XP
-            <input id="tokensInput" inputmode="numeric" min="1" step="1" type="number" placeholder="10000" required />
-          </label>
-          <label>
-            备注
-            <input id="noteInput" type="text" placeholder="测试成长" />
-          </label>
-          <button class="primary-button" type="submit">喂养</button>
-        </form>
 
         <section class="chart-card">
           <div class="section-header">
@@ -258,6 +217,84 @@ if (viewMode === "pet") {
             <span id="peakText">5 分钟 +0 XP</span>
           </div>
         </section>
+      </section>
+
+      <section class="settings-modal" id="settingsModal" aria-hidden="true">
+        <div class="settings-backdrop" id="settingsBackdrop"></div>
+        <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+          <header class="settings-panel-header">
+            <div>
+              <p class="eyebrow">偏好设置</p>
+              <h3 id="settingsTitle">设置</h3>
+            </div>
+            <button class="icon-button" id="settingsCloseButton" type="button" aria-label="关闭设置">×</button>
+          </header>
+
+          <section class="settings-section">
+            <h4>牌子显示</h4>
+            <div class="badge-settings" aria-label="牌子显示">
+              <label>
+                正面
+                <select id="badgeFrontMetricSelect">
+                  <option value="level">等级</option>
+                  <option value="total">累计 token</option>
+                  <option value="rate">token/s</option>
+                </select>
+              </label>
+              <label>
+                背面
+                <select id="badgeBackMetricSelect">
+                  <option value="level">等级</option>
+                  <option value="total">累计 token</option>
+                  <option value="rate">token/s</option>
+                </select>
+              </label>
+              <label>
+                总量单位
+                <select id="totalDisplayUnitSelect">
+                  <option value="k">k</option>
+                  <option value="m">m</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h4>设备</h4>
+            <div class="device-controls" aria-label="设备设置">
+              <label class="toggle-row">
+                <input id="launchOnStartupInput" type="checkbox" />
+                <span>开机启动</span>
+              </label>
+              <label class="toggle-row">
+                <input id="silentStartupInput" type="checkbox" />
+                <span>静默启动</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h4>Agent 路径</h4>
+            <div class="path-settings">
+              <label>
+                Codex 路径
+                <input id="codexSessionsDirInput" type="text" placeholder="~/.codex/sessions" />
+              </label>
+              <label>
+                Claude 路径
+                <input id="claudeSessionsDirInput" type="text" placeholder="~/.claude/projects" />
+              </label>
+              <label>
+                OpenClaw 路径
+                <input id="openclawSessionsDirInput" type="text" placeholder="~/.openclaw/agents" />
+              </label>
+              <label>
+                OpenCode 路径
+                <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/storage/message" />
+              </label>
+            </div>
+          </section>
+        </div>
       </section>
     </main>
   `;
@@ -270,13 +307,19 @@ const weatherBack = document.querySelector<HTMLElement>("#weatherBack");
 const weatherFront = document.querySelector<HTMLElement>("#weatherFront");
 const previewWeatherBack = document.querySelector<HTMLElement>("#previewWeatherBack");
 const previewWeatherFront = document.querySelector<HTMLElement>("#previewWeatherFront");
-const tokenForm = document.querySelector<HTMLFormElement>("#tokenForm");
-const tokensInput = document.querySelector<HTMLInputElement>("#tokensInput");
-const noteInput = document.querySelector<HTMLInputElement>("#noteInput");
+const petLevelBadge = document.querySelector<HTMLElement>("#petLevelBadge");
+const previewLevelBadge = document.querySelector<HTMLElement>("#previewLevelBadge");
 const lockButton = document.querySelector<HTMLButtonElement>("#lockButton");
+const settingsButton = document.querySelector<HTMLButtonElement>("#settingsButton");
+const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settingsCloseButton");
+const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
+const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
 const silentStartupInput = document.querySelector<HTMLInputElement>("#silentStartupInput");
+const badgeFrontMetricSelect = document.querySelector<HTMLSelectElement>("#badgeFrontMetricSelect");
+const badgeBackMetricSelect = document.querySelector<HTMLSelectElement>("#badgeBackMetricSelect");
+const totalDisplayUnitSelect = document.querySelector<HTMLSelectElement>("#totalDisplayUnitSelect");
 const codexSessionsDirInput = document.querySelector<HTMLInputElement>("#codexSessionsDirInput");
 const claudeSessionsDirInput = document.querySelector<HTMLInputElement>("#claudeSessionsDirInput");
 const openclawSessionsDirInput = document.querySelector<HTMLInputElement>("#openclawSessionsDirInput");
@@ -288,6 +331,8 @@ if (viewMode === "manager") {
 
 const historyBars = document.querySelector<HTMLElement>("#historyBars");
 const historyTabs = document.querySelector<HTMLElement>("#historyTabs");
+const historyLegend = document.querySelector<HTMLElement>("#historyLegend");
+const sourceBreakdownElement = document.querySelector<HTMLElement>("#sourceBreakdown");
 
 function setupHistoryCard() {
   const card = document.querySelector<HTMLElement>(".chart-card");
@@ -305,6 +350,12 @@ function setupHistoryCard() {
         <button type="button" data-history-filter="opencode">OpenCode</button>
         <button type="button" data-history-filter="claude">Claude Code</button>
       </div>
+    </div>
+    <div class="history-legend" id="historyLegend" aria-label="token 类型">
+      <span><i class="legend-input"></i>input</span>
+      <span><i class="legend-output"></i>output</span>
+      <span><i class="legend-cache-read"></i>cache hit</span>
+      <span><i class="legend-cache-write"></i>cache write</span>
     </div>
     <div class="history-bars" id="historyBars" aria-label="最近 7 天 XP"></div>
   `;
@@ -327,13 +378,11 @@ async function boot() {
   bindEvents();
   render();
   setInterval(render, 1_000);
+  startAutoBadgeFlipLoop();
 
   window.bonsai.onLedger((nextLedger) => {
     ledger = nextLedger;
     render();
-  });
-  window.bonsai.onOpenAddToken(() => {
-    tokensInput?.focus();
   });
   window.bonsai.onUsageStatus((nextStatus) => {
     usageStatus = nextStatus;
@@ -345,6 +394,12 @@ function bindEvents() {
   if (viewMode === "pet") {
     const petStage = document.querySelector<HTMLElement>("#petStage")!;
     const petHitbox = document.querySelector<HTMLButtonElement>("#petHitbox")!;
+    petLevelBadge?.addEventListener("pointerenter", () => {
+      flipLevelBadgeTemporarily("#petLevelBadge");
+    });
+    petLevelBadge?.addEventListener("dblclick", () => {
+      void window.bonsai.setExpanded(true);
+    });
 
     petHitbox.addEventListener("dblclick", () => {
       void window.bonsai.setExpanded(true);
@@ -375,12 +430,32 @@ function bindEvents() {
       dragState = null;
       await window.bonsai.persistWindowPosition();
     });
+  } else {
+    previewLevelBadge?.addEventListener("pointerenter", () => {
+      flipLevelBadgeTemporarily("#previewLevelBadge");
+    });
   }
 
   lockButton?.addEventListener("click", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ locked: !ledger.settings.locked });
     render();
+  });
+
+  settingsButton?.addEventListener("click", () => {
+    setSettingsOpen(true);
+  });
+
+  settingsCloseButton?.addEventListener("click", () => {
+    setSettingsOpen(false);
+  });
+
+  settingsBackdrop?.addEventListener("click", () => {
+    setSettingsOpen(false);
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setSettingsOpen(false);
   });
 
   scaleSelect?.addEventListener("change", async () => {
@@ -398,6 +473,30 @@ function bindEvents() {
   silentStartupInput?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ silentStartup: silentStartupInput.checked });
+    render();
+  });
+
+  badgeFrontMetricSelect?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      badgeFrontMetric: normalizeBadgeMetric(badgeFrontMetricSelect.value, "level"),
+    });
+    render();
+  });
+
+  badgeBackMetricSelect?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      badgeBackMetric: normalizeBadgeMetric(badgeBackMetricSelect.value, "total"),
+    });
+    render();
+  });
+
+  totalDisplayUnitSelect?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      totalDisplayUnit: normalizeTotalDisplayUnit(totalDisplayUnitSelect.value),
+    });
     render();
   });
 
@@ -421,18 +520,15 @@ function bindEvents() {
     render();
   });
 
-  tokenForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const tokens = Number(tokensInput?.value);
-    if (!Number.isFinite(tokens) || tokens <= 0) return;
-
-    ledger = await window.bonsai.addEntry({
-      tokens,
-      note: noteInput?.value,
-    });
-    tokenForm.reset();
-    render();
+  sourceBreakdownElement?.addEventListener("click", (event) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-source-key]");
+    if (!row || !ledger) return;
+    const sourceKey = row.dataset.sourceKey;
+    if (!sourceKey) return;
+    expandedSourceKey = expandedSourceKey === sourceKey ? null : sourceKey;
+    renderSourceBreakdown(getSourceBreakdown(ledger.entries));
   });
+
 }
 
 async function updatePathSetting(
@@ -443,6 +539,12 @@ async function updatePathSetting(
   const value = input.value.trim() || undefined;
   ledger = await window.bonsai.updateSettings({ [key]: value });
   render();
+}
+
+function setSettingsOpen(open: boolean) {
+  if (!settingsModal) return;
+  settingsModal.classList.toggle("open", open);
+  settingsModal.setAttribute("aria-hidden", String(!open));
 }
 
 function render() {
@@ -457,6 +559,8 @@ function render() {
   root.dataset.weather = stats.weather.id;
   root.dataset.locked = String(ledger.settings.locked);
   root.dataset.active = String(stats.recentXp > 0 || stats.weather.tokensPerMinute > 0);
+  root.dataset.scale = String(ledger.settings.scale).replace(".", "-");
+  root.dataset.stage = stats.stage.id;
 
   if (treeImage) {
     treeImage.src = assetUrl(stats.stage.image);
@@ -467,8 +571,24 @@ function render() {
     previewTreeImage.alt = `${tree.displayName} ${stats.stage.label}`;
   }
 
-  text("#petLevelBadge", `Lv.${stats.level}`);
-  text("#previewLevelBadge", `Lv.${stats.level}`);
+  renderLevelBadge(
+    "#petLevelBadge",
+    stats,
+    ledger.settings.badgeFrontMetric,
+    ledger.settings.badgeBackMetric,
+    ledger.settings.totalDisplayUnit,
+  );
+  renderLevelBadge(
+    "#previewLevelBadge",
+    stats,
+    ledger.settings.badgeFrontMetric,
+    ledger.settings.badgeBackMetric,
+    ledger.settings.totalDisplayUnit,
+  );
+  if (leveledUp) {
+    flipLevelBadgeTemporarily("#petLevelBadge");
+    flipLevelBadgeTemporarily("#previewLevelBadge");
+  }
   text("#levelTitle", `Lv.${stats.level} ${stats.stage.label}`);
   text("#weatherLabel", stats.weather.label);
   text("#weatherRateText", `${formatNumber(stats.weather.tokensPerMinute)} XP/min`);
@@ -486,6 +606,9 @@ function render() {
   if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
   if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
   if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
+  if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
+  if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;
+  if (totalDisplayUnitSelect) totalDisplayUnitSelect.value = ledger.settings.totalDisplayUnit;
   syncInputValue(codexSessionsDirInput, ledger.settings.codexSessionsDir ?? "");
   syncInputValue(claudeSessionsDirInput, ledger.settings.claudeSessionsDir ?? "");
   syncInputValue(openclawSessionsDirInput, ledger.settings.openclawSessionsDir ?? "");
@@ -514,6 +637,58 @@ function triggerLevelUpAnimation(levels: { from: number; to: number }) {
   }, 2200);
 }
 
+function renderLevelBadge(
+  selector: string,
+  stats: Stats,
+  frontMetric: BadgeMetric,
+  backMetric: BadgeMetric,
+  totalUnit: TotalDisplayUnit,
+) {
+  const badge = document.querySelector<HTMLElement>(selector);
+  if (!badge) return;
+  const front = badge.querySelector<HTMLElement>(".badge-front");
+  const back = badge.querySelector<HTMLElement>(".badge-back");
+  if (!front || !back) return;
+
+  const frontText = badgeMetricText(frontMetric, stats, totalUnit);
+  const backText = badgeMetricText(backMetric, stats, totalUnit);
+  front.textContent = frontText;
+  back.textContent = backText;
+  badge.style.setProperty("--badge-front-width", `${badgeWidthForText(frontText)}px`);
+  badge.style.setProperty("--badge-back-width", `${badgeWidthForText(backText)}px`);
+}
+
+function badgeMetricText(metric: BadgeMetric, stats: Stats, totalUnit: TotalDisplayUnit) {
+  if (metric === "level") return `Lv.${stats.level}`;
+  if (metric === "rate") return `${formatIntegerWithCommas(stats.weather.tokensPerMinute / 60)}/s`;
+  return formatByUnit(stats.xp, totalUnit);
+}
+
+function badgeWidthForText(...values: string[]) {
+  const longest = Math.max(...values.map((value) => value.length));
+  return clamp(54 + Math.max(0, longest - 5) * 7, 54, 132);
+}
+
+function startAutoBadgeFlipLoop() {
+  if (badgeAutoFlipTimer) return;
+  const selector = viewMode === "pet" ? "#petLevelBadge" : "#previewLevelBadge";
+  badgeAutoFlipTimer = window.setInterval(() => {
+    flipLevelBadgeTemporarily(selector);
+  }, AUTO_BADGE_FLIP_MS);
+}
+
+function flipLevelBadgeTemporarily(selector: string) {
+  const badge = document.querySelector<HTMLElement>(selector);
+  if (!badge || badgeFlipTimers.has(selector)) return;
+
+  badge.classList.add("level-badge-show-total");
+  const timer = window.setTimeout(() => {
+    badge.classList.remove("level-badge-show-total");
+    badgeFlipTimers.delete(selector);
+  }, BADGE_TOKEN_HOLD_MS);
+  badgeFlipTimers.set(selector, timer);
+}
+
 function renderWeatherLayers(weather: WeatherId) {
   const back = weatherBackHtml(weather);
   const front = weatherFrontHtml(weather);
@@ -525,6 +700,9 @@ function renderWeatherLayers(weather: WeatherId) {
 
 function renderUsageStatus() {
   if (!usageStatus) return;
+  if (ledger) {
+    renderSourceBreakdown(getSourceBreakdown(ledger.entries));
+  }
   const codexEntries = ledger?.entries.filter((entry) => entry.source === "codex-session").length ?? 0;
   const claudeEntries = ledger?.entries.filter((entry) => entry.source === "claude-session").length ?? 0;
   const openclawEntries = ledger?.entries.filter((entry) => entry.source === "openclaw-session").length ?? 0;
@@ -533,68 +711,184 @@ function renderUsageStatus() {
     Boolean,
   ).length;
   text("#sourceSummary", activeSources ? `${activeSources} 个来源有记录` : "等待 token");
-
-  const codex = usageStatus.codexSession;
-  text("#codexSourceStatus", codex.exists && codex.running ? "监控中" : "未找到");
-  text(
-    "#codexSourceMeta",
-    codex.lastEventAt
-      ? `${codex.filesWatched} 个文件 · ${formatRelativeTime(codex.lastEventAt)}`
-      : `${codex.filesWatched} 个文件 · 等待新 token`,
-  );
-
-  const claude = usageStatus.claudeSession;
-  text("#claudeSourceStatus", claude.exists && claude.running ? "监控中" : "未找到");
-  text(
-    "#claudeSourceMeta",
-    claude.lastEventAt
-      ? `${claude.filesWatched} 个文件 · ${formatRelativeTime(claude.lastEventAt)}`
-      : `${claude.filesWatched} 个文件 · 等待新 token`,
-  );
-
-  const openclaw = usageStatus.openclawSession;
-  text("#openclawSourceStatus", openclaw.exists && openclaw.running ? "监控中" : "未找到");
-  text(
-    "#openclawSourceMeta",
-    openclaw.lastEventAt
-      ? `${openclaw.filesWatched} 个文件 · ${formatRelativeTime(openclaw.lastEventAt)}`
-      : `${openclaw.filesWatched} 个文件 · 等待新 token`,
-  );
-
-  const opencode = usageStatus.opencodeSession;
-  text("#opencodeSourceStatus", opencode.exists && opencode.running ? "监控中" : "未找到");
-  text(
-    "#opencodeSourceMeta",
-    opencode.lastEventAt
-      ? `${opencode.filesWatched} 个文件 · ${formatRelativeTime(opencode.lastEventAt)}`
-      : `${opencode.filesWatched} 个文件 · 等待新 token`,
-  );
 }
 
 function renderSourceBreakdown(rows: SourceBreakdown[]) {
   const element = document.querySelector<HTMLElement>("#sourceBreakdown");
   if (!element) return;
   const totalXp = rows.reduce((total, row) => total + row.xp, 0);
-  const visibleRows = rows.filter((row) => row.xp > 0).slice(0, 4);
-  if (!visibleRows.length) {
-    element.innerHTML = `<p>还没有来源贡献</p>`;
-    return;
-  }
-  element.innerHTML = visibleRows
+  element.innerHTML = getMonitorSourceRows(rows)
     .map((row) => {
-      const percent = totalXp > 0 ? Math.max(3, Math.round((row.xp / totalXp) * 100)) : 0;
+      const percent = row.xp > 0 && totalXp > 0 ? Math.max(3, Math.round((row.xp / totalXp) * 100)) : 0;
+      const expanded = expandedSourceKey === row.sourceKey;
       return `
-        <article>
-          <div>
-            <strong>${escapeHtml(row.label)}</strong>
-            <span>${formatCompact(row.xp)} XP</span>
+        <article class="source-row ${expanded ? "expanded" : ""}" data-source-key="${escapeHtml(row.sourceKey)}" aria-expanded="${expanded}">
+          <div class="source-main">
+            <div>
+              <strong>${escapeHtml(row.label)}</strong>
+              <span class="source-meta">${escapeHtml(row.meta)}</span>
+            </div>
+            <span class="source-status ${row.statusClass}">${escapeHtml(row.status)}</span>
           </div>
-          <div class="source-meter"><span style="width:${percent}%"></span></div>
-          <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
+          <div class="source-usage">
+            <div>
+              <strong>${formatCompact(row.xp)} XP</strong>
+              <span>${row.xp > 0 ? `${percent}%` : "无记录"}</span>
+            </div>
+            <div class="source-meter"><span style="width:${percent}%"></span></div>
+            <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
+          </div>
+          ${expanded ? renderModelBreakdown(row.sourceKey) : ""}
         </article>
       `;
     })
     .join("");
+}
+
+type SourceRowView = SourceBreakdown & {
+  sourceKey: string;
+  status: string;
+  statusClass: string;
+  meta: string;
+};
+
+function getMonitorSourceRows(rows: SourceBreakdown[]): SourceRowView[] {
+  const monitors = [
+    {
+      sourceKey: "codex",
+      label: "Codex",
+      status: usageStatus?.codexSession,
+      match: (row: SourceBreakdown) => row.id === "codex-desktop" || row.id === "codex-session" || row.label === "Codex",
+    },
+    {
+      sourceKey: "claude",
+      label: "Claude Code",
+      status: usageStatus?.claudeSession,
+      match: (row: SourceBreakdown) =>
+        row.id === "claude-code" ||
+        row.id === "claude-session" ||
+        row.label === "Claude Code" ||
+        row.id.startsWith("claude-code:"),
+    },
+    {
+      sourceKey: "openclaw",
+      label: "OpenClaw",
+      status: usageStatus?.openclawSession,
+      match: (row: SourceBreakdown) => row.id === "openclaw" || row.id === "openclaw-session" || row.label === "OpenClaw",
+    },
+    {
+      sourceKey: "opencode",
+      label: "OpenCode",
+      status: usageStatus?.opencodeSession,
+      match: (row: SourceBreakdown) =>
+        row.id === "opencode" || row.id === "opencode-session" || row.label === "OpenCode" || row.id.startsWith("opencode:"),
+    },
+  ];
+  const used = new Set<SourceBreakdown>();
+  const monitorRows = monitors.map((monitor) => {
+    const matches = rows.filter((row) => monitor.match(row));
+    matches.forEach((row) => used.add(row));
+    return {
+      ...combineSourceRows(monitor.label, matches),
+      sourceKey: monitor.sourceKey,
+      ...monitorStatusView(monitor.status),
+    };
+  });
+  return monitorRows;
+}
+
+function combineSourceRows(label: string, rows: SourceBreakdown[]): SourceBreakdown {
+  return rows.reduce(
+    (total, row) => ({
+      ...total,
+      xp: total.xp + row.xp,
+      inputTokens: total.inputTokens + row.inputTokens,
+      outputTokens: total.outputTokens + row.outputTokens,
+      cacheReadTokens: total.cacheReadTokens + row.cacheReadTokens,
+      cacheWriteTokens: total.cacheWriteTokens + row.cacheWriteTokens,
+    }),
+    { id: label, label, xp: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  );
+}
+
+function monitorStatusView(status: UsageStatus["codexSession"] | undefined) {
+  if (!status) return { status: "检查中", statusClass: "pending", meta: "正在读取本机记录" };
+  const running = status.exists && status.running;
+  return {
+    status: running ? "在线" : "离线",
+    statusClass: running ? "running" : "missing",
+    meta: `${status.filesWatched} 个文件 · ${status.lastEventAt ? formatRelativeTime(status.lastEventAt) : "等待新 token"}`,
+  };
+}
+
+function renderModelBreakdown(sourceKey: string) {
+  const rows = getModelBreakdown(sourceKey);
+  if (!rows.length) {
+    return `<div class="model-breakdown empty">还没有模型记录</div>`;
+  }
+  const totalXp = rows.reduce((total, row) => total + row.xp, 0);
+  return `
+    <div class="model-breakdown">
+      <div class="model-breakdown-title">模型占比</div>
+      ${rows
+        .map((row) => {
+          const percent = row.xp > 0 && totalXp > 0 ? Math.max(3, Math.round((row.xp / totalXp) * 100)) : 0;
+          return `
+            <div class="model-row">
+              <div>
+                <strong>${escapeHtml(row.label)}</strong>
+                <span>${formatCompact(row.xp)} XP · ${percent}%</span>
+              </div>
+              <div class="source-meter"><span style="width:${percent}%"></span></div>
+              <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function getModelBreakdown(sourceKey: string) {
+  if (!ledger) return [];
+  const rows = new Map<string, SourceBreakdown>();
+  for (const entry of ledger.entries) {
+    if (!entryMatchesSourceKey(entry, sourceKey)) continue;
+    const model = entry.model || entry.provider || "unknown";
+    const existing =
+      rows.get(model) ??
+      {
+        id: model,
+        label: model,
+        xp: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      };
+    existing.xp += xpForEntry(entry);
+    existing.inputTokens += safeTokens(entry.inputTokens ?? 0);
+    existing.outputTokens += safeTokens(entry.outputTokens ?? 0);
+    existing.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
+    existing.cacheWriteTokens += safeTokens(entry.cacheWriteTokens ?? 0);
+    rows.set(model, existing);
+  }
+  return [...rows.values()].filter((row) => row.xp > 0).sort((a, b) => b.xp - a.xp);
+}
+
+function entryMatchesSourceKey(entry: LedgerEntry, sourceKey: string) {
+  if (sourceKey === "codex") return entry.source === "codex-session" || entry.agent === "codex-desktop";
+  if (sourceKey === "claude") return entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"));
+  if (sourceKey === "openclaw") return entry.source === "openclaw-session" || entry.agent === "openclaw";
+  if (sourceKey === "opencode") {
+    return entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"));
+  }
+  if (sourceKey.startsWith("source:")) {
+    const id = sourceKey.slice("source:".length);
+    const entryId = entry.source === "manual" ? "manual" : entry.agent || entry.source;
+    return entryId === id;
+  }
+  return false;
 }
 
 function buildTreeAsset(manifest: PureSvgManifest): TreeAsset {
@@ -746,14 +1040,39 @@ function getSevenDayRows(entries: LedgerEntry[], filter: HistoryFilter = "all") 
     const date = new Date();
     date.setDate(date.getDate() - (6 - index));
     const key = dateKey(date);
-    const tokens = entries
-      .filter((entry) => sourceMatchesHistoryFilter(entry, filter) && dateKey(new Date(entry.createdAt)) === key)
-      .reduce((total, entry) => total + xpForEntry(entry), 0);
+    const dayEntries = entries.filter(
+      (entry) => sourceMatchesHistoryFilter(entry, filter) && dateKey(new Date(entry.createdAt)) === key,
+    );
+    const inputTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.inputTokens ?? 0), 0);
+    const outputTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.outputTokens ?? 0), 0);
+    const cacheReadTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.cacheReadTokens ?? 0), 0);
+    const cacheWriteTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.cacheWriteTokens ?? 0), 0);
+    const tokens = dayEntries.reduce((total, entry) => total + xpForEntry(entry), 0);
+    const sources: Record<HistorySourceId, number> = { codex: 0, openclaw: 0, opencode: 0, claude: 0 };
+    for (const entry of dayEntries) {
+      const source = historySourceId(entry);
+      if (source) sources[source] += xpForEntry(entry);
+    }
     return {
       label: `${date.getMonth() + 1}/${date.getDate()}`,
       tokens,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      sources,
     };
   });
+}
+
+function historySourceId(entry: LedgerEntry): HistorySourceId | undefined {
+  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
+  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
+  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+    return "opencode";
+  }
+  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
+  return undefined;
 }
 
 function sourceMatchesHistoryFilter(entry: LedgerEntry, filter: HistoryFilter) {
@@ -808,7 +1127,7 @@ function sourceLabel(id: string, source: string) {
   return id;
 }
 
-function renderHistoryChart(rows: Array<{ label: string; tokens: number }>, filter: HistoryFilter) {
+function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
   const labels: Record<HistoryFilter, string> = {
     all: "全部来源",
     codex: "Codex",
@@ -817,9 +1136,13 @@ function renderHistoryChart(rows: Array<{ label: string; tokens: number }>, filt
     claude: "Claude Code",
   };
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
-  const max = Math.max(1, ...rows.map((row) => row.tokens));
+  const max =
+    filter === "all"
+      ? Math.max(1, ...rows.map((row) => row.tokens))
+      : Math.max(1, ...rows.map((row) => row.tokens + row.cacheReadTokens + row.cacheWriteTokens));
 
   text("#historySummary", `${labels[filter]} · ${formatCompact(total)} XP`);
+  if (historyLegend) historyLegend.innerHTML = filter === "all" ? historyAgentLegendHtml() : historyTokenLegendHtml();
 
   historyTabs?.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
     const active = button.dataset.historyFilter === filter;
@@ -830,11 +1153,32 @@ function renderHistoryChart(rows: Array<{ label: string; tokens: number }>, filt
   if (!historyBars) return;
   historyBars.innerHTML = rows
     .map((row) => {
-      const height = row.tokens > 0 ? Math.max(8, Math.round((row.tokens / max) * 100)) : 0;
+      const fullTokens = filter === "all" ? row.tokens : row.tokens + row.cacheReadTokens + row.cacheWriteTokens;
+      const height = fullTokens > 0 ? Math.max(8, Math.round((fullTokens / max) * 100)) : 0;
+      const segments =
+        filter === "all"
+          ? `
+              <span class="history-segment codex" style="height:${segmentPercent(row.sources.codex, fullTokens)}%"></span>
+              <span class="history-segment openclaw" style="height:${segmentPercent(row.sources.openclaw, fullTokens)}%"></span>
+              <span class="history-segment opencode" style="height:${segmentPercent(row.sources.opencode, fullTokens)}%"></span>
+              <span class="history-segment claude" style="height:${segmentPercent(row.sources.claude, fullTokens)}%"></span>
+            `
+          : `
+              <span class="history-segment input" style="height:${segmentPercent(row.inputTokens, fullTokens)}%"></span>
+              <span class="history-segment output" style="height:${segmentPercent(row.outputTokens, fullTokens)}%"></span>
+              <span class="history-segment cache-read" style="height:${segmentPercent(row.cacheReadTokens, fullTokens)}%"></span>
+              <span class="history-segment cache-write" style="height:${segmentPercent(row.cacheWriteTokens, fullTokens)}%"></span>
+            `;
+      const title =
+        filter === "all"
+          ? `Codex ${formatCompact(row.sources.codex)} · OpenClaw ${formatCompact(row.sources.openclaw)} · OpenCode ${formatCompact(row.sources.opencode)} · Claude ${formatCompact(row.sources.claude)}`
+          : `input ${formatCompact(row.inputTokens)} · output ${formatCompact(row.outputTokens)} · cache hit ${formatCompact(row.cacheReadTokens)} · cache write ${formatCompact(row.cacheWriteTokens)}`;
       return `
         <article class="history-day">
-          <div class="history-bar-shell">
-            <span style="height:${height}%"></span>
+          <div class="history-bar-shell" title="${title}">
+            <div class="history-stack" style="height:${height}%">
+              ${segments}
+            </div>
           </div>
           <strong>${formatCompact(row.tokens)}</strong>
           <span>${row.label}</span>
@@ -842,6 +1186,29 @@ function renderHistoryChart(rows: Array<{ label: string; tokens: number }>, filt
       `;
     })
     .join("");
+}
+
+function historyTokenLegendHtml() {
+  return `
+    <span><i class="legend-input"></i>input</span>
+    <span><i class="legend-output"></i>output</span>
+    <span><i class="legend-cache-read"></i>cache hit</span>
+    <span><i class="legend-cache-write"></i>cache write</span>
+  `;
+}
+
+function historyAgentLegendHtml() {
+  return `
+    <span><i class="legend-codex"></i>Codex</span>
+    <span><i class="legend-openclaw"></i>OpenClaw</span>
+    <span><i class="legend-opencode"></i>OpenCode</span>
+    <span><i class="legend-claude"></i>Claude Code</span>
+  `;
+}
+
+function segmentPercent(value: number, total: number) {
+  if (value <= 0 || total <= 0) return 0;
+  return Math.max(4, Math.round((value / total) * 100));
 }
 
 function xpForEntry(entry: LedgerEntry) {
@@ -859,6 +1226,23 @@ function xpForEntry(entry: LedgerEntry) {
 
 function safeTokens(value: number) {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function normalizeBadgeMetric(value: string, fallback: BadgeMetric): BadgeMetric {
+  return value === "level" || value === "total" || value === "rate" ? value : fallback;
+}
+
+function normalizeTotalDisplayUnit(value: string): TotalDisplayUnit {
+  return value === "k" || value === "m" ? value : "m";
+}
+
+function formatByUnit(value: number, unit: TotalDisplayUnit) {
+  const divisor = unit === "m" ? 1_000_000 : 1_000;
+  return `${formatIntegerWithCommas(Math.round(Math.max(0, value) / divisor))}${unit}`;
+}
+
+function formatIntegerWithCommas(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(value));
 }
 
 function weatherBackHtml(weather: WeatherId) {
