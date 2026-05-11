@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-11
+
+- Moved pet lock and scale controls into the settings panel, keeping the main dashboard focused on the tree and live stats.
+- Added a pet-window context menu for opening the manager, locking the pet, changing scale, configuring badge faces, choosing k/m units, and hiding the pet.
+- Changed source contribution defaults to Today, added Today/Total switching, and applied the same scope to expanded per-agent model breakdowns.
+- Refined the 3D level badge: smoother flip motion, hover-to-flip with immediate return on pointer leave, 2.5s timed auto flips, and no badge flip during level-up.
+- Added a standalone level-up animation preview page under `concepts/level-up-animation/preview.html`.
+- Reworked the 7-day chart tooltip into an in-app hover card and avoided unnecessary chart DOM rebuilds to prevent flicker.
+- Corrected 7-day chart bar semantics so bar height follows XP (`input + output`) while cache read/write remain separately visible.
+- Reduced misleading minimum bar heights so small daily values preserve visible proportion differences.
+- Clarified the product display model around growth XP versus cache/token traffic during OpenClaw comparison work.
+
 ## 2026-05-09
 
 - Unified the product name as Vibe Tree and connected the app icon for system surfaces.

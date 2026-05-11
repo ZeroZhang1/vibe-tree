@@ -207,7 +207,8 @@ button {
   text-align: center;
   perspective: 180px;
   pointer-events: auto;
-  transition: width 0.2s steps(2, end);
+  transition: width 0.18s ease-out;
+  will-change: width, transform;
 }
 
 .level-badge .badge-card {
@@ -216,7 +217,9 @@ button {
   display: block;
   border-radius: 6px;
   transform-style: preserve-3d;
-  transition: transform 0.46s steps(4, end);
+  transform: translateZ(0);
+  transition: transform 0.48s cubic-bezier(0.22, 0.78, 0.24, 1);
+  will-change: transform;
 }
 
 .level-badge .badge-card::before,
@@ -275,7 +278,7 @@ button {
 .pet-root[data-active="true"] .level-badge,
 .manager-root[data-active="true"] .level-badge {
   --badge-bg: #b9ff78;
-  animation: badgePop 0.9s steps(2, end) infinite;
+  animation: badgePop 1.25s ease-in-out infinite;
 }
 
 .level-badge-show-total {
@@ -774,6 +777,38 @@ label {
   gap: 10px;
 }
 
+.source-header-tools {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.source-scope-tabs {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.source-scope-tabs button {
+  min-height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.source-scope-tabs button.active {
+  color: #071008;
+  background: rgba(91, 191, 122, 0.28);
+}
+
 .chart-top {
   display: flex;
   align-items: flex-start;
@@ -876,7 +911,7 @@ label {
 
 .history-bars {
   min-height: 210px;
-  padding: 12px 10px 10px;
+  padding: 30px 10px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background:
@@ -889,6 +924,7 @@ label {
 }
 
 .history-day {
+  position: relative;
   min-width: 0;
   display: grid;
   grid-template-rows: 1fr auto auto;
@@ -956,6 +992,131 @@ label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;
+  z-index: 5;
+  width: 176px;
+  padding: 9px;
+  border: 1px solid rgba(42, 72, 48, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 246, 0.98), rgba(248, 254, 244, 0.98)),
+    var(--paper-strong);
+  box-shadow: 0 14px 34px rgba(47, 62, 43, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -8px) scale(0.98);
+  transform-origin: 50% 100%;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+
+.history-bar-shell:hover + .history-tooltip,
+.history-day:focus-visible .history-tooltip {
+  opacity: 1;
+  transform: translate(-50%, -14px) scale(1);
+}
+
+.history-tooltip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid rgba(42, 72, 48, 0.16);
+  border-bottom: 1px solid rgba(42, 72, 48, 0.16);
+  background: rgba(248, 254, 244, 0.98);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.history-tooltip-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(42, 72, 48, 0.1);
+}
+
+.history-tooltip-head span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.history-tooltip-head strong {
+  width: auto;
+  color: var(--ink);
+  font-size: 0.78rem;
+  text-align: right;
+}
+
+.history-tooltip-items {
+  display: grid;
+  gap: 6px;
+  padding-top: 7px;
+}
+
+.history-tooltip-items span {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 6px;
+  align-items: center;
+  color: var(--ink);
+  font-size: 0.7rem;
+}
+
+.history-tooltip-items span.empty {
+  opacity: 0.45;
+}
+
+.history-tooltip-items b,
+.history-tooltip-items em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-tooltip-items b {
+  font-weight: 800;
+}
+
+.history-tooltip-items em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.history-tooltip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+
+.history-tooltip-dot.input,
+.history-tooltip-dot.codex {
+  background: #5bbf7a;
+}
+
+.history-tooltip-dot.output,
+.history-tooltip-dot.openclaw {
+  background: #7fc8d8;
+}
+
+.history-tooltip-dot.cache-read,
+.history-tooltip-dot.claude {
+  background: #b9d96a;
+}
+
+.history-tooltip-dot.cache-write,
+.history-tooltip-dot.opencode {
+  background: #9aaed8;
 }
 
 .path-settings {
@@ -1144,6 +1305,7 @@ label {
   margin: 0;
   color: var(--muted);
   font-size: 0.72rem;
+  outline: none;
 }
 
 label {

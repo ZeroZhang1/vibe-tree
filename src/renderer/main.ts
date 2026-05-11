@@ -4,6 +4,7 @@ import "./styles.css";
 type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
 type ViewMode = "pet" | "manager";
 type HistoryFilter = "all" | "codex" | "openclaw" | "opencode" | "claude";
+type SourceScope = "today" | "total";
 type BadgeMetric = "level" | "total" | "rate";
 type TotalDisplayUnit = "k" | "m";
 
@@ -93,10 +94,12 @@ let lastRenderedLevel: number | null = null;
 let levelUpTimer: number | undefined;
 let pendingLevelUp: { from: number; to: number } | null = null;
 const AUTO_BADGE_FLIP_MS = 30_000;
-const BADGE_TOKEN_HOLD_MS = 1_800;
+const BADGE_TOKEN_HOLD_MS = 2_500;
 const badgeFlipTimers = new Map<string, number>();
 let badgeAutoFlipTimer: number | undefined;
 let historyFilter: HistoryFilter = "all";
+let lastHistoryChartKey = "";
+let sourceScope: SourceScope = "today";
 let expandedSourceKey: string | null = null;
 let dragState: null | {
   startMouse: { x: number; y: number };
@@ -194,7 +197,12 @@ if (viewMode === "pet") {
         <section class="source-card" aria-label="Token 来源">
           <div class="section-header">
             <h3>数据来源</h3>
-            <span id="sourceSummary">等待 token</span>
+            <div class="source-header-tools">
+              <div class="source-scope-tabs" id="sourceScopeTabs" role="tablist" aria-label="数据来源范围">
+                <button type="button" data-source-scope="today">今日</button>
+                <button type="button" data-source-scope="total">总计</button>
+              </div>
+            </div>
           </div>
           <div class="source-rows" id="sourceBreakdown"></div>
         </section>
@@ -261,6 +269,25 @@ if (viewMode === "pet") {
                 <select id="totalDisplayUnitSelect">
                   <option value="k">k</option>
                   <option value="m">m</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h4>小树</h4>
+            <div class="pet-settings">
+              <label class="toggle-row">
+                <input id="lockInput" type="checkbox" />
+                <span>锁定小树</span>
+              </label>
+              <label class="scale-select">
+                大小
+                <select id="scaleSelect">
+                  <option value="0.5">0.5x</option>
+                  <option value="1">1x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
                 </select>
               </label>
             </div>
@@ -339,6 +366,7 @@ if (viewMode === "manager") {
 const historyBars = document.querySelector<HTMLElement>("#historyBars");
 const historyTabs = document.querySelector<HTMLElement>("#historyTabs");
 const historyLegend = document.querySelector<HTMLElement>("#historyLegend");
+const sourceScopeTabs = document.querySelector<HTMLElement>("#sourceScopeTabs");
 const sourceBreakdownElement = document.querySelector<HTMLElement>("#sourceBreakdown");
 
 function setupHistoryCard() {
@@ -402,7 +430,10 @@ function bindEvents() {
     const petStage = document.querySelector<HTMLElement>("#petStage")!;
     const petHitbox = document.querySelector<HTMLButtonElement>("#petHitbox")!;
     petLevelBadge?.addEventListener("pointerenter", () => {
-      flipLevelBadgeTemporarily("#petLevelBadge");
+      showLevelBadgeBack("#petLevelBadge");
+    });
+    petLevelBadge?.addEventListener("pointerleave", () => {
+      hideLevelBadgeBack("#petLevelBadge");
     });
     petLevelBadge?.addEventListener("dblclick", () => {
       void window.bonsai.setExpanded(true);
@@ -439,7 +470,10 @@ function bindEvents() {
     });
   } else {
     previewLevelBadge?.addEventListener("pointerenter", () => {
-      flipLevelBadgeTemporarily("#previewLevelBadge");
+      showLevelBadgeBack("#previewLevelBadge");
+    });
+    previewLevelBadge?.addEventListener("pointerleave", () => {
+      hideLevelBadgeBack("#previewLevelBadge");
     });
   }
 
@@ -533,7 +567,17 @@ function bindEvents() {
     const sourceKey = row.dataset.sourceKey;
     if (!sourceKey) return;
     expandedSourceKey = expandedSourceKey === sourceKey ? null : sourceKey;
-    renderSourceBreakdown(getSourceBreakdown(ledger.entries));
+    renderScopedSourceBreakdown();
+  });
+
+  sourceScopeTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-source-scope]");
+    if (!button) return;
+    const nextScope = button.dataset.sourceScope as SourceScope | undefined;
+    if (!nextScope || nextScope === sourceScope) return;
+    sourceScope = nextScope;
+    expandedSourceKey = null;
+    renderScopedSourceBreakdown();
   });
 
 }
@@ -592,10 +636,6 @@ function render() {
     ledger.settings.badgeBackMetric,
     ledger.settings.totalDisplayUnit,
   );
-  if (leveledUp) {
-    flipLevelBadgeTemporarily("#petLevelBadge");
-    flipLevelBadgeTemporarily("#previewLevelBadge");
-  }
   text("#levelTitle", `Lv.${stats.level} ${stats.stage.label}`);
   text("#weatherLabel", stats.weather.label);
   text("#weatherRateText", `${formatNumber(stats.weather.tokensPerMinute)} XP/min`);
@@ -605,7 +645,7 @@ function render() {
   text("#peakText", `5 分钟 +${formatNumber(stats.lastFiveMinuteXp)} XP`);
   text("#nextLevelText", `距离 Lv.${stats.level + 1}`);
   text("#progressText", `${formatNumber(stats.levelXp)} / ${formatNumber(stats.nextLevelXp)} XP`);
-  renderSourceBreakdown(stats.sourceBreakdown);
+  renderScopedSourceBreakdown();
 
   const progressBar = document.querySelector<HTMLElement>("#progressBar");
   if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
@@ -686,14 +726,36 @@ function startAutoBadgeFlipLoop() {
 
 function flipLevelBadgeTemporarily(selector: string) {
   const badge = document.querySelector<HTMLElement>(selector);
-  if (!badge || badgeFlipTimers.has(selector)) return;
+  if (!badge) return;
 
+  clearBadgeFlipTimer(selector);
   badge.classList.add("level-badge-show-total");
   const timer = window.setTimeout(() => {
     badge.classList.remove("level-badge-show-total");
     badgeFlipTimers.delete(selector);
   }, BADGE_TOKEN_HOLD_MS);
   badgeFlipTimers.set(selector, timer);
+}
+
+function showLevelBadgeBack(selector: string) {
+  const badge = document.querySelector<HTMLElement>(selector);
+  if (!badge) return;
+  clearBadgeFlipTimer(selector);
+  badge.classList.add("level-badge-show-total");
+}
+
+function hideLevelBadgeBack(selector: string) {
+  const badge = document.querySelector<HTMLElement>(selector);
+  if (!badge) return;
+  clearBadgeFlipTimer(selector);
+  badge.classList.remove("level-badge-show-total");
+}
+
+function clearBadgeFlipTimer(selector: string) {
+  const timer = badgeFlipTimers.get(selector);
+  if (!timer) return;
+  window.clearTimeout(timer);
+  badgeFlipTimers.delete(selector);
 }
 
 function renderWeatherLayers(weather: WeatherId) {
@@ -708,22 +770,29 @@ function renderWeatherLayers(weather: WeatherId) {
 function renderUsageStatus() {
   if (!usageStatus) return;
   if (ledger) {
-    renderSourceBreakdown(getSourceBreakdown(ledger.entries));
+    renderScopedSourceBreakdown();
   }
-  const codexEntries = ledger?.entries.filter((entry) => entry.source === "codex-session").length ?? 0;
-  const claudeEntries = ledger?.entries.filter((entry) => entry.source === "claude-session").length ?? 0;
-  const openclawEntries = ledger?.entries.filter((entry) => entry.source === "openclaw-session").length ?? 0;
-  const opencodeEntries = ledger?.entries.filter((entry) => entry.source === "opencode-session").length ?? 0;
-  const activeSources = [codexEntries > 0, claudeEntries > 0, openclawEntries > 0, opencodeEntries > 0].filter(
-    Boolean,
-  ).length;
-  text("#sourceSummary", activeSources ? `${activeSources} 个来源有记录` : "等待 token");
+}
+
+function renderScopedSourceBreakdown() {
+  if (!ledger) return;
+  renderSourceBreakdown(getSourceBreakdown(getSourceScopeEntries(ledger.entries)));
 }
 
 function renderSourceBreakdown(rows: SourceBreakdown[]) {
   const element = document.querySelector<HTMLElement>("#sourceBreakdown");
   if (!element) return;
+  syncSourceScopeTabs();
   const totalXp = rows.reduce((total, row) => total + row.xp, 0);
+  const activeSources = rows.filter((row) => row.xp > 0).length;
+  text(
+    "#sourceSummary",
+    activeSources
+      ? `${activeSources} ${sourceScope === "today" ? "个来源今日有记录" : "个来源有记录"}`
+      : sourceScope === "today"
+        ? "今日等待 token"
+        : "等待 token",
+  );
   element.innerHTML = getMonitorSourceRows(rows)
     .map((row) => {
       const percent = row.xp > 0 && totalXp > 0 ? Math.max(3, Math.round((row.xp / totalXp) * 100)) : 0;
@@ -750,6 +819,12 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
       `;
     })
     .join("");
+}
+
+function syncSourceScopeTabs() {
+  sourceScopeTabs?.querySelectorAll<HTMLButtonElement>("[data-source-scope]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.sourceScope === sourceScope);
+  });
 }
 
 type SourceRowView = SourceBreakdown & {
@@ -859,7 +934,7 @@ function renderModelBreakdown(sourceKey: string) {
 function getModelBreakdown(sourceKey: string) {
   if (!ledger) return [];
   const rows = new Map<string, SourceBreakdown>();
-  for (const entry of ledger.entries) {
+  for (const entry of getSourceScopeEntries(ledger.entries)) {
     if (!entryMatchesSourceKey(entry, sourceKey)) continue;
     const model = entry.model || entry.provider || "unknown";
     const existing =
@@ -881,6 +956,12 @@ function getModelBreakdown(sourceKey: string) {
     rows.set(model, existing);
   }
   return [...rows.values()].filter((row) => row.xp > 0).sort((a, b) => b.xp - a.xp);
+}
+
+function getSourceScopeEntries(entries: LedgerEntry[]) {
+  if (sourceScope === "total") return entries;
+  const todayKey = dateKey(new Date());
+  return entries.filter((entry) => dateKey(new Date(entry.createdAt)) === todayKey);
 }
 
 function entryMatchesSourceKey(entry: LedgerEntry, sourceKey: string) {
@@ -1143,10 +1224,7 @@ function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
     claude: "Claude Code",
   };
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
-  const max =
-    filter === "all"
-      ? Math.max(1, ...rows.map((row) => row.tokens))
-      : Math.max(1, ...rows.map((row) => row.tokens + row.cacheReadTokens + row.cacheWriteTokens));
+  const max = Math.max(1, ...rows.map((row) => row.tokens));
 
   text("#historySummary", `${labels[filter]} · ${formatCompact(total)} XP`);
   if (historyLegend) historyLegend.innerHTML = filter === "all" ? historyAgentLegendHtml() : historyTokenLegendHtml();
@@ -1158,41 +1236,98 @@ function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
   });
 
   if (!historyBars) return;
+  const chartKey = historyChartKey(rows, filter);
+  if (chartKey === lastHistoryChartKey && historyBars.childElementCount > 0) return;
+  lastHistoryChartKey = chartKey;
   historyBars.innerHTML = rows
     .map((row) => {
-      const fullTokens = filter === "all" ? row.tokens : row.tokens + row.cacheReadTokens + row.cacheWriteTokens;
-      const height = fullTokens > 0 ? Math.max(8, Math.round((fullTokens / max) * 100)) : 0;
+      const segmentTotal = filter === "all" ? row.tokens : row.tokens + row.cacheReadTokens + row.cacheWriteTokens;
+      const height = row.tokens > 0 ? scaledHistoryHeight(row.tokens, max) : 0;
       const segments =
         filter === "all"
           ? `
-              <span class="history-segment codex" style="height:${segmentPercent(row.sources.codex, fullTokens)}%"></span>
-              <span class="history-segment openclaw" style="height:${segmentPercent(row.sources.openclaw, fullTokens)}%"></span>
-              <span class="history-segment opencode" style="height:${segmentPercent(row.sources.opencode, fullTokens)}%"></span>
-              <span class="history-segment claude" style="height:${segmentPercent(row.sources.claude, fullTokens)}%"></span>
+              <span class="history-segment codex" style="height:${segmentPercent(row.sources.codex, segmentTotal)}%"></span>
+              <span class="history-segment openclaw" style="height:${segmentPercent(row.sources.openclaw, segmentTotal)}%"></span>
+              <span class="history-segment opencode" style="height:${segmentPercent(row.sources.opencode, segmentTotal)}%"></span>
+              <span class="history-segment claude" style="height:${segmentPercent(row.sources.claude, segmentTotal)}%"></span>
             `
           : `
-              <span class="history-segment input" style="height:${segmentPercent(row.inputTokens, fullTokens)}%"></span>
-              <span class="history-segment output" style="height:${segmentPercent(row.outputTokens, fullTokens)}%"></span>
-              <span class="history-segment cache-read" style="height:${segmentPercent(row.cacheReadTokens, fullTokens)}%"></span>
-              <span class="history-segment cache-write" style="height:${segmentPercent(row.cacheWriteTokens, fullTokens)}%"></span>
+              <span class="history-segment input" style="height:${segmentPercent(row.inputTokens, segmentTotal)}%"></span>
+              <span class="history-segment output" style="height:${segmentPercent(row.outputTokens, segmentTotal)}%"></span>
+              <span class="history-segment cache-read" style="height:${segmentPercent(row.cacheReadTokens, segmentTotal)}%"></span>
+              <span class="history-segment cache-write" style="height:${segmentPercent(row.cacheWriteTokens, segmentTotal)}%"></span>
             `;
-      const title =
-        filter === "all"
-          ? `Codex ${formatCompact(row.sources.codex)} · OpenClaw ${formatCompact(row.sources.openclaw)} · OpenCode ${formatCompact(row.sources.opencode)} · Claude ${formatCompact(row.sources.claude)}`
-          : `input ${formatCompact(row.inputTokens)} · output ${formatCompact(row.outputTokens)} · cache hit ${formatCompact(row.cacheReadTokens)} · cache write ${formatCompact(row.cacheWriteTokens)}`;
       return `
-        <article class="history-day">
-          <div class="history-bar-shell" title="${title}">
+        <article class="history-day" tabindex="0">
+          <div class="history-bar-shell">
             <div class="history-stack" style="height:${height}%">
               ${segments}
             </div>
           </div>
+          ${historyTooltipHtml(row, filter)}
           <strong>${formatCompact(row.tokens)}</strong>
           <span>${row.label}</span>
         </article>
       `;
     })
     .join("");
+}
+
+function historyChartKey(rows: HistoryDayRow[], filter: HistoryFilter) {
+  return JSON.stringify({
+    filter,
+    rows: rows.map((row) => [
+      row.label,
+      row.tokens,
+      row.inputTokens,
+      row.outputTokens,
+      row.cacheReadTokens,
+      row.cacheWriteTokens,
+      row.sources.codex,
+      row.sources.openclaw,
+      row.sources.opencode,
+      row.sources.claude,
+    ]),
+  });
+}
+
+function historyTooltipHtml(row: HistoryDayRow, filter: HistoryFilter) {
+  const items =
+    filter === "all"
+      ? [
+          { label: "Codex", value: row.sources.codex, tone: "codex" },
+          { label: "OpenClaw", value: row.sources.openclaw, tone: "openclaw" },
+          { label: "OpenCode", value: row.sources.opencode, tone: "opencode" },
+          { label: "Claude", value: row.sources.claude, tone: "claude" },
+        ]
+      : [
+          { label: "input", value: row.inputTokens, tone: "input" },
+          { label: "output", value: row.outputTokens, tone: "output" },
+          { label: "cache hit", value: row.cacheReadTokens, tone: "cache-read" },
+          { label: "cache write", value: row.cacheWriteTokens, tone: "cache-write" },
+        ];
+
+  return `
+    <div class="history-tooltip" role="tooltip">
+      <div class="history-tooltip-head">
+        <span>${escapeHtml(row.label)}</span>
+        <strong>${formatCompact(row.tokens)} XP</strong>
+      </div>
+      <div class="history-tooltip-items">
+        ${items
+          .map(
+            (item) => `
+              <span class="${item.value > 0 ? "" : "empty"}">
+                <i class="history-tooltip-dot ${item.tone}"></i>
+                <b>${escapeHtml(item.label)}</b>
+                <em>${formatCompact(item.value)}</em>
+              </span>
+            `,
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
 }
 
 function historyTokenLegendHtml() {
@@ -1216,6 +1351,11 @@ function historyAgentLegendHtml() {
 function segmentPercent(value: number, total: number) {
   if (value <= 0 || total <= 0) return 0;
   return Math.max(4, Math.round((value / total) * 100));
+}
+
+function scaledHistoryHeight(value: number, max: number) {
+  if (value <= 0 || max <= 0) return 0;
+  return clamp((value / max) * 100, 1.5, 100);
 }
 
 function xpForEntry(entry: LedgerEntry) {

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "el
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { MenuItemConstructorOptions } from "electron";
 import type { LedgerEntry, LedgerFile, Settings, UsageEvent, UsageStatus, WindowBounds } from "../shared/types.js";
 import { startClaudeSessionWatcher, startOpenClawSessionWatcher, startOpenCodeSessionWatcher } from "./agentSessionWatchers.js";
 import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
@@ -350,6 +351,9 @@ function createPetWindow() {
   petWindow.setAlwaysOnTop(ledger.settings.alwaysOnTop, "floating");
   petWindow.webContents.setZoomFactor(1);
   petWindow.webContents.on("zoom-changed", (event) => event.preventDefault());
+  petWindow.webContents.on("context-menu", () => {
+    showPetContextMenu();
+  });
   void petWindow.webContents.setVisualZoomLevelLimits(1, 1);
   petWindow.on("moved", persistPetPosition);
   petWindow.on("resize", () => setPetBounds(petWindowPosition()));
@@ -472,6 +476,79 @@ function createAppIcon() {
   return nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${svg}`);
 }
 
+function showPetContextMenu() {
+  const menu = Menu.buildFromTemplate([
+    {
+      label: "打开管理窗口",
+      click: showManager,
+    },
+    {
+      label: ledger.settings.locked ? "解锁小树位置" : "锁定小树位置",
+      type: "checkbox" as const,
+      checked: ledger.settings.locked,
+      click: () => updateSettings({ locked: !ledger.settings.locked }),
+    },
+    {
+      label: "小树大小",
+      submenu: scaleMenuItems(),
+    },
+    { type: "separator" as const },
+    {
+      label: "牌子正面",
+      submenu: badgeMetricMenuItems("badgeFrontMetric"),
+    },
+    {
+      label: "牌子背面",
+      submenu: badgeMetricMenuItems("badgeBackMetric"),
+    },
+    {
+      label: "总量单位",
+      submenu: totalUnitMenuItems(),
+    },
+    { type: "separator" as const },
+    {
+      label: "隐藏小树",
+      click: () => {
+        petWindow?.hide();
+        refreshTrayMenu();
+      },
+    },
+  ]);
+  menu.popup({ window: petWindow ?? undefined });
+}
+
+function scaleMenuItems(): MenuItemConstructorOptions[] {
+  return [0.5, 1, 1.5, 2].map((scale) => ({
+    label: `${scale}x`,
+    type: "radio" as const,
+    checked: ledger.settings.scale === scale,
+    click: () => updateSettings({ scale }),
+  }));
+}
+
+function badgeMetricMenuItems(key: "badgeFrontMetric" | "badgeBackMetric"): MenuItemConstructorOptions[] {
+  const labels: Record<Settings["badgeFrontMetric"], string> = {
+    level: "等级",
+    total: "累计 token",
+    rate: "token/s",
+  };
+  return (Object.keys(labels) as Settings["badgeFrontMetric"][]).map((metric) => ({
+    label: labels[metric],
+    type: "radio" as const,
+    checked: ledger.settings[key] === metric,
+    click: () => updateSettings({ [key]: metric } as Partial<Settings>),
+  }));
+}
+
+function totalUnitMenuItems(): MenuItemConstructorOptions[] {
+  return (["k", "m"] as const).map((unit) => ({
+    label: unit,
+    type: "radio" as const,
+    checked: ledger.settings.totalDisplayUnit === unit,
+    click: () => updateSettings({ totalDisplayUnit: unit }),
+  }));
+}
+
 function refreshTrayMenu() {
   if (!tray) return;
   const trayStats = getTrayStats();
@@ -499,13 +576,6 @@ function refreshTrayMenu() {
         refreshTrayMenu();
       },
     },
-    {
-      label: "添加 token",
-      click: () => {
-        showManager();
-        managerWindow?.webContents.send("bonsai:open-add-token");
-      },
-    },
     { type: "separator" },
     {
       label: sourceStatusLabel("Codex", codexSessionStatus, "codex-session"),
@@ -522,12 +592,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     {
       label: "小树大小",
-      submenu: [0.5, 1, 1.5, 2].map((scale) => ({
-        label: `${scale}x`,
-        type: "radio",
-        checked: ledger.settings.scale === scale,
-        click: () => updateSettings({ scale }),
-      })),
+      submenu: scaleMenuItems(),
     },
     {
       label: "锁定小树位置",
