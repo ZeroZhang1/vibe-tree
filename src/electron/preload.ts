@@ -5,6 +5,7 @@ import type {
   AchievementUnlockResult,
   LedgerFile,
   Settings,
+  UpdateStatus,
   UsageStatus,
   WindowBounds,
 } from "../shared/types.js";
@@ -21,6 +22,10 @@ const api = {
     ipcRenderer.invoke("window:set-position", position) as Promise<void>,
   persistWindowPosition: () => ipcRenderer.invoke("window:persist-position") as Promise<void>,
   getUsageStatus: () => ipcRenderer.invoke("usage:get-status") as Promise<UsageStatus>,
+  getUpdateStatus: () => ipcRenderer.invoke("updates:get-status") as Promise<UpdateStatus>,
+  checkForUpdates: () => ipcRenderer.invoke("updates:check") as Promise<UpdateStatus>,
+  installUpdate: () => ipcRenderer.invoke("updates:install") as Promise<UpdateStatus>,
+  openUpdatePage: (url?: string) => ipcRenderer.invoke("updates:open", url) as Promise<void>,
   getAchievements: () => ipcRenderer.invoke("achievements:get") as Promise<AchievementState>,
   unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
     ipcRenderer.invoke("achievements:unlock", items) as Promise<AchievementUnlockResult>,
@@ -48,6 +53,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: UsageStatus) => callback(status);
     ipcRenderer.on("bonsai:usage-status", listener);
     return () => ipcRenderer.removeListener("bonsai:usage-status", listener);
+  },
+  onUpdateStatus: (callback: (status: UpdateStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status);
+    ipcRenderer.on("bonsai:update-status", listener);
+    return () => ipcRenderer.removeListener("bonsai:update-status", listener);
   },
   onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => {
     const listener = (

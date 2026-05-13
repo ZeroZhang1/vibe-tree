@@ -1,0 +1,461 @@
+import type { LedgerEntry } from "../shared/types";
+import type { AchievementCategory, AchievementRarity } from "./i18n";
+
+type HistorySourceId = "codex" | "openclaw" | "opencode" | "claude";
+
+interface AchievementStatsSnapshot {
+  xp: number;
+  weather: {
+    tokensPerMinute: number;
+  };
+}
+
+export interface AchievementDef {
+  id: string;
+  category: AchievementCategory;
+  rarity: AchievementRarity;
+  name: string;
+  description: string;
+  flavor?: string;
+  hidden?: boolean;
+  planned?: boolean;
+  condition: (context: AchievementContext) => boolean;
+  trigger?: (context: AchievementContext) => Record<string, unknown>;
+}
+
+export interface AchievementContext {
+  stats: AchievementStatsSnapshot;
+  entries: LedgerEntry[];
+  stageIndex: number;
+  maxDailyXp: number;
+  consecutiveDays: number;
+  activeSources: Set<HistorySourceId>;
+  maxSourcesOneDay: number;
+  hasAgentSwitchWithinTenMinutes: boolean;
+  sourceXp: Record<HistorySourceId, number>;
+  hourSet: Set<number>;
+  weekendWarrior: boolean;
+  touchGrassReturn: boolean;
+  coffeeOverdose: boolean;
+  hasFibonacciSession: boolean;
+}
+
+export const CATEGORY_ORDER: AchievementCategory[] = ["growth", "peak", "time", "agent", "hidden"];
+
+export function rarityOrder(rarity: AchievementRarity): number {
+  const order: Record<AchievementRarity, number> = { legendary: 0, epic: 1, rare: 2, hidden: 3, common: 4 };
+  return order[rarity] ?? 5;
+}
+
+export const ACHIEVEMENTS: AchievementDef[] = [
+  {
+    id: "sprout",
+    category: "growth",
+    rarity: "common",
+    name: "破土而出",
+    description: "小树发芽了",
+    flavor: "每一棵大树，都曾是一粒种子。",
+    condition: ({ stats }) => stats.xp >= 1_000,
+  },
+  {
+    id: "sapling",
+    category: "growth",
+    rarity: "rare",
+    name: "亭亭玉立",
+    description: "长出像样的树冠",
+    flavor: "你的树已经不再是路边的杂草了。",
+    condition: ({ stageIndex }) => stageIndex >= 2,
+  },
+  {
+    id: "big_tree",
+    category: "growth",
+    rarity: "legendary",
+    name: "枝繁叶茂",
+    description: "已经是一棵大树了",
+    flavor: "鸟儿们开始考虑在你这里安家。",
+    condition: ({ stageIndex }) => stageIndex >= 5,
+  },
+  {
+    id: "xp_10k",
+    category: "growth",
+    rarity: "common",
+    name: "万字打工人",
+    description: "累计 10,000 XP",
+    flavor: "一万个 token，都是汗水的结晶。",
+    condition: ({ stats }) => stats.xp >= 10_000,
+  },
+  {
+    id: "xp_100k",
+    category: "growth",
+    rarity: "rare",
+    name: "十万军中取上将",
+    description: "累计 100,000 XP",
+    flavor: "十万大军中，你就是最亮的星。",
+    condition: ({ stats }) => stats.xp >= 100_000,
+  },
+  {
+    id: "xp_1m",
+    category: "growth",
+    rarity: "epic",
+    name: "百万字灵魂",
+    description: "累计 1,000,000 XP",
+    flavor: "如果每个 token 是一步，你已经走了很远。",
+    condition: ({ stats }) => stats.xp >= 1_000_000,
+  },
+  {
+    id: "xp_10m",
+    category: "growth",
+    rarity: "epic",
+    name: "千万字成精",
+    description: "累计 10,000,000 XP",
+    flavor: "传说修炼千万年可以成精，你用 token 做到了。",
+    condition: ({ stats }) => stats.xp >= 10_000_000,
+  },
+  {
+    id: "xp_100m",
+    category: "growth",
+    rarity: "legendary",
+    name: "亿点点努力",
+    description: "累计 100,000,000 XP",
+    flavor: "亿点点？这明明是亿吨吨努力。",
+    condition: ({ stats }) => stats.xp >= 100_000_000,
+  },
+  {
+    id: "xp_1b",
+    category: "growth",
+    rarity: "legendary",
+    name: "十亿树王",
+    description: "累计 1,000,000,000 XP",
+    flavor: "整片森林都得叫你一声大哥。",
+    condition: ({ stats }) => stats.xp >= 1_000_000_000,
+  },
+  {
+    id: "reborn",
+    category: "growth",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "涅槃",
+    description: "重置后再次满级",
+    flavor: "浴火重生，更胜从前。",
+    condition: () => false,
+  },
+  {
+    id: "daily_1k",
+    category: "peak",
+    rarity: "common",
+    name: "热身完毕",
+    description: "单日 XP 达到 1,000",
+    flavor: "热身而已，真正的锻炼还没开始。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 1_000,
+  },
+  {
+    id: "daily_10k",
+    category: "peak",
+    rarity: "common",
+    name: "今天真拼了",
+    description: "单日 XP 达到 10,000",
+    flavor: "今天的你，值得一杯奶茶。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 10_000,
+  },
+  {
+    id: "daily_50k",
+    category: "peak",
+    rarity: "rare",
+    name: "疯狂星期四",
+    description: "单日 XP 达到 50,000",
+    flavor: "V 我 50k XP，谢谢。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 50_000,
+  },
+  {
+    id: "daily_1m",
+    category: "peak",
+    rarity: "epic",
+    name: "今日爆肝",
+    description: "单日 XP 达到 1,000,000",
+    flavor: "你的肝发来了求救信号。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 1_000_000,
+  },
+  {
+    id: "daily_10m",
+    category: "peak",
+    rarity: "epic",
+    name: "服务器发烫",
+    description: "单日 XP 达到 10,000,000",
+    flavor: "机房管理员已经拿起了灭火器。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 10_000_000,
+  },
+  {
+    id: "daily_100m",
+    category: "peak",
+    rarity: "legendary",
+    name: "天气系统失控",
+    description: "单日 XP 达到 100,000,000",
+    flavor: "气象局表示无法预测此次风暴。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 100_000_000,
+  },
+  {
+    id: "streak_3",
+    category: "growth",
+    rarity: "common",
+    name: "三天打鱼",
+    description: "连续 3 天有 XP",
+    flavor: "坚持三天已经超过了很多新年计划。",
+    condition: ({ consecutiveDays }) => consecutiveDays >= 3,
+  },
+  {
+    id: "streak_7",
+    category: "growth",
+    rarity: "rare",
+    name: "不打鱼了",
+    description: "连续 7 天有 XP",
+    flavor: "两天晒网的日子一去不复返了。",
+    condition: ({ consecutiveDays }) => consecutiveDays >= 7,
+  },
+  {
+    id: "streak_30",
+    category: "growth",
+    rarity: "legendary",
+    name: "月租户",
+    description: "连续 30 天有 XP",
+    flavor: "房东表示你可以考虑签长期合同了。",
+    condition: ({ consecutiveDays }) => consecutiveDays >= 30,
+  },
+  {
+    id: "burst_60",
+    category: "peak",
+    rarity: "common",
+    name: "灵感爆发",
+    description: "XP/min 达到 60",
+    flavor: "灵感来了挡都挡不住。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 60,
+  },
+  {
+    id: "burst_10k",
+    category: "peak",
+    rarity: "rare",
+    name: "手速起飞",
+    description: "XP/min 达到 10,000",
+    flavor: "你的键盘正在请求加薪。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 10_000,
+  },
+  {
+    id: "burst_100k",
+    category: "peak",
+    rarity: "epic",
+    name: "雨云生成器",
+    description: "XP/min 达到 100,000",
+    flavor: "云层越来越厚，暴风雨即将来临。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 100_000,
+  },
+  {
+    id: "burst_1m",
+    category: "peak",
+    rarity: "legendary",
+    name: "风暴召唤师",
+    description: "XP/min 达到 1,000,000",
+    flavor: "这不是 coding，这是召唤天气奇观。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 1_000_000,
+  },
+  {
+    id: "long_session",
+    category: "growth",
+    rarity: "epic",
+    planned: true,
+    name: "坐忘",
+    description: "单 session 持续超过 4 小时",
+    flavor: "你和椅子达成了高度同步。",
+    condition: () => false,
+  },
+  {
+    id: "midnight",
+    category: "time",
+    rarity: "common",
+    name: "午夜写诗",
+    description: "凌晨 0 点以后还在用",
+    flavor: "夜色正好，代码也正好。",
+    condition: ({ hourSet }) => hourSet.has(0),
+  },
+  {
+    id: "deep_night",
+    category: "time",
+    rarity: "rare",
+    name: "夜猫本猫",
+    description: "凌晨 3 点还在 coding",
+    flavor: "凌晨三点的代码，有种别样的浪漫。",
+    condition: ({ hourSet }) => hourSet.has(3),
+  },
+  {
+    id: "sunrise",
+    category: "time",
+    rarity: "rare",
+    name: "看过日出",
+    description: "凌晨 5 点还在 coding",
+    flavor: "是通宵到天亮，不是早起看日出对吧？",
+    condition: ({ hourSet }) => hourSet.has(5),
+  },
+  {
+    id: "early_bird",
+    category: "time",
+    rarity: "common",
+    name: "早起的鸟",
+    description: "早上 6 点到 7 点有 XP",
+    flavor: "早起的鸟儿有虫吃，早起的 coder 有 bug 修。",
+    condition: ({ hourSet }) => hourSet.has(6),
+  },
+  {
+    id: "all_nighter",
+    category: "time",
+    rarity: "epic",
+    planned: true,
+    name: "昼夜不分",
+    description: "同一 session 跨越午夜",
+    flavor: "对你来说，时间不过是屏幕右下角的数字。",
+    condition: () => false,
+  },
+  {
+    id: "weekend_warrior",
+    category: "time",
+    rarity: "rare",
+    name: "周末不休",
+    description: "周六周日各有 XP",
+    flavor: "休息日只是换一种方式继续努力。",
+    condition: ({ weekendWarrior }) => weekendWarrior,
+  },
+  {
+    id: "codex_connected",
+    category: "agent",
+    rarity: "common",
+    name: "Codex 接入",
+    description: "Codex 有第一条事件",
+    flavor: "欢迎 Codex 加入豪华午餐。",
+    condition: ({ activeSources }) => activeSources.has("codex"),
+  },
+  {
+    id: "claude_connected",
+    category: "agent",
+    rarity: "common",
+    name: "Claude 接入",
+    description: "Claude Code 有第一条事件",
+    flavor: "Claude 已就位，请下达指令。",
+    condition: ({ activeSources }) => activeSources.has("claude"),
+  },
+  {
+    id: "openclaw_connected",
+    category: "agent",
+    rarity: "common",
+    name: "Kiki 接入",
+    description: "OpenClaw 有第一条事件",
+    flavor: "Kiki 说这棵树可以养。",
+    condition: ({ activeSources }) => activeSources.has("openclaw"),
+  },
+  {
+    id: "opencode_connected",
+    category: "agent",
+    rarity: "rare",
+    name: "四合一",
+    description: "OpenCode 也接上了",
+    flavor: "集齐四个 agent 可以召唤神龙。",
+    condition: ({ activeSources }) => activeSources.has("opencode"),
+  },
+  {
+    id: "all_agents",
+    category: "agent",
+    rarity: "legendary",
+    name: "全家桶",
+    description: "四种 agent 全部接入",
+    flavor: "恭喜获得全家桶套餐，附赠加大可乐。",
+    condition: ({ activeSources }) => activeSources.size >= 4,
+  },
+  {
+    id: "multi_agent_day",
+    category: "agent",
+    rarity: "epic",
+    name: "多线作战",
+    description: "同一天用了 3 种 agent",
+    flavor: "一个脑袋不够用，那就多开几条线。",
+    condition: ({ maxSourcesOneDay }) => maxSourcesOneDay >= 3,
+  },
+  {
+    id: "agent_switcher",
+    category: "agent",
+    rarity: "rare",
+    name: "不忠诚",
+    description: "10 分钟内切换了 agent",
+    flavor: "花心不是你的错，是 agent 太多了。",
+    condition: ({ hasAgentSwitchWithinTenMinutes }) => hasAgentSwitchWithinTenMinutes,
+  },
+  {
+    id: "touch_grass",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "去外面走走",
+    description: "超过 7 天没有 XP 后再次回来",
+    flavor: "小树以为你真的去晒太阳了。",
+    condition: ({ touchGrassReturn }) => touchGrassReturn,
+  },
+  {
+    id: "coffee_overdose",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "咖啡因超载",
+    description: "连续 8 小时不间断 XP 入账",
+    flavor: "此成就不建议配合第三杯咖啡食用。",
+    condition: ({ coffeeOverdose }) => coffeeOverdose,
+  },
+  {
+    id: "xp_zero_day",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "摸鱼冠军",
+    description: "某天 XP 为 0 但 app 开着",
+    flavor: "今天的你选择了世界和平。",
+    condition: () => false,
+  },
+  {
+    id: "delete_regret",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "删了又装",
+    description: "重新安装后读到历史数据",
+    flavor: "我就知道你会回来的。",
+    condition: () => false,
+  },
+  {
+    id: "kiki_approved",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "获得 Kiki 认证",
+    description: "OpenClaw 贡献达到 500,000 XP",
+    flavor: "Kiki 点了点头，事情开始变得正式。",
+    condition: ({ sourceXp }) => sourceXp.openclaw >= 500_000,
+  },
+  {
+    id: "tree_whisperer",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "树语者",
+    description: "盯着小树超过 10 分钟没有动",
+    flavor: "你们之间产生了一种安静的理解。",
+    condition: () => false,
+  },
+  {
+    id: "fibonacci",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "数学家精神",
+    description: "某次 session XP 恰好是斐波那契数",
+    flavor: "1, 1, 2, 3, 5, 8, 13... 宇宙的密码藏在 session 里。",
+    condition: ({ hasFibonacciSession }) => hasFibonacciSession,
+  },
+];

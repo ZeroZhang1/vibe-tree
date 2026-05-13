@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-13 (v0.2.1)
+
+- Added hourly update checks with a small in-app `新版本` / `NEW` badge on the settings button.
+- Added terminal update support from Settings and the tray menu, including `git pull`, dependency sync, build, and automatic relaunch after success.
+- Added Simplified Chinese / English UI switching, with first-run language detection from the user's system language.
+- Added release-page access in Settings and localized update status copy across the renderer, tray, and notifications.
+- Moved achievement copy and UI localization out of the main renderer file to keep the app easier to maintain.
+- Fixed desktop tree pointer handling so it only follows the cursor while actively dragging, and restored double-click manager opening.
+- Updated the macOS tray icon to use a template-style menu bar icon that better matches system sizing.
+- Refined the compact full-number badge spacing and text sizing for large token totals.
+- Added the `1 token = 1 XP` help tip beside the tree level title.
+
 ## 2026-05-13
 
 - Added a full achievement system with persistent unlock state, rarity levels, category filters, status filters, locked-state hints, and detail modals.

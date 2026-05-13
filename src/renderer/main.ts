@@ -1,13 +1,26 @@
 import type {
   AchievementState,
   AchievementUnlock,
+  AppLanguage,
   LedgerEntry,
   LedgerFile,
   TreeAsset,
   TreeStage,
+  UpdateStatus,
   UsageStatus,
   WindowBounds,
 } from "../shared/types";
+import { ACHIEVEMENTS, CATEGORY_ORDER, rarityOrder } from "./achievements";
+import type { AchievementContext, AchievementDef } from "./achievements";
+import {
+  ACHIEVEMENT_CATEGORY_LABELS,
+  ACHIEVEMENT_RARITY_LABELS,
+  ACHIEVEMENT_TEXT_EN,
+  UI_TEXT,
+  browserLanguage,
+  normalizeLanguage,
+} from "./i18n";
+import type { AchievementCategory, AchievementRarity } from "./i18n";
 import "./styles.css";
 
 type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
@@ -17,8 +30,6 @@ type SourceScope = "today" | "total";
 type BadgeMetric = "level" | "total" | "rate";
 type TotalDisplayUnit = "raw" | "k" | "m" | "wan" | "yi";
 type DashboardTab = "home" | "achievements";
-type AchievementCategory = "growth" | "peak" | "time" | "agent" | "hidden";
-type AchievementRarity = "common" | "rare" | "epic" | "legendary" | "hidden";
 type AchievementCategoryFilter = AchievementCategory;
 type AchievementStatusFilter = "all" | "unlocked" | "locked" | "hidden";
 
@@ -69,36 +80,6 @@ interface SourceBreakdown {
   cacheWriteTokens: number;
 }
 
-interface AchievementDef {
-  id: string;
-  category: AchievementCategory;
-  rarity: AchievementRarity;
-  name: string;
-  description: string;
-  flavor?: string;
-  hidden?: boolean;
-  planned?: boolean;
-  condition: (context: AchievementContext) => boolean;
-  trigger?: (context: AchievementContext) => Record<string, unknown>;
-}
-
-interface AchievementContext {
-  stats: Stats;
-  entries: LedgerEntry[];
-  stageIndex: number;
-  maxDailyXp: number;
-  consecutiveDays: number;
-  activeSources: Set<HistorySourceId>;
-  maxSourcesOneDay: number;
-  hasAgentSwitchWithinTenMinutes: boolean;
-  sourceXp: Record<HistorySourceId, number>;
-  hourSet: Set<number>;
-  weekendWarrior: boolean;
-  touchGrassReturn: boolean;
-  coffeeOverdose: boolean;
-  hasFibonacciSession: boolean;
-}
-
 interface PureSvgManifest {
   stages: Array<{
     id: string;
@@ -124,442 +105,6 @@ interface GameBalance {
   stages: Array<{ minLevel: number; id: string; label: string }>;
 }
 
-const ACHIEVEMENT_CATEGORY_LABELS: Record<AchievementCategory, string> = {
-  growth: "成长之路",
-  peak: "巅峰时刻",
-  time: "时间档案",
-  agent: "Agent 图鉴",
-  hidden: "未解之谜",
-};
-
-const ACHIEVEMENT_RARITY_LABELS: Record<AchievementRarity, string> = {
-  common: "普通",
-  rare: "罕见",
-  epic: "史诗",
-  legendary: "传说",
-  hidden: "隐藏",
-};
-
-const CATEGORY_ORDER: AchievementCategory[] = ["growth", "peak", "time", "agent", "hidden"];
-
-function rarityOrder(rarity: AchievementRarity): number {
-  const order: Record<AchievementRarity, number> = { legendary: 0, epic: 1, rare: 2, hidden: 3, common: 4 };
-  return order[rarity] ?? 5;
-}
-
-const ACHIEVEMENTS: AchievementDef[] = [
-  {
-    id: "sprout",
-    category: "growth",
-    rarity: "common",
-    name: "破土而出",
-    description: "小树发芽了",
-    flavor: "每一棵大树，都曾是一粒种子。",
-    condition: ({ stats }) => stats.xp >= 1_000,
-  },
-  {
-    id: "sapling",
-    category: "growth",
-    rarity: "rare",
-    name: "亭亭玉立",
-    description: "长出像样的树冠",
-    flavor: "你的树已经不再是路边的杂草了。",
-    condition: ({ stageIndex }) => stageIndex >= 2,
-  },
-  {
-    id: "big_tree",
-    category: "growth",
-    rarity: "legendary",
-    name: "枝繁叶茂",
-    description: "已经是一棵大树了",
-    flavor: "鸟儿们开始考虑在你这里安家。",
-    condition: ({ stageIndex }) => stageIndex >= 5,
-  },
-  {
-    id: "xp_10k",
-    category: "growth",
-    rarity: "common",
-    name: "万字打工人",
-    description: "累计 10,000 XP",
-    flavor: "一万个 token，都是汗水的结晶。",
-    condition: ({ stats }) => stats.xp >= 10_000,
-  },
-  {
-    id: "xp_100k",
-    category: "growth",
-    rarity: "rare",
-    name: "十万军中取上将",
-    description: "累计 100,000 XP",
-    flavor: "十万大军中，你就是最亮的星。",
-    condition: ({ stats }) => stats.xp >= 100_000,
-  },
-  {
-    id: "xp_1m",
-    category: "growth",
-    rarity: "epic",
-    name: "百万字灵魂",
-    description: "累计 1,000,000 XP",
-    flavor: "如果每个 token 是一步，你已经走了很远。",
-    condition: ({ stats }) => stats.xp >= 1_000_000,
-  },
-  {
-    id: "xp_10m",
-    category: "growth",
-    rarity: "epic",
-    name: "千万字成精",
-    description: "累计 10,000,000 XP",
-    flavor: "传说修炼千万年可以成精，你用 token 做到了。",
-    condition: ({ stats }) => stats.xp >= 10_000_000,
-  },
-  {
-    id: "xp_100m",
-    category: "growth",
-    rarity: "legendary",
-    name: "亿点点努力",
-    description: "累计 100,000,000 XP",
-    flavor: "亿点点？这明明是亿吨吨努力。",
-    condition: ({ stats }) => stats.xp >= 100_000_000,
-  },
-  {
-    id: "xp_1b",
-    category: "growth",
-    rarity: "legendary",
-    name: "十亿树王",
-    description: "累计 1,000,000,000 XP",
-    flavor: "整片森林都得叫你一声大哥。",
-    condition: ({ stats }) => stats.xp >= 1_000_000_000,
-  },
-  {
-    id: "reborn",
-    category: "growth",
-    rarity: "hidden",
-    hidden: true,
-    planned: true,
-    name: "涅槃",
-    description: "重置后再次满级",
-    flavor: "浴火重生，更胜从前。",
-    condition: () => false,
-  },
-  {
-    id: "daily_1k",
-    category: "peak",
-    rarity: "common",
-    name: "热身完毕",
-    description: "单日 XP 达到 1,000",
-    flavor: "热身而已，真正的锻炼还没开始。",
-    condition: ({ maxDailyXp }) => maxDailyXp >= 1_000,
-  },
-  {
-    id: "daily_10k",
-    category: "peak",
-    rarity: "common",
-    name: "今天真拼了",
-    description: "单日 XP 达到 10,000",
-    flavor: "今天的你，值得一杯奶茶。",
-    condition: ({ maxDailyXp }) => maxDailyXp >= 10_000,
-  },
-  {
-    id: "daily_50k",
-    category: "peak",
-    rarity: "rare",
-    name: "疯狂星期四",
-    description: "单日 XP 达到 50,000",
-    flavor: "V 我 50k XP，谢谢。",
-    condition: ({ maxDailyXp }) => maxDailyXp >= 50_000,
-  },
-  {
-    id: "daily_1m",
-    category: "peak",
-    rarity: "epic",
-    name: "今日爆肝",
-    description: "单日 XP 达到 1,000,000",
-    flavor: "你的肝发来了求救信号。",
-    condition: ({ maxDailyXp }) => maxDailyXp >= 1_000_000,
-  },
-  {
-    id: "daily_10m",
-    category: "peak",
-    rarity: "epic",
-    name: "服务器发烫",
-    description: "单日 XP 达到 10,000,000",
-    flavor: "机房管理员已经拿起了灭火器。",
-    condition: ({ maxDailyXp }) => maxDailyXp >= 10_000_000,
-  },
-  {
-    id: "daily_100m",
-    category: "peak",
-    rarity: "legendary",
-    name: "天气系统失控",
-    description: "单日 XP 达到 100,000,000",
-    flavor: "气象局表示无法预测此次风暴。",
-    condition: ({ maxDailyXp }) => maxDailyXp >= 100_000_000,
-  },
-  {
-    id: "streak_3",
-    category: "growth",
-    rarity: "common",
-    name: "三天打鱼",
-    description: "连续 3 天有 XP",
-    flavor: "坚持三天已经超过了很多新年计划。",
-    condition: ({ consecutiveDays }) => consecutiveDays >= 3,
-  },
-  {
-    id: "streak_7",
-    category: "growth",
-    rarity: "rare",
-    name: "不打鱼了",
-    description: "连续 7 天有 XP",
-    flavor: "两天晒网的日子一去不复返了。",
-    condition: ({ consecutiveDays }) => consecutiveDays >= 7,
-  },
-  {
-    id: "streak_30",
-    category: "growth",
-    rarity: "legendary",
-    name: "月租户",
-    description: "连续 30 天有 XP",
-    flavor: "房东表示你可以考虑签长期合同了。",
-    condition: ({ consecutiveDays }) => consecutiveDays >= 30,
-  },
-  {
-    id: "burst_60",
-    category: "peak",
-    rarity: "common",
-    name: "灵感爆发",
-    description: "XP/min 达到 60",
-    flavor: "灵感来了挡都挡不住。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 60,
-  },
-  {
-    id: "burst_10k",
-    category: "peak",
-    rarity: "rare",
-    name: "手速起飞",
-    description: "XP/min 达到 10,000",
-    flavor: "你的键盘正在请求加薪。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 10_000,
-  },
-  {
-    id: "burst_100k",
-    category: "peak",
-    rarity: "epic",
-    name: "雨云生成器",
-    description: "XP/min 达到 100,000",
-    flavor: "云层越来越厚，暴风雨即将来临。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 100_000,
-  },
-  {
-    id: "burst_1m",
-    category: "peak",
-    rarity: "legendary",
-    name: "风暴召唤师",
-    description: "XP/min 达到 1,000,000",
-    flavor: "这不是 coding，这是召唤天气奇观。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 1_000_000,
-  },
-  {
-    id: "long_session",
-    category: "growth",
-    rarity: "epic",
-    planned: true,
-    name: "坐忘",
-    description: "单 session 持续超过 4 小时",
-    flavor: "你和椅子达成了高度同步。",
-    condition: () => false,
-  },
-  {
-    id: "midnight",
-    category: "time",
-    rarity: "common",
-    name: "午夜写诗",
-    description: "凌晨 0 点以后还在用",
-    flavor: "夜色正好，代码也正好。",
-    condition: ({ hourSet }) => hourSet.has(0),
-  },
-  {
-    id: "deep_night",
-    category: "time",
-    rarity: "rare",
-    name: "夜猫本猫",
-    description: "凌晨 3 点还在 coding",
-    flavor: "凌晨三点的代码，有种别样的浪漫。",
-    condition: ({ hourSet }) => hourSet.has(3),
-  },
-  {
-    id: "sunrise",
-    category: "time",
-    rarity: "rare",
-    name: "看过日出",
-    description: "凌晨 5 点还在 coding",
-    flavor: "是通宵到天亮，不是早起看日出对吧？",
-    condition: ({ hourSet }) => hourSet.has(5),
-  },
-  {
-    id: "early_bird",
-    category: "time",
-    rarity: "common",
-    name: "早起的鸟",
-    description: "早上 6 点到 7 点有 XP",
-    flavor: "早起的鸟儿有虫吃，早起的 coder 有 bug 修。",
-    condition: ({ hourSet }) => hourSet.has(6),
-  },
-  {
-    id: "all_nighter",
-    category: "time",
-    rarity: "epic",
-    planned: true,
-    name: "昼夜不分",
-    description: "同一 session 跨越午夜",
-    flavor: "对你来说，时间不过是屏幕右下角的数字。",
-    condition: () => false,
-  },
-  {
-    id: "weekend_warrior",
-    category: "time",
-    rarity: "rare",
-    name: "周末不休",
-    description: "周六周日各有 XP",
-    flavor: "休息日只是换一种方式继续努力。",
-    condition: ({ weekendWarrior }) => weekendWarrior,
-  },
-  {
-    id: "codex_connected",
-    category: "agent",
-    rarity: "common",
-    name: "Codex 接入",
-    description: "Codex 有第一条事件",
-    flavor: "欢迎 Codex 加入豪华午餐。",
-    condition: ({ activeSources }) => activeSources.has("codex"),
-  },
-  {
-    id: "claude_connected",
-    category: "agent",
-    rarity: "common",
-    name: "Claude 接入",
-    description: "Claude Code 有第一条事件",
-    flavor: "Claude 已就位，请下达指令。",
-    condition: ({ activeSources }) => activeSources.has("claude"),
-  },
-  {
-    id: "openclaw_connected",
-    category: "agent",
-    rarity: "common",
-    name: "Kiki 接入",
-    description: "OpenClaw 有第一条事件",
-    flavor: "Kiki 说这棵树可以养。",
-    condition: ({ activeSources }) => activeSources.has("openclaw"),
-  },
-  {
-    id: "opencode_connected",
-    category: "agent",
-    rarity: "rare",
-    name: "四合一",
-    description: "OpenCode 也接上了",
-    flavor: "集齐四个 agent 可以召唤神龙。",
-    condition: ({ activeSources }) => activeSources.has("opencode"),
-  },
-  {
-    id: "all_agents",
-    category: "agent",
-    rarity: "legendary",
-    name: "全家桶",
-    description: "四种 agent 全部接入",
-    flavor: "恭喜获得全家桶套餐，附赠加大可乐。",
-    condition: ({ activeSources }) => activeSources.size >= 4,
-  },
-  {
-    id: "multi_agent_day",
-    category: "agent",
-    rarity: "epic",
-    name: "多线作战",
-    description: "同一天用了 3 种 agent",
-    flavor: "一个脑袋不够用，那就多开几条线。",
-    condition: ({ maxSourcesOneDay }) => maxSourcesOneDay >= 3,
-  },
-  {
-    id: "agent_switcher",
-    category: "agent",
-    rarity: "rare",
-    name: "不忠诚",
-    description: "10 分钟内切换了 agent",
-    flavor: "花心不是你的错，是 agent 太多了。",
-    condition: ({ hasAgentSwitchWithinTenMinutes }) => hasAgentSwitchWithinTenMinutes,
-  },
-  {
-    id: "touch_grass",
-    category: "hidden",
-    rarity: "hidden",
-    hidden: true,
-    name: "去外面走走",
-    description: "超过 7 天没有 XP 后再次回来",
-    flavor: "小树以为你真的去晒太阳了。",
-    condition: ({ touchGrassReturn }) => touchGrassReturn,
-  },
-  {
-    id: "coffee_overdose",
-    category: "hidden",
-    rarity: "hidden",
-    hidden: true,
-    name: "咖啡因超载",
-    description: "连续 8 小时不间断 XP 入账",
-    flavor: "此成就不建议配合第三杯咖啡食用。",
-    condition: ({ coffeeOverdose }) => coffeeOverdose,
-  },
-  {
-    id: "xp_zero_day",
-    category: "hidden",
-    rarity: "hidden",
-    hidden: true,
-    planned: true,
-    name: "摸鱼冠军",
-    description: "某天 XP 为 0 但 app 开着",
-    flavor: "今天的你选择了世界和平。",
-    condition: () => false,
-  },
-  {
-    id: "delete_regret",
-    category: "hidden",
-    rarity: "hidden",
-    hidden: true,
-    planned: true,
-    name: "删了又装",
-    description: "重新安装后读到历史数据",
-    flavor: "我就知道你会回来的。",
-    condition: () => false,
-  },
-  {
-    id: "kiki_approved",
-    category: "hidden",
-    rarity: "hidden",
-    hidden: true,
-    name: "获得 Kiki 认证",
-    description: "OpenClaw 贡献达到 500,000 XP",
-    flavor: "Kiki 点了点头，事情开始变得正式。",
-    condition: ({ sourceXp }) => sourceXp.openclaw >= 500_000,
-  },
-  {
-    id: "tree_whisperer",
-    category: "hidden",
-    rarity: "hidden",
-    hidden: true,
-    planned: true,
-    name: "树语者",
-    description: "盯着小树超过 10 分钟没有动",
-    flavor: "你们之间产生了一种安静的理解。",
-    condition: () => false,
-  },
-  {
-    id: "fibonacci",
-    category: "hidden",
-    rarity: "hidden",
-    hidden: true,
-    name: "数学家精神",
-    description: "某次 session XP 恰好是斐波那契数",
-    flavor: "1, 1, 2, 3, 5, 8, 13... 宇宙的密码藏在 session 里。",
-    condition: ({ hasFibonacciSession }) => hasFibonacciSession,
-  },
-];
-
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app");
 document.title = "Vibe Tree";
@@ -570,6 +115,13 @@ let ledger: LedgerFile | null = null;
 let tree: TreeAsset | null = null;
 let gameBalance: GameBalance | null = null;
 let usageStatus: UsageStatus | null = null;
+let updateStatus: UpdateStatus = {
+  checking: false,
+  installing: false,
+  available: false,
+  canTerminalUpdate: false,
+  currentVersion: "",
+};
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
@@ -597,7 +149,22 @@ let expandedSourceKey: string | null = null;
 let dragState: null | {
   startMouse: { x: number; y: number };
   startBounds: WindowBounds;
+  pointerId: number;
 } = null;
+let pendingDragPointerId: number | null = null;
+let activePetPointer: null | {
+  pointerId: number;
+  x: number;
+  y: number;
+  moved: boolean;
+} = null;
+let lastPetTap: null | {
+  time: number;
+  x: number;
+  y: number;
+} = null;
+let appLanguage: AppLanguage = browserLanguage();
+
 
 if (viewMode === "pet") {
   app.innerHTML = `
@@ -627,10 +194,10 @@ if (viewMode === "pet") {
       <aside class="pet-preview-panel">
         <header class="app-title">
           <p>Vibe Tree</p>
-          <h1>Token 天气树</h1>
+          <h1 data-i18n="productTitle">Token 天气树</h1>
         </header>
 
-        <section class="preview-stage" aria-label="桌面小树预览">
+        <section class="preview-stage" aria-label="桌面小树预览" data-i18n-aria="petPreviewAria">
           <div class="weather-layer weather-back" id="previewWeatherBack"></div>
           <div class="pet-aura"></div>
           <img class="tree-image" id="previewTreeImage" alt="Vibe Tree preview" draggable="false" />
@@ -647,19 +214,25 @@ if (viewMode === "pet") {
           </div>
         </section>
 
-        <nav class="side-tabs" id="sideTabs" aria-label="页面切换">
-          <button type="button" data-dashboard-tab="home">主页</button>
-          <button type="button" data-dashboard-tab="achievements">成就</button>
+        <nav class="side-tabs" id="sideTabs" aria-label="页面切换" data-i18n-aria="pageSwitchAria">
+          <button type="button" data-dashboard-tab="home" data-i18n="home">主页</button>
+          <button type="button" data-dashboard-tab="achievements" data-i18n="achievements">成就</button>
         </nav>
 
       </aside>
-      <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置">⚙</button>
+      <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置" data-i18n-aria="openSettings" data-i18n-title="settings">
+        <span aria-hidden="true">⚙</span>
+        <span class="settings-update-badge" aria-hidden="true">NEW</span>
+      </button>
 
       <section class="dashboard">
         <header class="dashboard-header">
           <div>
-            <p class="eyebrow">Live growth</p>
-            <h2 id="levelTitle">Lv.1 新芽</h2>
+            <p class="eyebrow" data-i18n="liveGrowth">Live growth</p>
+            <div class="level-title-row">
+              <h2 id="levelTitle">Lv.1 新芽</h2>
+              <span class="help-tip" tabindex="0" aria-label="1 token = 1 XP" data-tooltip="1 token = 1 XP" data-i18n-tooltip="xpHelp">?</span>
+            </div>
           </div>
           <div class="weather-readout">
             <span id="weatherLabel">晴朗</span>
@@ -669,15 +242,15 @@ if (viewMode === "pet") {
 
         <div class="metric-grid">
           <article>
-            <span>累计 XP</span>
+            <span data-i18n="metricTotalXp">累计 XP</span>
             <strong id="totalText">0</strong>
           </article>
           <article>
-            <span>今日成长</span>
+            <span data-i18n="metricToday">今日成长</span>
             <strong id="todayText">0</strong>
           </article>
           <article>
-            <span>活跃会话</span>
+            <span data-i18n="metricSessions">活跃会话</span>
             <strong id="activeSessionsText">0</strong>
           </article>
         </div>
@@ -695,39 +268,39 @@ if (viewMode === "pet") {
         <section class="achievement-card" aria-label="Achievements">
           <div class="section-header">
             <div>
-              <h3>纪念 / 成就</h3>
+              <h3 data-i18n="memorialAchievements">纪念 / 成就</h3>
             </div>
             <div class="achievement-header-tools">
-              <button class="achievement-preview-button" id="achievementToastPreviewButton" type="button">预览弹窗</button>
+              <button class="achievement-preview-button" id="achievementToastPreviewButton" type="button" data-i18n="previewToast">预览弹窗</button>
               <span id="achievementSummary">0 / 0</span>
             </div>
           </div>
           <div class="achievement-overview" id="achievementOverview"></div>
           <div class="achievement-filter-panel">
-            <div class="achievement-category-tabs" id="achievementCategoryTabs" role="tablist" aria-label="成就分类">
-              <button type="button" data-achievement-category="growth">成长之路</button>
-              <button type="button" data-achievement-category="peak">巅峰时刻</button>
-              <button type="button" data-achievement-category="time">时间档案</button>
-              <button type="button" data-achievement-category="agent">Agent</button>
-              <button type="button" data-achievement-category="hidden">未解之谜</button>
+            <div class="achievement-category-tabs" id="achievementCategoryTabs" role="tablist" aria-label="成就分类" data-i18n-aria="achievementCategoryAria">
+              <button type="button" data-achievement-category="growth" data-i18n-achievement-category="growth">成长之路</button>
+              <button type="button" data-achievement-category="peak" data-i18n-achievement-category="peak">巅峰时刻</button>
+              <button type="button" data-achievement-category="time" data-i18n-achievement-category="time">时间档案</button>
+              <button type="button" data-achievement-category="agent" data-i18n-achievement-category="agent">Agent</button>
+              <button type="button" data-achievement-category="hidden" data-i18n-achievement-category="hidden">未解之谜</button>
             </div>
-            <div class="achievement-status-tabs" id="achievementStatusTabs" role="tablist" aria-label="成就状态">
-              <button type="button" data-achievement-status="all">全部</button>
-              <button type="button" data-achievement-status="unlocked">已点亮</button>
-              <button type="button" data-achievement-status="locked">未点亮</button>
+            <div class="achievement-status-tabs" id="achievementStatusTabs" role="tablist" aria-label="成就状态" data-i18n-aria="achievementStatusAria">
+              <button type="button" data-achievement-status="all" data-i18n="all">全部</button>
+              <button type="button" data-achievement-status="unlocked" data-i18n="unlocked">已点亮</button>
+              <button type="button" data-achievement-status="locked" data-i18n="locked">未点亮</button>
             </div>
           </div>
           <div class="achievement-recent" id="achievementRecent"></div>
           <div class="achievement-grid" id="achievementGrid"></div>
         </section>
 
-        <section class="source-card" aria-label="Token 来源">
+        <section class="source-card" aria-label="Token 来源" data-i18n-aria="sourceAria">
           <div class="section-header">
-            <h3>数据来源</h3>
+            <h3 data-i18n="sourceTitle">数据来源</h3>
             <div class="source-header-tools">
-              <div class="source-scope-tabs" id="sourceScopeTabs" role="tablist" aria-label="数据来源范围">
-                <button type="button" data-source-scope="today">今日</button>
-                <button type="button" data-source-scope="total">总计</button>
+              <div class="source-scope-tabs" id="sourceScopeTabs" role="tablist" aria-label="数据来源范围" data-i18n-aria="sourceScopeAria">
+                <button type="button" data-source-scope="today" data-i18n="today">今日</button>
+                <button type="button" data-source-scope="total" data-i18n="total">总计</button>
               </div>
             </div>
           </div>
@@ -736,7 +309,7 @@ if (viewMode === "pet") {
 
         <section class="chart-card">
           <div class="section-header">
-            <h3>最近 7 天</h3>
+            <h3 data-i18n="recentSevenDays">最近 7 天</h3>
             <span id="peakText">5 分钟 +0 XP</span>
           </div>
         </section>
@@ -748,17 +321,17 @@ if (viewMode === "pet") {
         <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
           <header class="settings-panel-header">
             <div>
-              <p class="eyebrow">偏好设置</p>
-              <h3 id="settingsTitle">设置</h3>
+              <p class="eyebrow" data-i18n="preferences">偏好设置</p>
+              <h3 id="settingsTitle" data-i18n="settings">设置</h3>
             </div>
-            <button class="icon-button" id="settingsCloseButton" type="button" aria-label="关闭设置">×</button>
+            <button class="icon-button" id="settingsCloseButton" type="button" aria-label="关闭设置" data-i18n-aria="closeSettings">×</button>
           </header>
 
           <section class="settings-section">
-            <h4>桌面小树</h4>
-            <div class="pet-settings" aria-label="桌面小树设置">
+            <h4 data-i18n="desktopTree">桌面小树</h4>
+            <div class="pet-settings" aria-label="桌面小树设置" data-i18n-aria="desktopTreeAria">
               <label class="scale-select">
-                大小
+                <span data-i18n="size">大小</span>
                 <select id="scaleSelect">
                   <option value="0.5">0.5x</option>
                   <option value="1">1x</option>
@@ -768,76 +341,113 @@ if (viewMode === "pet") {
               </label>
               <label class="toggle-row">
                 <input id="lockInput" type="checkbox" />
-                <span>锁定小树位置</span>
+                <span data-i18n="lockTree">锁定小树位置</span>
               </label>
             </div>
           </section>
 
           <section class="settings-section">
-            <h4>牌子显示</h4>
-            <div class="badge-settings" aria-label="牌子显示">
+            <h4 data-i18n="badgeDisplay">牌子显示</h4>
+            <div class="badge-settings" aria-label="牌子显示" data-i18n-aria="badgeDisplay">
               <label>
-                正面
+                <span data-i18n="badgeFront">正面</span>
                 <select id="badgeFrontMetricSelect">
-                  <option value="level">等级</option>
-                  <option value="total">累计 token</option>
-                  <option value="rate">token/s</option>
+                  <option value="level" data-i18n="metricLevel">等级</option>
+                  <option value="total" data-i18n="metricTotalToken">累计 token</option>
+                  <option value="rate" data-i18n="metricRate">token/s</option>
                 </select>
               </label>
               <label>
-                背面
+                <span data-i18n="badgeBack">背面</span>
                 <select id="badgeBackMetricSelect">
-                  <option value="level">等级</option>
-                  <option value="total">累计 token</option>
-                  <option value="rate">token/s</option>
+                  <option value="level" data-i18n="metricLevel">等级</option>
+                  <option value="total" data-i18n="metricTotalToken">累计 token</option>
+                  <option value="rate" data-i18n="metricRate">token/s</option>
                 </select>
               </label>
               <label>
-                总量单位
+                <span data-i18n="totalUnit">总量单位</span>
                 <select id="totalDisplayUnitSelect">
-                  <option value="raw">完整数字</option>
+                  <option value="raw" data-i18n="unitRaw">完整数字</option>
                   <option value="k">k</option>
                   <option value="m">m</option>
-                  <option value="wan">万</option>
-                  <option value="yi">亿</option>
+                  <option value="wan" data-i18n="unitWan">万</option>
+                  <option value="yi" data-i18n="unitYi">亿</option>
                 </select>
               </label>
             </div>
           </section>
 
           <section class="settings-section">
-            <h4>设备</h4>
-            <div class="device-controls" aria-label="设备设置">
+            <h4 data-i18n="languageTitle">语言</h4>
+            <label class="scale-select">
+              <span data-i18n="languageLabel">界面语言</span>
+              <select id="languageSelect">
+                <option value="zh-CN" data-i18n="languageChinese">简体中文</option>
+                <option value="en-US" data-i18n="languageEnglish">English</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="settings-section">
+            <h4 data-i18n="device">设备</h4>
+            <div class="device-controls" aria-label="设备设置" data-i18n-aria="deviceAria">
               <label class="toggle-row">
                 <input id="launchOnStartupInput" type="checkbox" />
-                <span>开机启动</span>
+                <span data-i18n="launchOnStartup">开机启动</span>
               </label>
               <label class="toggle-row">
                 <input id="silentStartupInput" type="checkbox" />
-                <span>静默启动</span>
+                <span data-i18n="silentStartup">静默启动</span>
               </label>
             </div>
           </section>
 
           <section class="settings-section">
-            <h4>Agent 路径</h4>
+            <h4 data-i18n="updateTitle">更新</h4>
+            <div class="update-settings" aria-label="更新设置" data-i18n-aria="updateAria">
+              <div class="update-status" id="updateStatusText">
+                <strong data-i18n="currentVersion">当前版本</strong>
+                <span data-i18n="waitingCheck">等待检查</span>
+              </div>
+              <label class="toggle-row">
+                <input id="updateCheckEnabledInput" type="checkbox" />
+                <span data-i18n="autoUpdateCheck">自动检测更新</span>
+              </label>
+              <div class="update-actions">
+                <button class="secondary-button" id="checkUpdateButton" type="button" data-i18n="checkUpdate">检查更新</button>
+                <button class="primary-button" id="installUpdateButton" type="button" data-i18n="terminalUpdate">终端更新</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h4 data-i18n="agentPaths">Agent 路径</h4>
             <div class="path-settings">
               <label>
-                Codex 路径
+                <span data-i18n="codexPath">Codex 路径</span>
                 <input id="codexSessionsDirInput" type="text" placeholder="~/.codex/sessions" />
               </label>
               <label>
-                Claude 路径
+                <span data-i18n="claudePath">Claude 路径</span>
                 <input id="claudeSessionsDirInput" type="text" placeholder="~/.claude/projects" />
               </label>
               <label>
-                OpenClaw 路径
+                <span data-i18n="openclawPath">OpenClaw 路径</span>
                 <input id="openclawSessionsDirInput" type="text" placeholder="~/.openclaw/agents" />
               </label>
               <label>
-                OpenCode 路径
+                <span data-i18n="opencodePath">OpenCode 路径</span>
                 <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/storage/message" />
               </label>
+            </div>
+          </section>
+
+          <section class="settings-section release-section">
+            <h4 data-i18n="releasePage">发布页</h4>
+            <div class="release-settings">
+              <span data-i18n="releaseDescription">查看版本记录和发布说明</span>
+              <button class="secondary-button" id="releasePageButton" type="button" data-i18n="openReleasePage">打开发布页</button>
             </div>
           </section>
         </div>
@@ -871,6 +481,12 @@ const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
 const silentStartupInput = document.querySelector<HTMLInputElement>("#silentStartupInput");
+const updateCheckEnabledInput = document.querySelector<HTMLInputElement>("#updateCheckEnabledInput");
+const updateStatusText = document.querySelector<HTMLElement>("#updateStatusText");
+const checkUpdateButton = document.querySelector<HTMLButtonElement>("#checkUpdateButton");
+const installUpdateButton = document.querySelector<HTMLButtonElement>("#installUpdateButton");
+const releasePageButton = document.querySelector<HTMLButtonElement>("#releasePageButton");
+const languageSelect = document.querySelector<HTMLSelectElement>("#languageSelect");
 const badgeFrontMetricSelect = document.querySelector<HTMLSelectElement>("#badgeFrontMetricSelect");
 const badgeBackMetricSelect = document.querySelector<HTMLSelectElement>("#badgeBackMetricSelect");
 const totalDisplayUnitSelect = document.querySelector<HTMLSelectElement>("#totalDisplayUnitSelect");
@@ -904,25 +520,131 @@ function setupHistoryCard() {
   card.innerHTML = `
     <div class="chart-top">
       <div>
-        <h3>最近 7 天</h3>
-        <span id="historySummary">全部来源</span>
+        <h3 data-i18n="recentSevenDays">最近 7 天</h3>
+        <span id="historySummary" data-i18n="historyAllSources">全部来源</span>
       </div>
-      <div class="history-tabs" id="historyTabs" role="tablist" aria-label="最近 7 天来源">
-        <button type="button" data-history-filter="all">全部</button>
+      <div class="history-tabs" id="historyTabs" role="tablist" aria-label="最近 7 天来源" data-i18n-aria="historySourceAria">
+        <button type="button" data-history-filter="all" data-i18n="all">全部</button>
         <button type="button" data-history-filter="codex">Codex</button>
         <button type="button" data-history-filter="openclaw">OpenClaw</button>
         <button type="button" data-history-filter="opencode">OpenCode</button>
         <button type="button" data-history-filter="claude">Claude Code</button>
       </div>
     </div>
-    <div class="history-legend" id="historyLegend" aria-label="token 类型">
+    <div class="history-legend" id="historyLegend" aria-label="token 类型" data-i18n-aria="historyTokenAria">
       <span><i class="legend-input"></i>input</span>
       <span><i class="legend-output"></i>output</span>
       <span><i class="legend-cache-read"></i>cache hit</span>
       <span><i class="legend-cache-write"></i>cache write</span>
     </div>
-    <div class="history-bars" id="historyBars" aria-label="最近 7 天 XP"></div>
+    <div class="history-bars" id="historyBars" aria-label="最近 7 天 XP" data-i18n-aria="recentSevenDays"></div>
   `;
+}
+
+
+function currentLanguage(): AppLanguage {
+  return normalizeLanguage(ledger?.settings.language ?? appLanguage);
+}
+
+function languageLocale(): string {
+  return currentLanguage();
+}
+
+function t(key: string): string {
+  return UI_TEXT[currentLanguage()][key] ?? UI_TEXT["zh-CN"][key] ?? key;
+}
+
+function applyI18n() {
+  document.documentElement.lang = languageLocale();
+  document.title = t("appTitle");
+  document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((element) => {
+    const key = element.dataset.i18n;
+    if (key) element.textContent = t(key);
+  });
+  document.querySelectorAll<HTMLElement>("[data-i18n-aria]").forEach((element) => {
+    const key = element.dataset.i18nAria;
+    if (key) element.setAttribute("aria-label", t(key));
+  });
+  document.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((element) => {
+    const key = element.dataset.i18nTitle;
+    if (key) element.setAttribute("title", t(key));
+  });
+  document.querySelectorAll<HTMLElement>("[data-i18n-tooltip]").forEach((element) => {
+    const key = element.dataset.i18nTooltip;
+    if (key) {
+      const value = t(key);
+      element.dataset.tooltip = value;
+      element.setAttribute("aria-label", value);
+    }
+  });
+  document.querySelectorAll<HTMLElement>("[data-i18n-achievement-category]").forEach((element) => {
+    const key = element.dataset.i18nAchievementCategory as AchievementCategory | undefined;
+    if (key) element.textContent = achievementCategoryLabel(key);
+  });
+  renderUpdateStatus();
+}
+
+function stageLabel(id: string, fallback: string) {
+  const labels: Record<AppLanguage, Record<string, string>> = {
+    "zh-CN": {
+      sprout: t("stageSprout"),
+      seedling: t("stageSeedling"),
+      young: t("stageYoung"),
+      medium: t("stageMedium"),
+      lush: t("stageLush"),
+      full: t("stageFull"),
+    },
+    "en-US": {
+      sprout: t("stageSprout"),
+      seedling: t("stageSeedling"),
+      young: t("stageYoung"),
+      medium: t("stageMedium"),
+      lush: t("stageLush"),
+      full: t("stageFull"),
+    },
+  };
+  return labels[currentLanguage()][id] ?? fallback;
+}
+
+function weatherLabel(id: WeatherId, fallback: string) {
+  const labels: Record<WeatherId, string> = {
+    clear: t("weatherClear"),
+    breeze: t("weatherBreeze"),
+    drizzle: t("weatherDrizzle"),
+    rain: t("weatherRain"),
+    thunder: t("weatherThunder"),
+    storm: t("weatherStorm"),
+  };
+  return labels[id] ?? fallback;
+}
+
+function activeSessionsText(count: number) {
+  if (currentLanguage() === "zh-CN") return `${count} ${t("sessionsUnit")}`;
+  return `${count} ${count === 1 ? "session" : t("sessionsUnit")}`;
+}
+
+function sourceActiveText(count: number) {
+  if (currentLanguage() === "zh-CN") {
+    return `${count} ${sourceScope === "today" ? t("sourceTodayActive") : t("sourceTotalActive")}`;
+  }
+  return `${count} ${sourceScope === "today" ? t("sourceTodayActive") : t("sourceTotalActive")}`;
+}
+
+function achievementText(def: AchievementDef): Pick<AchievementDef, "name" | "description" | "flavor"> {
+  if (currentLanguage() === "en-US") return ACHIEVEMENT_TEXT_EN[def.id] ?? def;
+  return def;
+}
+
+function achievementCategoryLabel(category: AchievementCategory) {
+  return ACHIEVEMENT_CATEGORY_LABELS[currentLanguage()][category] ?? ACHIEVEMENT_CATEGORY_LABELS["zh-CN"][category];
+}
+
+function achievementRarityLabel(rarity: AchievementRarity) {
+  return ACHIEVEMENT_RARITY_LABELS[currentLanguage()][rarity] ?? ACHIEVEMENT_RARITY_LABELS["zh-CN"][rarity];
+}
+
+function relativeTimeText(value: number, unitKey: "secondsAgo" | "minutesAgo" | "hoursAgo") {
+  return currentLanguage() === "zh-CN" ? `${value} ${t(unitKey)}` : `${value} ${t(unitKey)}`;
 }
 
 async function boot() {
@@ -942,22 +664,31 @@ async function boot() {
   tree = buildTreeAsset(manifest);
   gameBalance = balance;
   ledger = await window.bonsai.getLedger();
+  appLanguage = normalizeLanguage(ledger.settings.language);
   usageStatus = await window.bonsai.getUsageStatus();
+  updateStatus = await window.bonsai.getUpdateStatus();
   achievementState = await window.bonsai.getAchievements();
   initializeSeenAchievements();
 
   bindEvents();
+  applyI18n();
   render();
   setInterval(render, 1_000);
   startAutoBadgeFlipLoop();
 
   window.bonsai.onLedger((nextLedger) => {
     ledger = nextLedger;
+    appLanguage = normalizeLanguage(ledger.settings.language);
+    applyI18n();
     render();
   });
   window.bonsai.onUsageStatus((nextStatus) => {
     usageStatus = nextStatus;
     renderUsageStatus();
+  });
+  window.bonsai.onUpdateStatus((nextStatus) => {
+    updateStatus = nextStatus;
+    renderUpdateStatus();
   });
   window.bonsai.onAchievements((nextState, unlocked) => {
     achievementState = nextState;
@@ -994,18 +725,43 @@ function bindEvents() {
       void window.bonsai.setExpanded(true);
     });
 
-    petStage.addEventListener("mousedown", async (event) => {
+    petStage.addEventListener("pointerdown", async (event) => {
       if (event.button !== 0 || ledger?.settings.locked) return;
+      if ((event.target as HTMLElement).closest("#petLevelBadge")) return;
+      if (event.detail >= 2) {
+        lastPetTap = null;
+        activePetPointer = null;
+        void endPetDrag();
+        void window.bonsai.setExpanded(true);
+        return;
+      }
+      activePetPointer = {
+        pointerId: event.pointerId,
+        x: event.screenX,
+        y: event.screenY,
+        moved: false,
+      };
+      pendingDragPointerId = event.pointerId;
+      petStage.setPointerCapture(event.pointerId);
       const startBounds = await window.bonsai.getWindowBounds();
+      if (pendingDragPointerId !== event.pointerId || (event.buttons & 1) !== 1) return;
       if (!startBounds) return;
       dragState = {
         startMouse: { x: event.screenX, y: event.screenY },
         startBounds,
+        pointerId: event.pointerId,
       };
     });
 
-    window.addEventListener("mousemove", async (event) => {
+    petStage.addEventListener("pointermove", async (event) => {
+      if (activePetPointer?.pointerId === event.pointerId && pointerDistance(activePetPointer, event) > 6) {
+        activePetPointer.moved = true;
+      }
       if (!dragState) return;
+      if (dragState.pointerId !== event.pointerId || (event.buttons & 1) !== 1) {
+        await endPetDrag();
+        return;
+      }
       const dx = event.screenX - dragState.startMouse.x;
       const dy = event.screenY - dragState.startMouse.y;
       await window.bonsai.setWindowPosition({
@@ -1014,11 +770,14 @@ function bindEvents() {
       });
     });
 
-    window.addEventListener("mouseup", async () => {
-      if (!dragState) return;
-      dragState = null;
-      await window.bonsai.persistWindowPosition();
+    petStage.addEventListener("pointerup", (event) => {
+      const isDoubleTap = consumePetTap(event);
+      void endPetDrag();
+      if (isDoubleTap) void window.bonsai.setExpanded(true);
     });
+    petStage.addEventListener("pointercancel", () => void resetPetPointer());
+    petStage.addEventListener("lostpointercapture", () => void endPetDrag());
+    window.addEventListener("blur", () => void resetPetPointer());
   } else {
     previewLevelBadge?.addEventListener("pointerenter", () => {
       showLevelBadgeBack("#previewLevelBadge");
@@ -1056,6 +815,15 @@ function bindEvents() {
     render();
   });
 
+  languageSelect?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({ language: normalizeLanguage(languageSelect.value) });
+    appLanguage = ledger.settings.language;
+    lastHistoryChartKey = "";
+    applyI18n();
+    render();
+  });
+
   launchOnStartupInput?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ launchOnStartup: launchOnStartupInput.checked });
@@ -1066,6 +834,26 @@ function bindEvents() {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ silentStartup: silentStartupInput.checked });
     render();
+  });
+
+  updateCheckEnabledInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({ updateCheckEnabled: updateCheckEnabledInput.checked });
+    render();
+  });
+
+  checkUpdateButton?.addEventListener("click", async () => {
+    updateStatus = await window.bonsai.checkForUpdates();
+    renderUpdateStatus();
+  });
+
+  installUpdateButton?.addEventListener("click", async () => {
+    updateStatus = await window.bonsai.installUpdate();
+    renderUpdateStatus();
+  });
+
+  releasePageButton?.addEventListener("click", () => {
+    void window.bonsai.openUpdatePage();
   });
 
   badgeFrontMetricSelect?.addEventListener("change", async () => {
@@ -1188,6 +976,40 @@ function bindEvents() {
 
 }
 
+async function endPetDrag() {
+  const shouldPersist = Boolean(dragState);
+  pendingDragPointerId = null;
+  dragState = null;
+  if (shouldPersist) await window.bonsai.persistWindowPosition();
+}
+
+async function resetPetPointer() {
+  activePetPointer = null;
+  lastPetTap = null;
+  await endPetDrag();
+}
+
+function consumePetTap(event: PointerEvent) {
+  const pointer = activePetPointer;
+  activePetPointer = null;
+  if (!pointer || pointer.pointerId !== event.pointerId || pointer.moved || pointerDistance(pointer, event) > 8) {
+    lastPetTap = null;
+    return false;
+  }
+
+  const now = Date.now();
+  const isDoubleTap =
+    Boolean(lastPetTap) &&
+    now - lastPetTap!.time <= 420 &&
+    Math.hypot(event.screenX - lastPetTap!.x, event.screenY - lastPetTap!.y) <= 12;
+  lastPetTap = isDoubleTap ? null : { time: now, x: event.screenX, y: event.screenY };
+  return isDoubleTap;
+}
+
+function pointerDistance(start: { x: number; y: number }, event: PointerEvent) {
+  return Math.hypot(event.screenX - start.x, event.screenY - start.y);
+}
+
 async function updatePathSetting(
   key: "codexSessionsDir" | "claudeSessionsDir" | "openclawSessionsDir" | "opencodeSessionsDir",
   input: HTMLInputElement,
@@ -1222,11 +1044,11 @@ function render() {
 
   if (treeImage) {
     treeImage.src = assetUrl(stats.stage.image);
-    treeImage.alt = `${tree.displayName} ${stats.stage.label}`;
+    treeImage.alt = `${tree.displayName} ${stageLabel(stats.stage.id, stats.stage.label)}`;
   }
   if (previewTreeImage) {
     previewTreeImage.src = assetUrl(stats.stage.image);
-    previewTreeImage.alt = `${tree.displayName} ${stats.stage.label}`;
+    previewTreeImage.alt = `${tree.displayName} ${stageLabel(stats.stage.id, stats.stage.label)}`;
   }
 
   renderLevelBadge(
@@ -1243,14 +1065,14 @@ function render() {
     ledger.settings.badgeBackMetric,
     ledger.settings.totalDisplayUnit,
   );
-  text("#levelTitle", `Lv.${stats.level} ${stats.stage.label}`);
-  text("#weatherLabel", stats.weather.label);
+  text("#levelTitle", `Lv.${stats.level} ${stageLabel(stats.stage.id, stats.stage.label)}`);
+  text("#weatherLabel", weatherLabel(stats.weather.id, stats.weather.label));
   text("#weatherRateText", `${formatNumber(stats.weather.tokensPerMinute)} XP/min`);
   text("#totalText", formatNumber(stats.xp));
   text("#todayText", `+${formatNumber(stats.todayXp)}`);
-  text("#activeSessionsText", stats.activeSessions ? `${stats.activeSessions} 个` : "0");
-  text("#peakText", `5 分钟 +${formatNumber(stats.lastFiveMinuteXp)} XP`);
-  text("#nextLevelText", `距离 Lv.${stats.level + 1}`);
+  text("#activeSessionsText", stats.activeSessions ? activeSessionsText(stats.activeSessions) : "0");
+  text("#peakText", `${t("fiveMinutePeak")} +${formatNumber(stats.lastFiveMinuteXp)} XP`);
+  text("#nextLevelText", `${t("nextLevel")}${stats.level + 1}`);
   text("#progressText", `${formatNumber(stats.levelXp)} / ${formatNumber(stats.nextLevelXp)} XP`);
   renderScopedSourceBreakdown();
 
@@ -1258,8 +1080,10 @@ function render() {
   if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
   if (lockInput) lockInput.checked = ledger.settings.locked;
   if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
+  if (languageSelect) languageSelect.value = ledger.settings.language;
   if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
   if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
+  if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
   if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
   if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;
   if (totalDisplayUnitSelect) totalDisplayUnitSelect.value = ledger.settings.totalDisplayUnit;
@@ -1274,6 +1098,7 @@ function render() {
   }
   if (pendingLevelUp) triggerLevelUpAnimation(pendingLevelUp);
   renderUsageStatus();
+  renderUpdateStatus();
   renderHistoryChart(getSevenDayRows(ledger.entries, historyFilter), historyFilter);
   const achievementContext = buildAchievementContext(stats);
   renderAchievements(stats, achievementContext);
@@ -1334,19 +1159,19 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
   if (achievementOverviewElement) {
     achievementOverviewElement.innerHTML = `
       <article>
-        <span>完成率</span>
+        <span>${escapeHtml(t("completionRate"))}</span>
         <strong>${completion}%</strong>
       </article>
       <article>
-        <span>已点亮</span>
+        <span>${escapeHtml(t("unlockedCount"))}</span>
         <strong>${unlockedCount}</strong>
       </article>
       <article>
-        <span>传说</span>
+        <span>${escapeHtml(t("legendary"))}</span>
         <strong>${legendaryCount}</strong>
       </article>
       <article>
-        <span>隐藏</span>
+        <span>${escapeHtml(t("hidden"))}</span>
         <strong>${hiddenCount}</strong>
       </article>
     `;
@@ -1359,15 +1184,17 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
     achievementRecentElement.innerHTML = showcase.length
       ? showcase
           .map(
-            (def) =>
-              `<button type="button" class="rarity-${def.rarity}" data-achievement-id="${escapeHtml(def.id)}">${escapeHtml(def.name)}</button>`,
+            (def) => {
+              const copy = achievementText(def);
+              return `<button type="button" class="rarity-${def.rarity}" data-achievement-id="${escapeHtml(def.id)}">${escapeHtml(copy.name)}</button>`;
+            },
           )
           .join("")
-      : `<span>还没有高阶成就，等下一次点亮</span>`;
+      : `<span>${escapeHtml(t("noHighTierAchievements"))}</span>`;
   }
 
   if (!filteredDefs.length) {
-    achievementGridElement.innerHTML = `<div class="achievement-empty">这个筛选下还没有成就。</div>`;
+    achievementGridElement.innerHTML = `<div class="achievement-empty">${escapeHtml(t("noAchievementsForFilter"))}</div>`;
     return;
   }
 
@@ -1384,7 +1211,7 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
       return `
         <section class="achievement-category">
           <div class="achievement-category-title">
-            <strong>${escapeHtml(ACHIEVEMENT_CATEGORY_LABELS[cat])}</strong>
+            <strong>${escapeHtml(achievementCategoryLabel(cat))}</strong>
             <span>${defs.filter((def) => unlockedIds.has(def.id)).length}/${defs.length}</span>
           </div>
           <div class="achievement-items">
@@ -1417,23 +1244,24 @@ function achievementItemHtml(
   const reveal = unlocked || !def.hidden;
   const lockedHidden = def.hidden && !unlocked;
   const progress = achievementProgress(def, stats, context);
-  const rarityLabel = escapeHtml(ACHIEVEMENT_RARITY_LABELS[def.rarity]);
-  const meta = def.planned ? "未开放" : rarityLabel;
+  const copy = achievementText(def);
+  const rarityLabel = escapeHtml(achievementRarityLabel(def.rarity));
+  const meta = def.planned ? t("planned") : rarityLabel;
   const markIcon = unlocked ? "✦" : lockedHidden ? "?" : "·";
-  const conditionText = reveal ? def.description : "解锁后揭晓";
+  const conditionText = reveal ? copy.description : t("lockedReveal");
   return `
     <article class="achievement-item ${unlocked ? "unlocked" : "locked"} ${isNew ? "new" : ""} rarity-${def.rarity}" data-achievement-id="${def.id}">
       <div class="achievement-mark">${markIcon}</div>
       <div class="achievement-copy">
         <div>
-          <strong>${escapeHtml(reveal ? def.name : "???")}</strong>
+          <strong>${escapeHtml(reveal ? copy.name : "???")}</strong>
           <span>${meta}</span>
         </div>
         <p>${escapeHtml(conditionText)}</p>
         <div class="achievement-progress ${progress ? "" : "empty"}"><span style="width:${progress?.percent ?? 0}%"></span></div>
         <em>${escapeHtml(progress?.label ?? " ")}</em>
       </div>
-      ${isNew ? `<span class="achievement-new-badge">NEW</span>` : ""}
+      ${isNew ? `<span class="achievement-new-badge">${escapeHtml(t("newBadge"))}</span>` : ""}
     </article>
   `;
 }
@@ -1443,10 +1271,11 @@ function showAchievementDetail(def: AchievementDef) {
   const unlocked = unlockedIds.has(def.id);
   const reveal = unlocked || !def.hidden;
   const unlock = achievementState.unlocked.find((u) => u.id === def.id);
-  const unlockDate = unlock ? new Date(unlock.unlockedAt).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" }) : null;
-  const rarityLabel = ACHIEVEMENT_RARITY_LABELS[def.rarity];
-  const categoryLabel = ACHIEVEMENT_CATEGORY_LABELS[def.category];
+  const unlockDate = unlock ? new Date(unlock.unlockedAt).toLocaleDateString(languageLocale(), { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" }) : null;
+  const rarityLabel = achievementRarityLabel(def.rarity);
+  const categoryLabel = achievementCategoryLabel(def.category);
   const markIcon = unlocked ? "✦" : def.hidden && !unlocked ? "?" : "·";
+  const copy = achievementText(def);
 
   const stats = ledger && tree && gameBalance ? calculateStats(ledger.entries, tree, gameBalance) : undefined;
   const context = stats ? buildAchievementContext(stats) : undefined;
@@ -1460,15 +1289,15 @@ function showAchievementDetail(def: AchievementDef) {
   overlay.innerHTML = `
     <div class="achievement-detail-backdrop"></div>
     <div class="achievement-detail rarity-${def.rarity} ${unlocked ? "unlocked" : "locked"}">
-      <button class="achievement-detail-close" type="button" aria-label="关闭">×</button>
+      <button class="achievement-detail-close" type="button" aria-label="${escapeHtml(t("closeSettings"))}">×</button>
       <div class="achievement-detail-mark">${markIcon}</div>
-      <h3>${escapeHtml(reveal ? def.name : "???")}</h3>
+      <h3>${escapeHtml(reveal ? copy.name : "???")}</h3>
       <span class="achievement-detail-rarity">${escapeHtml(rarityLabel)}</span>
-      <p class="achievement-detail-condition">${escapeHtml(reveal ? def.description : "解锁后揭晓")}</p>
-      ${reveal && def.flavor ? `<p class="achievement-detail-flavor">${escapeHtml(def.flavor)}</p>` : ""}
+      <p class="achievement-detail-condition">${escapeHtml(reveal ? copy.description : t("lockedReveal"))}</p>
+      ${reveal && copy.flavor ? `<p class="achievement-detail-flavor">${escapeHtml(copy.flavor)}</p>` : ""}
       <div class="achievement-detail-meta">
         <span>${escapeHtml(categoryLabel)}</span>
-        ${unlockDate ? `<span>达成于 ${escapeHtml(unlockDate)}</span>` : `<span>未解锁</span>`}
+        ${unlockDate ? `<span>${escapeHtml(t("unlockedAt"))} ${escapeHtml(unlockDate)}</span>` : `<span>${escapeHtml(t("notUnlocked"))}</span>`}
       </div>
       ${progress ? `
         <div class="achievement-detail-progress">
@@ -1493,7 +1322,7 @@ function showLockedAchievementHint(target: HTMLElement) {
 
   const hint = document.createElement("div");
   hint.className = "locked-achievement-hint";
-  hint.textContent = "未解锁";
+  hint.textContent = t("lockedHint");
   document.body.appendChild(hint);
 
   const itemRect = target.getBoundingClientRect();
@@ -1727,11 +1556,12 @@ function showNextAchievementToast() {
     return;
   }
   const def = achievementToastQueue.shift()!;
+  const copy = achievementText(def);
   achievementToastLayer.innerHTML = `
     <div class="achievement-toast rarity-${def.rarity}">
-      <span>${ACHIEVEMENT_RARITY_LABELS[def.rarity]} · 成就解锁</span>
-      <strong>${escapeHtml(def.name)}</strong>
-      <p>${escapeHtml(def.description)}</p>
+      <span>${escapeHtml(achievementRarityLabel(def.rarity))} · ${escapeHtml(t("achievementUnlocked"))}</span>
+      <strong>${escapeHtml(copy.name)}</strong>
+      <p>${escapeHtml(copy.description)}</p>
     </div>
   `;
   achievementToastTimer = window.setTimeout(() => {
@@ -1835,13 +1665,14 @@ function badgeMetricText(metric: BadgeMetric, stats: Stats, totalUnit: TotalDisp
 
 function badgeWidthForText(...values: string[]) {
   const longest = Math.max(...values.map((value) => value.length));
-  return clamp(54 + Math.max(0, longest - 5) * 7, 54, 104);
+  return clamp(54 + Math.max(0, longest - 5) * 5.25, 54, 96);
 }
 
 function badgeFontSizeForText(value: string) {
-  if (value.length >= 13) return "0.48rem";
-  if (value.length >= 11) return "0.54rem";
-  if (value.length >= 9) return "0.6rem";
+  if (value.length >= 15) return "0.5rem";
+  if (value.length >= 13) return "0.58rem";
+  if (value.length >= 11) return "0.64rem";
+  if (value.length >= 9) return "0.68rem";
   return "";
 }
 
@@ -1903,6 +1734,54 @@ function renderUsageStatus() {
   }
 }
 
+function renderUpdateStatus() {
+  if (settingsButton) {
+    settingsButton.classList.toggle("has-update", updateStatus.available);
+    settingsButton.setAttribute("data-update-available", String(updateStatus.available));
+    settingsButton.querySelector<HTMLElement>(".settings-update-badge")?.replaceChildren(t("updateBadge"));
+  }
+  if (!updateStatusText) return;
+  const currentVersion = updateStatus.currentVersion ? `v${updateStatus.currentVersion}` : t("unknownVersion");
+  let title = `${t("currentVersion")} ${currentVersion}`;
+  let detail = updateStatus.checkedAt ? `${t("lastChecked")} ${formatRelativeTime(updateStatus.checkedAt)}` : t("neverChecked");
+  if (updateStatus.installing) {
+    title = t("terminalUpdating");
+    detail = updateStatus.installLog ?? t("terminalRunning");
+  } else if (updateStatus.installError) {
+    title = t("terminalFailed");
+    detail = updateStatus.installError;
+  } else if (updateStatus.needsRestart) {
+    title = t("updateComplete");
+    detail = t("restartToApply");
+  } else if (updateStatus.checking) {
+    title = t("checkingUpdate");
+    detail = `${t("currentVersion")} ${currentVersion}`;
+  } else if (updateStatus.available && updateStatus.latestVersion) {
+    title = `${t("updateAvailable")} v${updateStatus.latestVersion}`;
+    detail = updateStatus.canTerminalUpdate ? `${currentVersion} · ${t("canTerminalUpdate")}` : `${currentVersion} · ${t("cannotTerminalUpdate")}`;
+  } else if (updateStatus.error) {
+    title = t("updateCheckFailed");
+    detail = updateStatus.error;
+  } else if (updateStatus.checkedAt) {
+    title = t("alreadyLatest");
+    detail = `${currentVersion} · ${detail}`;
+  }
+
+  updateStatusText.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    <span>${escapeHtml(detail)}</span>
+  `;
+  if (checkUpdateButton) {
+    checkUpdateButton.disabled = updateStatus.checking || updateStatus.installing;
+    checkUpdateButton.textContent = updateStatus.checking ? t("checking") : t("checkUpdate");
+  }
+  if (installUpdateButton) {
+    installUpdateButton.disabled =
+      updateStatus.checking || updateStatus.installing || !updateStatus.available || !updateStatus.canTerminalUpdate;
+    installUpdateButton.textContent = updateStatus.installing ? t("updating") : t("terminalUpdate");
+  }
+}
+
 function renderScopedSourceBreakdown() {
   if (!ledger) return;
   renderSourceBreakdown(getSourceBreakdown(getSourceScopeEntries(ledger.entries)));
@@ -1917,10 +1796,10 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
   text(
     "#sourceSummary",
     activeSources
-      ? `${activeSources} ${sourceScope === "today" ? "个来源今日有记录" : "个来源有记录"}`
+      ? sourceActiveText(activeSources)
       : sourceScope === "today"
-        ? "今日等待 token"
-        : "等待 token",
+        ? t("waitingTodayTokens")
+        : t("waitingTokens"),
   );
   element.innerHTML = getMonitorSourceRows(rows)
     .map((row) => {
@@ -1938,7 +1817,7 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
           <div class="source-usage">
             <div>
               <strong>${formatCompact(row.xp)} XP</strong>
-              <span>${row.xp > 0 ? `${percent}%` : "无记录"}</span>
+              <span>${row.xp > 0 ? `${percent}%` : escapeHtml(t("noRecords"))}</span>
             </div>
             <div class="source-meter"><span style="width:${percent}%"></span></div>
             <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
@@ -2023,24 +1902,24 @@ function combineSourceRows(label: string, rows: SourceBreakdown[]): SourceBreakd
 }
 
 function monitorStatusView(status: UsageStatus["codexSession"] | undefined) {
-  if (!status) return { status: "检查中", statusClass: "pending", meta: "正在读取本机记录" };
+  if (!status) return { status: t("sourceChecking"), statusClass: "pending", meta: t("readingLocalRecords") };
   const running = status.exists && status.running;
   return {
-    status: running ? "在线" : "离线",
+    status: running ? t("sourceOnline") : t("sourceOffline"),
     statusClass: running ? "running" : "missing",
-    meta: `${status.filesWatched} 个文件 · ${status.lastEventAt ? formatRelativeTime(status.lastEventAt) : "等待新 token"}`,
+    meta: `${status.filesWatched} ${t("files")} · ${status.lastEventAt ? formatRelativeTime(status.lastEventAt) : t("waitingNewToken")}`,
   };
 }
 
 function renderModelBreakdown(sourceKey: string) {
   const rows = getModelBreakdown(sourceKey);
   if (!rows.length) {
-    return `<div class="model-breakdown empty">还没有模型记录</div>`;
+    return `<div class="model-breakdown empty">${escapeHtml(t("modelEmpty"))}</div>`;
   }
   const totalXp = rows.reduce((total, row) => total + row.xp, 0);
   return `
     <div class="model-breakdown">
-      <div class="model-breakdown-title">模型占比</div>
+      <div class="model-breakdown-title">${escapeHtml(t("modelShare"))}</div>
       ${rows
         .map((row) => {
           const percent = row.xp > 0 && totalXp > 0 ? Math.max(3, Math.round((row.xp / totalXp) * 100)) : 0;
@@ -2334,7 +2213,7 @@ function getSourceBreakdown(entries: LedgerEntry[]): SourceBreakdown[] {
 }
 
 function sourceLabel(id: string, source: string) {
-  if (source === "manual") return "手动喂养";
+  if (source === "manual") return t("manualFeed");
   if (id.startsWith("claude-code:")) return `Claude ${id.replace("claude-code:", "")}`;
   if (id === "claude-code" || source === "claude-session") return "Claude Code";
   if (id === "codex-desktop" || source === "codex-session") return "Codex";
@@ -2346,7 +2225,7 @@ function sourceLabel(id: string, source: string) {
 
 function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
   const labels: Record<HistoryFilter, string> = {
-    all: "全部来源",
+    all: t("historyAllSources"),
     codex: "Codex",
     openclaw: "OpenClaw",
     opencode: "OpenCode",
@@ -2524,7 +2403,7 @@ function formatByUnit(value: number, unit: TotalDisplayUnit) {
 function formatScaledUnit(value: number, divisor: number) {
   const scaled = value / divisor;
   const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
-  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: digits }).format(scaled);
+  return new Intl.NumberFormat(languageLocale(), { maximumFractionDigits: digits }).format(scaled);
 }
 
 function formatIntegerWithCommas(value: number) {
@@ -2671,7 +2550,7 @@ function dateKey(date: Date) {
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat("zh-CN").format(Math.round(value));
+  return new Intl.NumberFormat(languageLocale()).format(Math.round(value));
 }
 
 function formatCompact(value: number) {
@@ -2700,12 +2579,12 @@ function assetUrl(path: string) {
 
 function formatRelativeTime(isoTime: string) {
   const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(isoTime).getTime()) / 1000));
-  if (elapsedSeconds < 5) return "刚刚";
-  if (elapsedSeconds < 60) return `${elapsedSeconds} 秒前`;
+  if (elapsedSeconds < 5) return t("justNow");
+  if (elapsedSeconds < 60) return relativeTimeText(elapsedSeconds, "secondsAgo");
   const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-  if (elapsedMinutes < 60) return `${elapsedMinutes} 分钟前`;
+  if (elapsedMinutes < 60) return relativeTimeText(elapsedMinutes, "minutesAgo");
   const elapsedHours = Math.floor(elapsedMinutes / 60);
-  return `${elapsedHours} 小时前`;
+  return relativeTimeText(elapsedHours, "hoursAgo");
 }
 
 function clamp(value: number, min: number, max: number) {

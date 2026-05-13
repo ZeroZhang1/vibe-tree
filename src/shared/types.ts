@@ -13,13 +13,18 @@ export interface LedgerEntry {
   cacheWriteTokens?: number;
 }
 
+export type AppLanguage = "zh-CN" | "en-US";
+
 export interface Settings {
   locked: boolean;
   alwaysOnTop: boolean;
+  language: AppLanguage;
   scale: 0.5 | 1 | 1.5 | 2 | number;
   badgeFrontMetric: "level" | "total" | "rate";
   badgeBackMetric: "level" | "total" | "rate";
   totalDisplayUnit: "raw" | "k" | "m" | "wan" | "yi";
+  updateCheckEnabled: boolean;
+  lastUpdateReminderVersion?: string;
   launchOnStartup: boolean;
   silentStartup: boolean;
   windowPosition?: {
@@ -52,6 +57,22 @@ export interface AchievementState {
 export interface AchievementUnlockResult {
   state: AchievementState;
   unlocked: AchievementUnlock[];
+}
+
+export interface UpdateStatus {
+  checking: boolean;
+  installing: boolean;
+  available: boolean;
+  canTerminalUpdate: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  releaseUrl?: string;
+  checkedAt?: string;
+  error?: string;
+  installLog?: string;
+  installError?: string;
+  installedAt?: string;
+  needsRestart?: boolean;
 }
 
 export interface UsageEvent {

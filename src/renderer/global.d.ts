@@ -4,6 +4,7 @@ import type {
   AchievementUnlockResult,
   LedgerFile,
   Settings,
+  UpdateStatus,
   UsageStatus,
   WindowBounds,
 } from "../shared/types";
@@ -19,6 +20,10 @@ declare global {
       setWindowPosition: (position: { x: number; y: number }) => Promise<void>;
       persistWindowPosition: () => Promise<void>;
       getUsageStatus: () => Promise<UsageStatus>;
+      getUpdateStatus: () => Promise<UpdateStatus>;
+      checkForUpdates: () => Promise<UpdateStatus>;
+      installUpdate: () => Promise<UpdateStatus>;
+      openUpdatePage: (url?: string) => Promise<void>;
       getAchievements: () => Promise<AchievementState>;
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;
       previewAchievementToast: (id: string) => Promise<boolean>;
@@ -29,6 +34,7 @@ declare global {
       onExpanded: (callback: (expanded: boolean) => void) => () => void;
       onOpenAddToken: (callback: () => void) => () => void;
       onUsageStatus: (callback: (status: UsageStatus) => void) => () => void;
+      onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => () => void;
       onPreviewAchievementToast: (callback: (id: string) => void) => () => void;
       onAchievementToast: (callback: (payload: { ids: string[]; placement: "left" | "right" }) => void) => () => void;

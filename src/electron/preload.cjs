@@ -9,6 +9,10 @@ const api = {
   setWindowPosition: (position) => ipcRenderer.invoke("window:set-position", position),
   persistWindowPosition: () => ipcRenderer.invoke("window:persist-position"),
   getUsageStatus: () => ipcRenderer.invoke("usage:get-status"),
+  getUpdateStatus: () => ipcRenderer.invoke("updates:get-status"),
+  checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  installUpdate: () => ipcRenderer.invoke("updates:install"),
+  openUpdatePage: (url) => ipcRenderer.invoke("updates:open", url),
   getAchievements: () => ipcRenderer.invoke("achievements:get"),
   unlockAchievements: (items) => ipcRenderer.invoke("achievements:unlock", items),
   previewAchievementToast: (id) => ipcRenderer.invoke("achievements:preview-toast", id),
@@ -34,6 +38,11 @@ const api = {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on("bonsai:usage-status", listener);
     return () => ipcRenderer.removeListener("bonsai:usage-status", listener);
+  },
+  onUpdateStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("bonsai:update-status", listener);
+    return () => ipcRenderer.removeListener("bonsai:update-status", listener);
   },
   onAchievements: (callback) => {
     const listener = (_event, state, unlocked) => callback(state, unlocked);

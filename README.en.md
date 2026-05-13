@@ -37,8 +37,9 @@ This first version focuses on making local usage tracking dependable and pleasan
 
 - Floating Electron pet window: transparent, draggable, lockable, and always-on-top.
 - Electron manager window: level, weather, active sessions, source stats, model breakdowns, and recent 7-day usage.
-- Settings panel: bonsai size, lock/always-on-top, launch on startup, silent startup, source path overrides, and badge display preferences.
+- Settings panel: bonsai size, lock/always-on-top, launch on startup, silent startup, Chinese/English language switching, source path overrides, and badge display preferences.
 - Level badge: 3D flip badge with configurable front/back faces for level, total token, or token/s; total token supports raw numbers, k/m, and Chinese wan/yi units.
+- Update reminders: automatically checks GitHub for the latest version on launch, then hourly; settings and the tray menu support manual checks and terminal-based updates when a new version is available, then relaunches automatically after a successful update.
 - Tray status panel for quick app status and controls.
 - Automatic usage import from local Codex, Claude Code, OpenClaw, and OpenCode session files.
 - Recent 7-day charts:

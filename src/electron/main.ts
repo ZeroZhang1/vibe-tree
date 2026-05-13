@@ -1,28 +1,39 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import * as https from "node:https";
 import { dirname, join } from "node:path";
 import type { MenuItemConstructorOptions } from "electron";
 import type {
   AchievementState,
   AchievementUnlock,
   AchievementUnlockResult,
+  AppLanguage,
   LedgerEntry,
   LedgerFile,
   Settings,
+  UpdateStatus,
   UsageEvent,
   UsageStatus,
   WindowBounds,
 } from "../shared/types.js";
 import { startClaudeSessionWatcher, startOpenClawSessionWatcher, startOpenCodeSessionWatcher } from "./agentSessionWatchers.js";
 import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
+import { MAIN_TEXT, WEATHER_LABELS } from "./i18n.js";
+import type { WeatherId } from "./i18n.js";
 
 const PET_BASE = { width: 192, height: 208 };
-const PET_STAGE_OFFSET = { x: 20, y: 0 };
+const PET_STAGE_OFFSET = { x: 28, y: 0 };
 const ACHIEVEMENT_TOAST_SIZE = { width: 236, height: 104 };
 const ACHIEVEMENT_TOAST_OVERLAP_PER_SCALE = 48;
 const ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE = 18;
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const UPDATE_REMINDER_DELAY_MS = 3_000;
+const UPDATE_RELAUNCH_DELAY_MS = 1_200;
+const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per_page=20";
+const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
 const MAC_TRAY_ICON_SIZE = 18;
 const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
@@ -34,17 +45,22 @@ const APP_ICON_PATHS = [
   join(__dirname, "../../public/assets/app-icon.png"),
   join(__dirname, "../../public/assets/app-icon.ico"),
 ];
+
 const DEFAULT_SETTINGS: Settings = {
   locked: false,
   alwaysOnTop: true,
+  language: "zh-CN",
   scale: 0.5,
   badgeFrontMetric: "level",
   badgeBackMetric: "total",
   totalDisplayUnit: "m",
+  updateCheckEnabled: true,
   launchOnStartup: false,
   silentStartup: false,
   windowPosition: undefined,
 };
+
+
 
 const WEATHER_THRESHOLDS = [
   { id: "clear", label: "晴朗", minXpPerMinute: 0 },
@@ -65,6 +81,14 @@ let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let achievementToastFallbackHideAt = 0;
 let achievementToastRendererReady = false;
 let achievementToastPendingIds: string[] = [];
+let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
+let updateStatus: UpdateStatus = {
+  checking: false,
+  installing: false,
+  available: false,
+  canTerminalUpdate: canTerminalUpdate(),
+  currentVersion: currentAppVersion(),
+};
 let tray: Tray | null = null;
 let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS, installedAt: startOfLocalDayIso(new Date()) };
 let achievementState: AchievementState = { unlocked: [] };
@@ -129,6 +153,16 @@ function achievementsPath() {
   return join(app.getPath("userData"), "achievements.json");
 }
 
+function currentAppVersion() {
+  if (app.isPackaged) return normalizeVersion(app.getVersion());
+  const pkg = readJsonFile<{ version?: string }>(join(process.cwd(), "package.json"));
+  return normalizeVersion(typeof pkg?.version === "string" ? pkg.version : app.getVersion());
+}
+
+function canTerminalUpdate() {
+  return existsSync(join(process.cwd(), ".git")) && existsSync(join(process.cwd(), "package.json"));
+}
+
 function readLedger(): LedgerFile {
   const legacy = readLegacyLedger();
   const installedAt = readInstalledAt(legacy);
@@ -187,12 +221,14 @@ function legacyInstallDate() {
 
 function readDeviceSettings(legacySettings: Partial<Settings> | undefined): Settings {
   const stored = readJsonFile<Partial<Settings>>(deviceSettingsPath());
+  const language = normalizeLanguage(stored?.language ?? legacySettings?.language ?? detectSystemLanguage());
   const settings = normalizeSettings({
     ...DEFAULT_SETTINGS,
+    language,
     ...(legacySettings ?? {}),
     ...(stored ?? {}),
   });
-  if (!stored) {
+  if (!stored || stored.language === undefined) {
     writeDeviceSettings(settings);
   }
   return settings;
@@ -262,6 +298,10 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     ...settings,
     locked: Boolean(settings.locked),
     alwaysOnTop: settings.alwaysOnTop !== false,
+    language: normalizeLanguage(settings.language),
+    updateCheckEnabled: settings.updateCheckEnabled !== false,
+    lastUpdateReminderVersion:
+      typeof settings.lastUpdateReminderVersion === "string" ? settings.lastUpdateReminderVersion : undefined,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
     scale,
@@ -281,6 +321,28 @@ function normalizeBadgeMetric(value: unknown, fallback: Settings["badgeFrontMetr
 
 function normalizeTotalDisplayUnit(value: unknown): Settings["totalDisplayUnit"] {
   return value === "raw" || value === "k" || value === "m" || value === "wan" || value === "yi" ? value : "m";
+}
+
+function normalizeLanguage(value: unknown): AppLanguage {
+  return value === "en-US" ? "en-US" : "zh-CN";
+}
+
+function detectSystemLanguage(): AppLanguage {
+  const languages =
+    typeof app.getPreferredSystemLanguages === "function" ? app.getPreferredSystemLanguages() : [app.getLocale()];
+  return languages.some((language) => language.toLowerCase().startsWith("zh")) ? "zh-CN" : "en-US";
+}
+
+function currentLanguage(): AppLanguage {
+  return normalizeLanguage(ledger.settings.language);
+}
+
+function mainText(key: string) {
+  return MAIN_TEXT[currentLanguage()][key] ?? MAIN_TEXT["zh-CN"][key] ?? key;
+}
+
+function weatherLabel(id: WeatherId) {
+  return WEATHER_LABELS[currentLanguage()][id] ?? WEATHER_LABELS["zh-CN"][id];
 }
 
 function cleanPath(value: unknown) {
@@ -674,9 +736,20 @@ function createTray() {
 }
 
 function createTrayIcon() {
-  const icon = createAppIcon();
-  if (process.platform !== "darwin") return icon;
+  if (process.platform === "darwin") return createMacTrayIcon();
+  return createAppIcon();
+}
+
+function createMacTrayIcon() {
+  const svg = encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="${MAC_TRAY_ICON_SIZE}" height="${MAC_TRAY_ICON_SIZE}" viewBox="0 0 18 18" shape-rendering="crispEdges">
+      <path fill="#000" d="M7 8h2v5H7zM9 7h2v6H9zM4 13h10v2H4zM5 15h8v1H5zM5 6h5v3H5zM7 4h5v4H7zM11 7h4v3h-4zM3 9h5v3H3z"/>
+    </svg>
+  `);
+  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${svg}`);
+  icon.setTemplateImage(true);
   const resized = icon.resize({ width: MAC_TRAY_ICON_SIZE, height: MAC_TRAY_ICON_SIZE });
+  resized.setTemplateImage(true);
   return resized.isEmpty() ? icon : resized;
 }
 
@@ -716,35 +789,35 @@ function createAppIcon() {
 function showPetContextMenu() {
   const menu = Menu.buildFromTemplate([
     {
-      label: "打开管理窗口",
+      label: mainText("openManager"),
       click: showManager,
     },
     {
-      label: ledger.settings.locked ? "解锁小树位置" : "锁定小树位置",
+      label: ledger.settings.locked ? mainText("unlockPet") : mainText("lockPet"),
       type: "checkbox" as const,
       checked: ledger.settings.locked,
       click: () => updateSettings({ locked: !ledger.settings.locked }),
     },
     {
-      label: "小树大小",
+      label: mainText("petSize"),
       submenu: scaleMenuItems(),
     },
     { type: "separator" as const },
     {
-      label: "牌子正面",
+      label: mainText("badgeFront"),
       submenu: badgeMetricMenuItems("badgeFrontMetric"),
     },
     {
-      label: "牌子背面",
+      label: mainText("badgeBack"),
       submenu: badgeMetricMenuItems("badgeBackMetric"),
     },
     {
-      label: "总量单位",
+      label: mainText("totalUnit"),
       submenu: totalUnitMenuItems(),
     },
     { type: "separator" as const },
     {
-      label: "隐藏小树",
+      label: mainText("hidePet"),
       click: () => {
         petWindow?.hide();
         refreshTrayMenu();
@@ -765,8 +838,8 @@ function scaleMenuItems(): MenuItemConstructorOptions[] {
 
 function badgeMetricMenuItems(key: "badgeFrontMetric" | "badgeBackMetric"): MenuItemConstructorOptions[] {
   const labels: Record<Settings["badgeFrontMetric"], string> = {
-    level: "等级",
-    total: "累计 token",
+    level: mainText("metricLevel"),
+    total: mainText("metricTotal"),
     rate: "token/s",
   };
   return (Object.keys(labels) as Settings["badgeFrontMetric"][]).map((metric) => ({
@@ -778,8 +851,15 @@ function badgeMetricMenuItems(key: "badgeFrontMetric" | "badgeBackMetric"): Menu
 }
 
 function totalUnitMenuItems(): MenuItemConstructorOptions[] {
-  return (["k", "m"] as const).map((unit) => ({
-    label: unit,
+  const labels: Record<Settings["totalDisplayUnit"], string> = {
+    raw: mainText("unitRaw"),
+    k: "k",
+    m: "m",
+    wan: mainText("unitWan"),
+    yi: mainText("unitYi"),
+  };
+  return (Object.keys(labels) as Settings["totalDisplayUnit"][]).map((unit) => ({
+    label: labels[unit],
     type: "radio" as const,
     checked: ledger.settings.totalDisplayUnit === unit,
     click: () => updateSettings({ totalDisplayUnit: unit }),
@@ -795,24 +875,49 @@ function refreshTrayMenu() {
       enabled: false,
     },
     {
-      label: `${formatCompact(trayStats.totalXp)} XP · 今日 +${formatCompact(trayStats.todayXp)} · ${formatCompact(
+      label: `${formatCompact(trayStats.totalXp)} XP · ${mainText("today")} +${formatCompact(trayStats.todayXp)} · ${formatCompact(
         trayStats.xpPerMinute,
       )} XP/min`,
       enabled: false,
     },
     { type: "separator" },
     {
-      label: "打开管理窗口",
+      label: mainText("openManager"),
       click: showManager,
     },
     {
-      label: petWindow?.isVisible() ? "隐藏小树" : "显示小树",
+      label: petWindow?.isVisible() ? mainText("hidePet") : mainText("showPet"),
       click: () => {
         if (!petWindow) createPetWindow();
         petWindow?.isVisible() ? petWindow.hide() : petWindow?.show();
         refreshTrayMenu();
       },
     },
+    {
+      label:
+        updateStatus.available && updateStatus.latestVersion
+          ? `${mainText("updateFound")} v${updateStatus.latestVersion}`
+          : mainText("checkUpdate"),
+      enabled: !updateStatus.checking,
+      click: () => {
+        void checkForUpdates({ manual: true, remind: true });
+      },
+    },
+    ...(updateStatus.available && updateStatus.releaseUrl
+      ? [
+          {
+            label: updateStatus.canTerminalUpdate ? mainText("terminalUpdate") : mainText("openUpdatePage"),
+            enabled: !updateStatus.installing,
+            click: () => {
+              if (updateStatus.canTerminalUpdate) {
+                void installUpdate();
+              } else {
+                void openUpdatePage(updateStatus.releaseUrl);
+              }
+            },
+          } satisfies MenuItemConstructorOptions,
+        ]
+      : []),
     { type: "separator" },
     {
       label: sourceStatusLabel("Codex", codexSessionStatus, "codex-session"),
@@ -828,36 +933,36 @@ function refreshTrayMenu() {
     },
     { type: "separator" },
     {
-      label: "小树大小",
+      label: mainText("petSize"),
       submenu: scaleMenuItems(),
     },
     {
-      label: "锁定小树位置",
+      label: mainText("lockPet"),
       type: "checkbox",
       checked: ledger.settings.locked,
       click: () => updateSettings({ locked: !ledger.settings.locked }),
     },
     {
-      label: "小树置顶",
+      label: mainText("alwaysOnTop"),
       type: "checkbox",
       checked: ledger.settings.alwaysOnTop,
       click: () => updateSettings({ alwaysOnTop: !ledger.settings.alwaysOnTop }),
     },
     {
-      label: "开机启动",
+      label: mainText("launchOnStartup"),
       type: "checkbox",
       checked: ledger.settings.launchOnStartup,
       click: () => updateSettings({ launchOnStartup: !ledger.settings.launchOnStartup }),
     },
     {
-      label: "静默启动",
+      label: mainText("silentStartup"),
       type: "checkbox",
       checked: ledger.settings.silentStartup,
       click: () => updateSettings({ silentStartup: !ledger.settings.silentStartup }),
     },
     { type: "separator" },
     {
-      label: "退出",
+      label: mainText("quit"),
       click: () => app.quit(),
     },
   ]);
@@ -885,15 +990,21 @@ function getTrayStats() {
     totalXp,
     todayXp,
     xpPerMinute,
-    weatherLabel: weather.label,
+    weatherLabel: weatherLabel(weather.id),
   };
 }
 
 function sourceStatusLabel(label: string, status: UsageStatus["codexSession"], source: string) {
   const entries = ledger.entries.filter((entry) => entry.source === source);
-  const state = status.exists && status.running ? "监控中" : status.running ? "未找到" : "已停止";
+  const state =
+    status.exists && status.running
+      ? mainText("sourceWatching")
+      : status.running
+        ? mainText("sourceReading")
+        : mainText("sourceStopped");
   const eventText = status.lastEventAt ? ` · ${formatRelativeTime(status.lastEventAt)}` : "";
-  return `${label}: ${state} · ${status.filesWatched} 文件 · ${entries.length} 条${eventText}`;
+  const entriesUnit = currentLanguage() === "zh-CN" ? "条" : "entries";
+  return `${label}: ${state} · ${status.filesWatched} ${mainText("files")} · ${entries.length} ${entriesUnit}${eventText}`;
 }
 
 function xpForEntry(entry: LedgerEntry) {
@@ -948,11 +1059,13 @@ function trimNumber(value: number) {
 
 function formatRelativeTime(isoTime: string) {
   const elapsedSeconds = Math.max(0, Math.floor((Date.now() - Date.parse(isoTime)) / 1000));
-  if (elapsedSeconds < 60) return "刚刚";
+  if (elapsedSeconds < 60) return mainText("justNow");
   const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-  if (elapsedMinutes < 60) return `${elapsedMinutes} 分钟前`;
+  if (elapsedMinutes < 60) {
+    return currentLanguage() === "zh-CN" ? `${elapsedMinutes} ${mainText("minutesAgo")}` : `${elapsedMinutes} ${mainText("minutesAgo")}`;
+  }
   const elapsedHours = Math.floor(elapsedMinutes / 60);
-  return `${elapsedHours} 小时前`;
+  return currentLanguage() === "zh-CN" ? `${elapsedHours} ${mainText("hoursAgo")}` : `${elapsedHours} ${mainText("hoursAgo")}`;
 }
 
 function updateSettings(partial: Partial<Settings>) {
@@ -963,6 +1076,10 @@ function updateSettings(partial: Partial<Settings>) {
   writeDeviceSettings();
   if (partial.launchOnStartup !== undefined || partial.silentStartup !== undefined) {
     applyLoginItemSettings();
+  }
+  if (partial.updateCheckEnabled !== undefined) {
+    startUpdateChecks();
+    if (ledger.settings.updateCheckEnabled) void checkForUpdates({ manual: true, remind: true });
   }
   if (
     previous.codexSessionsDir !== ledger.settings.codexSessionsDir ||
@@ -1013,6 +1130,292 @@ function getUsageStatus(): UsageStatus {
     openclawSession: openclawSessionStatus,
     opencodeSession: opencodeSessionStatus,
   };
+}
+
+function startUpdateChecks() {
+  if (updateCheckTimer) {
+    clearInterval(updateCheckTimer);
+    updateCheckTimer = null;
+  }
+  if (!ledger.settings.updateCheckEnabled) {
+    updateStatus = {
+      ...updateStatus,
+      checking: false,
+      currentVersion: currentAppVersion(),
+      canTerminalUpdate: canTerminalUpdate(),
+    };
+    broadcastUpdateStatus();
+    refreshTrayMenu();
+    return;
+  }
+
+  setTimeout(() => {
+    void checkForUpdates({ remind: true });
+  }, UPDATE_REMINDER_DELAY_MS);
+  updateCheckTimer = setInterval(() => {
+    void checkForUpdates({ remind: true });
+  }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+async function checkForUpdates(options: { manual?: boolean; remind?: boolean } = {}): Promise<UpdateStatus> {
+  if (updateStatus.checking) return updateStatus;
+  if (!options.manual && !ledger.settings.updateCheckEnabled) return updateStatus;
+
+  updateStatus = {
+    ...updateStatus,
+    checking: true,
+    canTerminalUpdate: canTerminalUpdate(),
+    currentVersion: currentAppVersion(),
+    error: undefined,
+  };
+  broadcastUpdateStatus();
+  refreshTrayMenu();
+
+  try {
+    const latest = await fetchLatestUpdate();
+    const currentVersion = currentAppVersion();
+    const available = compareVersions(latest.version, currentVersion) > 0;
+    updateStatus = {
+      ...updateStatus,
+      checking: false,
+      installing: false,
+      available,
+      canTerminalUpdate: canTerminalUpdate(),
+      currentVersion,
+      latestVersion: latest.version,
+      releaseUrl: latest.releaseUrl,
+      checkedAt: new Date().toISOString(),
+      error: undefined,
+    };
+    if (available && options.remind) remindUpdateAvailable(updateStatus);
+  } catch (error) {
+    updateStatus = {
+      ...updateStatus,
+      checking: false,
+      available: false,
+      canTerminalUpdate: canTerminalUpdate(),
+      checkedAt: new Date().toISOString(),
+      error: error instanceof Error ? error.message : mainText("updateCheckFailed"),
+    };
+  }
+
+  broadcastUpdateStatus();
+  refreshTrayMenu();
+  return updateStatus;
+}
+
+async function fetchLatestUpdate() {
+  const tags = await fetchJson(UPDATE_TAGS_URL);
+  if (!Array.isArray(tags)) throw new Error(mainText("updateSourceBadShape"));
+  const versions = tags
+    .map((tag) => {
+      const name = typeof (tag as { name?: unknown }).name === "string" ? (tag as { name: string }).name : "";
+      const version = normalizeVersion(name);
+      return version && isSemver(version) ? { name, version } : null;
+    })
+    .filter((item): item is { name: string; version: string } => Boolean(item))
+    .sort((a, b) => compareVersions(b.version, a.version));
+
+  const latest = versions[0];
+  if (!latest) throw new Error(mainText("updateSourceNoVersion"));
+  return {
+    version: latest.version,
+    releaseUrl: UPDATE_PAGE_URL,
+  };
+}
+
+function fetchJson(url: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const request = https.get(
+      url,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": `${APP_NAME} Update Checker`,
+        },
+        timeout: 8_000,
+      },
+      (response) => {
+        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          response.resume();
+          fetchJson(new URL(response.headers.location, url).toString()).then(resolve, reject);
+          return;
+        }
+
+        if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+          response.resume();
+          reject(new Error(`${mainText("updateSourceRequestFailed")} (${response.statusCode ?? "unknown"})`));
+          return;
+        }
+
+        let raw = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          raw += chunk;
+          if (raw.length > 512_000) {
+            request.destroy(new Error(mainText("updateSourceTooLarge")));
+          }
+        });
+        response.on("end", () => {
+          try {
+            resolve(JSON.parse(raw));
+          } catch {
+            reject(new Error(mainText("updateSourceParseFailed")));
+          }
+        });
+      },
+    );
+    request.on("timeout", () => request.destroy(new Error(mainText("updateSourceTimeout"))));
+    request.on("error", reject);
+  });
+}
+
+async function installUpdate(): Promise<UpdateStatus> {
+  if (updateStatus.installing) return updateStatus;
+
+  if (!canTerminalUpdate()) {
+    updateStatus = {
+      ...updateStatus,
+      canTerminalUpdate: false,
+      installError: mainText("terminalUpdateUnavailable"),
+    };
+    broadcastUpdateStatus();
+    return updateStatus;
+  }
+
+  updateStatus = {
+    ...updateStatus,
+    installing: true,
+    canTerminalUpdate: true,
+    installError: undefined,
+    installLog: mainText("preparingTerminalUpdate"),
+    needsRestart: false,
+  };
+  broadcastUpdateStatus();
+  refreshTrayMenu();
+
+  try {
+    const cwd = process.cwd();
+    const dirty = (await runTerminalCommand("git", ["status", "--porcelain"], cwd)).trim();
+    if (dirty) {
+      throw new Error(mainText("dirtyWorkspace"));
+    }
+
+    await runUpdateStep(mainText("fetchUpdates"), "git", ["fetch", "--tags", "--prune", "origin"], cwd);
+    await runUpdateStep(mainText("pullMain"), "git", ["pull", "--ff-only", "origin", "main"], cwd);
+    await runUpdateStep(mainText("syncDependencies"), npmCommand(), ["install"], cwd);
+    await runUpdateStep(mainText("buildApp"), npmCommand(), ["run", "build"], cwd);
+
+    updateStatus = {
+      ...updateStatus,
+      installing: false,
+      available: false,
+      currentVersion: currentAppVersion(),
+      checkedAt: new Date().toISOString(),
+      installedAt: new Date().toISOString(),
+      installLog: mainText("updateDone"),
+      installError: undefined,
+      needsRestart: true,
+    };
+    scheduleUpdateRelaunch();
+  } catch (error) {
+    updateStatus = {
+      ...updateStatus,
+      installing: false,
+      installError: error instanceof Error ? error.message : mainText("terminalUpdateFailed"),
+      installLog: mainText("updateIncomplete"),
+    };
+  }
+
+  broadcastUpdateStatus();
+  refreshTrayMenu();
+  return updateStatus;
+}
+
+function scheduleUpdateRelaunch() {
+  setTimeout(() => {
+    app.relaunch({ args: process.argv.slice(1), execPath: process.execPath });
+    app.exit(0);
+  }, UPDATE_RELAUNCH_DELAY_MS);
+}
+
+async function runUpdateStep(label: string, command: string, args: string[], cwd: string) {
+  updateStatus = {
+    ...updateStatus,
+    installLog: label,
+  };
+  broadcastUpdateStatus();
+  await runTerminalCommand(command, args, cwd);
+}
+
+function runTerminalCommand(command: string, args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, shell: false });
+    let output = "";
+    const collect = (chunk: Buffer) => {
+      output = `${output}${chunk.toString("utf8")}`.slice(-12_000);
+    };
+
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(output.trim());
+        return;
+      }
+      reject(new Error(`${command} ${args.join(" ")} ${mainText("commandFailed")} (${code ?? "unknown"})${output ? `\n${output.trim()}` : ""}`));
+    });
+  });
+}
+
+function npmCommand() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function remindUpdateAvailable(status: UpdateStatus) {
+  if (!status.latestVersion || ledger.settings.lastUpdateReminderVersion === status.latestVersion) return;
+  updateSettings({ lastUpdateReminderVersion: status.latestVersion });
+  if (!Notification.isSupported()) return;
+
+  const notification = new Notification({
+    title: mainText("updateNotificationTitle"),
+    body:
+      currentLanguage() === "zh-CN"
+        ? `v${status.latestVersion} ${mainText("updateNotificationBody")} v${status.currentVersion}`
+        : `v${status.latestVersion} ${mainText("updateNotificationBody")} v${status.currentVersion}`,
+    silent: false,
+  });
+  notification.on("click", () => {
+    void openUpdatePage(status.releaseUrl);
+  });
+  notification.show();
+}
+
+async function openUpdatePage(url = updateStatus.releaseUrl ?? UPDATE_PAGE_URL) {
+  await shell.openExternal(url);
+}
+
+function broadcastUpdateStatus() {
+  broadcast("bonsai:update-status", updateStatus);
+}
+
+function normalizeVersion(version: string) {
+  return version.trim().replace(/^v/i, "");
+}
+
+function isSemver(version: string) {
+  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version);
+}
+
+function compareVersions(left: string, right: string) {
+  const leftParts = normalizeVersion(left).split(/[-+]/)[0].split(".").map((part) => Number(part));
+  const rightParts = normalizeVersion(right).split(/[-+]/)[0].split(".").map((part) => Number(part));
+  for (let index = 0; index < 3; index += 1) {
+    const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
 }
 
 function startUsageWatchers() {
@@ -1113,6 +1516,7 @@ app.whenReady().then(() => {
   }
   createTray();
   setTimeout(startUsageWatchers, 500);
+  startUpdateChecks();
 
   app.on("activate", () => {
     createPetWindow();
@@ -1126,10 +1530,15 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   stopUsageWatchers();
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
 });
 
 ipcMain.handle("ledger:get", () => ledger);
 ipcMain.handle("usage:get-status", getUsageStatus);
+ipcMain.handle("updates:get-status", () => updateStatus);
+ipcMain.handle("updates:check", () => checkForUpdates({ manual: true, remind: true }));
+ipcMain.handle("updates:install", () => installUpdate());
+ipcMain.handle("updates:open", (_event, url?: string) => openUpdatePage(typeof url === "string" ? url : undefined));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
   unlockAchievements(Array.isArray(items) ? items : []),
