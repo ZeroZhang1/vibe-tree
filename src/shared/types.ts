@@ -38,6 +38,22 @@ export interface LedgerFile {
   installedAt: string;
 }
 
+export interface AchievementUnlock {
+  id: string;
+  unlockedAt: string;
+  trigger?: Record<string, unknown>;
+}
+
+export interface AchievementState {
+  unlocked: AchievementUnlock[];
+  stats?: Record<string, unknown>;
+}
+
+export interface AchievementUnlockResult {
+  state: AchievementState;
+  unlocked: AchievementUnlock[];
+}
+
 export interface UsageEvent {
   id: string;
   createdAt: string;

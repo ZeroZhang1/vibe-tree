@@ -1,12 +1,26 @@
-import type { LedgerEntry, LedgerFile, TreeAsset, TreeStage, UsageStatus, WindowBounds } from "../shared/types";
+import type {
+  AchievementState,
+  AchievementUnlock,
+  LedgerEntry,
+  LedgerFile,
+  TreeAsset,
+  TreeStage,
+  UsageStatus,
+  WindowBounds,
+} from "../shared/types";
 import "./styles.css";
 
 type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
-type ViewMode = "pet" | "manager";
+type ViewMode = "pet" | "manager" | "toast";
 type HistoryFilter = "all" | "codex" | "openclaw" | "opencode" | "claude";
 type SourceScope = "today" | "total";
 type BadgeMetric = "level" | "total" | "rate";
 type TotalDisplayUnit = "k" | "m";
+type DashboardTab = "home" | "achievements";
+type AchievementCategory = "growth" | "peak" | "time" | "agent" | "hidden";
+type AchievementRarity = "common" | "rare" | "epic" | "legendary" | "hidden";
+type AchievementCategoryFilter = AchievementCategory;
+type AchievementStatusFilter = "all" | "unlocked" | "locked" | "hidden";
 
 interface WeatherState {
   id: WeatherId;
@@ -55,6 +69,36 @@ interface SourceBreakdown {
   cacheWriteTokens: number;
 }
 
+interface AchievementDef {
+  id: string;
+  category: AchievementCategory;
+  rarity: AchievementRarity;
+  name: string;
+  description: string;
+  flavor?: string;
+  hidden?: boolean;
+  planned?: boolean;
+  condition: (context: AchievementContext) => boolean;
+  trigger?: (context: AchievementContext) => Record<string, unknown>;
+}
+
+interface AchievementContext {
+  stats: Stats;
+  entries: LedgerEntry[];
+  stageIndex: number;
+  maxDailyXp: number;
+  consecutiveDays: number;
+  activeSources: Set<HistorySourceId>;
+  maxSourcesOneDay: number;
+  hasAgentSwitchWithinTenMinutes: boolean;
+  sourceXp: Record<HistorySourceId, number>;
+  hourSet: Set<number>;
+  weekendWarrior: boolean;
+  touchGrassReturn: boolean;
+  coffeeOverdose: boolean;
+  hasFibonacciSession: boolean;
+}
+
 interface PureSvgManifest {
   stages: Array<{
     id: string;
@@ -80,18 +124,463 @@ interface GameBalance {
   stages: Array<{ minLevel: number; id: string; label: string }>;
 }
 
+const ACHIEVEMENT_CATEGORY_LABELS: Record<AchievementCategory, string> = {
+  growth: "成长之路",
+  peak: "巅峰时刻",
+  time: "时间档案",
+  agent: "Agent 图鉴",
+  hidden: "未解之谜",
+};
+
+const ACHIEVEMENT_RARITY_LABELS: Record<AchievementRarity, string> = {
+  common: "普通",
+  rare: "罕见",
+  epic: "史诗",
+  legendary: "传说",
+  hidden: "隐藏",
+};
+
+const CATEGORY_ORDER: AchievementCategory[] = ["growth", "peak", "time", "agent", "hidden"];
+
+function rarityOrder(rarity: AchievementRarity): number {
+  const order: Record<AchievementRarity, number> = { legendary: 0, epic: 1, rare: 2, hidden: 3, common: 4 };
+  return order[rarity] ?? 5;
+}
+
+const ACHIEVEMENTS: AchievementDef[] = [
+  {
+    id: "sprout",
+    category: "growth",
+    rarity: "common",
+    name: "破土而出",
+    description: "小树发芽了",
+    flavor: "每一棵大树，都曾是一粒种子。",
+    condition: ({ stats }) => stats.xp >= 1_000,
+  },
+  {
+    id: "sapling",
+    category: "growth",
+    rarity: "rare",
+    name: "亭亭玉立",
+    description: "长出像样的树冠",
+    flavor: "你的树已经不再是路边的杂草了。",
+    condition: ({ stageIndex }) => stageIndex >= 2,
+  },
+  {
+    id: "big_tree",
+    category: "growth",
+    rarity: "legendary",
+    name: "枝繁叶茂",
+    description: "已经是一棵大树了",
+    flavor: "鸟儿们开始考虑在你这里安家。",
+    condition: ({ stageIndex }) => stageIndex >= 5,
+  },
+  {
+    id: "xp_10k",
+    category: "growth",
+    rarity: "common",
+    name: "万字打工人",
+    description: "累计 10,000 XP",
+    flavor: "一万个 token，都是汗水的结晶。",
+    condition: ({ stats }) => stats.xp >= 10_000,
+  },
+  {
+    id: "xp_100k",
+    category: "growth",
+    rarity: "rare",
+    name: "十万军中取上将",
+    description: "累计 100,000 XP",
+    flavor: "十万大军中，你就是最亮的星。",
+    condition: ({ stats }) => stats.xp >= 100_000,
+  },
+  {
+    id: "xp_1m",
+    category: "growth",
+    rarity: "epic",
+    name: "百万字灵魂",
+    description: "累计 1,000,000 XP",
+    flavor: "如果每个 token 是一步，你已经走了很远。",
+    condition: ({ stats }) => stats.xp >= 1_000_000,
+  },
+  {
+    id: "xp_10m",
+    category: "growth",
+    rarity: "epic",
+    name: "千万字成精",
+    description: "累计 10,000,000 XP",
+    flavor: "传说修炼千万年可以成精，你用 token 做到了。",
+    condition: ({ stats }) => stats.xp >= 10_000_000,
+  },
+  {
+    id: "xp_100m",
+    category: "growth",
+    rarity: "legendary",
+    name: "亿点点努力",
+    description: "累计 100,000,000 XP",
+    flavor: "亿点点？这明明是亿吨吨努力。",
+    condition: ({ stats }) => stats.xp >= 100_000_000,
+  },
+  {
+    id: "xp_1b",
+    category: "growth",
+    rarity: "legendary",
+    name: "十亿树王",
+    description: "累计 1,000,000,000 XP",
+    flavor: "整片森林都得叫你一声大哥。",
+    condition: ({ stats }) => stats.xp >= 1_000_000_000,
+  },
+  {
+    id: "reborn",
+    category: "growth",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "涅槃",
+    description: "重置后再次满级",
+    flavor: "浴火重生，更胜从前。",
+    condition: () => false,
+  },
+  {
+    id: "daily_1k",
+    category: "peak",
+    rarity: "common",
+    name: "热身完毕",
+    description: "单日 XP 达到 1,000",
+    flavor: "热身而已，真正的锻炼还没开始。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 1_000,
+  },
+  {
+    id: "daily_10k",
+    category: "peak",
+    rarity: "common",
+    name: "今天真拼了",
+    description: "单日 XP 达到 10,000",
+    flavor: "今天的你，值得一杯奶茶。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 10_000,
+  },
+  {
+    id: "daily_50k",
+    category: "peak",
+    rarity: "rare",
+    name: "疯狂星期四",
+    description: "单日 XP 达到 50,000",
+    flavor: "V 我 50k XP，谢谢。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 50_000,
+  },
+  {
+    id: "daily_1m",
+    category: "peak",
+    rarity: "epic",
+    name: "今日爆肝",
+    description: "单日 XP 达到 1,000,000",
+    flavor: "你的肝发来了求救信号。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 1_000_000,
+  },
+  {
+    id: "daily_10m",
+    category: "peak",
+    rarity: "epic",
+    name: "服务器发烫",
+    description: "单日 XP 达到 10,000,000",
+    flavor: "机房管理员已经拿起了灭火器。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 10_000_000,
+  },
+  {
+    id: "daily_100m",
+    category: "peak",
+    rarity: "legendary",
+    name: "天气系统失控",
+    description: "单日 XP 达到 100,000,000",
+    flavor: "气象局表示无法预测此次风暴。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 100_000_000,
+  },
+  {
+    id: "streak_3",
+    category: "growth",
+    rarity: "common",
+    name: "三天打鱼",
+    description: "连续 3 天有 XP",
+    flavor: "坚持三天已经超过了很多新年计划。",
+    condition: ({ consecutiveDays }) => consecutiveDays >= 3,
+  },
+  {
+    id: "streak_7",
+    category: "growth",
+    rarity: "rare",
+    name: "不打鱼了",
+    description: "连续 7 天有 XP",
+    flavor: "两天晒网的日子一去不复返了。",
+    condition: ({ consecutiveDays }) => consecutiveDays >= 7,
+  },
+  {
+    id: "streak_30",
+    category: "growth",
+    rarity: "legendary",
+    name: "月租户",
+    description: "连续 30 天有 XP",
+    flavor: "房东表示你可以考虑签长期合同了。",
+    condition: ({ consecutiveDays }) => consecutiveDays >= 30,
+  },
+  {
+    id: "burst_60",
+    category: "peak",
+    rarity: "common",
+    name: "灵感爆发",
+    description: "XP/min 达到 60",
+    flavor: "灵感来了挡都挡不住。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 60,
+  },
+  {
+    id: "burst_10k",
+    category: "peak",
+    rarity: "rare",
+    name: "手速起飞",
+    description: "XP/min 达到 10,000",
+    flavor: "你的键盘正在请求加薪。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 10_000,
+  },
+  {
+    id: "burst_100k",
+    category: "peak",
+    rarity: "epic",
+    name: "雨云生成器",
+    description: "XP/min 达到 100,000",
+    flavor: "云层越来越厚，暴风雨即将来临。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 100_000,
+  },
+  {
+    id: "burst_1m",
+    category: "peak",
+    rarity: "legendary",
+    name: "风暴召唤师",
+    description: "XP/min 达到 1,000,000",
+    flavor: "这不是 coding，这是召唤天气奇观。",
+    condition: ({ stats }) => stats.weather.tokensPerMinute >= 1_000_000,
+  },
+  {
+    id: "long_session",
+    category: "growth",
+    rarity: "epic",
+    planned: true,
+    name: "坐忘",
+    description: "单 session 持续超过 4 小时",
+    flavor: "你和椅子达成了高度同步。",
+    condition: () => false,
+  },
+  {
+    id: "midnight",
+    category: "time",
+    rarity: "common",
+    name: "午夜写诗",
+    description: "凌晨 0 点以后还在用",
+    flavor: "夜色正好，代码也正好。",
+    condition: ({ hourSet }) => hourSet.has(0),
+  },
+  {
+    id: "deep_night",
+    category: "time",
+    rarity: "rare",
+    name: "夜猫本猫",
+    description: "凌晨 3 点还在 coding",
+    flavor: "凌晨三点的代码，有种别样的浪漫。",
+    condition: ({ hourSet }) => hourSet.has(3),
+  },
+  {
+    id: "sunrise",
+    category: "time",
+    rarity: "rare",
+    name: "看过日出",
+    description: "凌晨 5 点还在 coding",
+    flavor: "是通宵到天亮，不是早起看日出对吧？",
+    condition: ({ hourSet }) => hourSet.has(5),
+  },
+  {
+    id: "early_bird",
+    category: "time",
+    rarity: "common",
+    name: "早起的鸟",
+    description: "早上 6 点到 7 点有 XP",
+    flavor: "早起的鸟儿有虫吃，早起的 coder 有 bug 修。",
+    condition: ({ hourSet }) => hourSet.has(6),
+  },
+  {
+    id: "all_nighter",
+    category: "time",
+    rarity: "epic",
+    planned: true,
+    name: "昼夜不分",
+    description: "同一 session 跨越午夜",
+    flavor: "对你来说，时间不过是屏幕右下角的数字。",
+    condition: () => false,
+  },
+  {
+    id: "weekend_warrior",
+    category: "time",
+    rarity: "rare",
+    name: "周末不休",
+    description: "周六周日各有 XP",
+    flavor: "休息日只是换一种方式继续努力。",
+    condition: ({ weekendWarrior }) => weekendWarrior,
+  },
+  {
+    id: "codex_connected",
+    category: "agent",
+    rarity: "common",
+    name: "Codex 接入",
+    description: "Codex 有第一条事件",
+    flavor: "欢迎 Codex 加入豪华午餐。",
+    condition: ({ activeSources }) => activeSources.has("codex"),
+  },
+  {
+    id: "claude_connected",
+    category: "agent",
+    rarity: "common",
+    name: "Claude 接入",
+    description: "Claude Code 有第一条事件",
+    flavor: "Claude 已就位，请下达指令。",
+    condition: ({ activeSources }) => activeSources.has("claude"),
+  },
+  {
+    id: "openclaw_connected",
+    category: "agent",
+    rarity: "common",
+    name: "Kiki 接入",
+    description: "OpenClaw 有第一条事件",
+    flavor: "Kiki 说这棵树可以养。",
+    condition: ({ activeSources }) => activeSources.has("openclaw"),
+  },
+  {
+    id: "opencode_connected",
+    category: "agent",
+    rarity: "rare",
+    name: "四合一",
+    description: "OpenCode 也接上了",
+    flavor: "集齐四个 agent 可以召唤神龙。",
+    condition: ({ activeSources }) => activeSources.has("opencode"),
+  },
+  {
+    id: "all_agents",
+    category: "agent",
+    rarity: "legendary",
+    name: "全家桶",
+    description: "四种 agent 全部接入",
+    flavor: "恭喜获得全家桶套餐，附赠加大可乐。",
+    condition: ({ activeSources }) => activeSources.size >= 4,
+  },
+  {
+    id: "multi_agent_day",
+    category: "agent",
+    rarity: "epic",
+    name: "多线作战",
+    description: "同一天用了 3 种 agent",
+    flavor: "一个脑袋不够用，那就多开几条线。",
+    condition: ({ maxSourcesOneDay }) => maxSourcesOneDay >= 3,
+  },
+  {
+    id: "agent_switcher",
+    category: "agent",
+    rarity: "rare",
+    name: "不忠诚",
+    description: "10 分钟内切换了 agent",
+    flavor: "花心不是你的错，是 agent 太多了。",
+    condition: ({ hasAgentSwitchWithinTenMinutes }) => hasAgentSwitchWithinTenMinutes,
+  },
+  {
+    id: "touch_grass",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "去外面走走",
+    description: "超过 7 天没有 XP 后再次回来",
+    flavor: "小树以为你真的去晒太阳了。",
+    condition: ({ touchGrassReturn }) => touchGrassReturn,
+  },
+  {
+    id: "coffee_overdose",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "咖啡因超载",
+    description: "连续 8 小时不间断 XP 入账",
+    flavor: "此成就不建议配合第三杯咖啡食用。",
+    condition: ({ coffeeOverdose }) => coffeeOverdose,
+  },
+  {
+    id: "xp_zero_day",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "摸鱼冠军",
+    description: "某天 XP 为 0 但 app 开着",
+    flavor: "今天的你选择了世界和平。",
+    condition: () => false,
+  },
+  {
+    id: "delete_regret",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "删了又装",
+    description: "重新安装后读到历史数据",
+    flavor: "我就知道你会回来的。",
+    condition: () => false,
+  },
+  {
+    id: "kiki_approved",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "获得 Kiki 认证",
+    description: "OpenClaw 贡献达到 500,000 XP",
+    flavor: "Kiki 点了点头，事情开始变得正式。",
+    condition: ({ sourceXp }) => sourceXp.openclaw >= 500_000,
+  },
+  {
+    id: "tree_whisperer",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    planned: true,
+    name: "树语者",
+    description: "盯着小树超过 10 分钟没有动",
+    flavor: "你们之间产生了一种安静的理解。",
+    condition: () => false,
+  },
+  {
+    id: "fibonacci",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "数学家精神",
+    description: "某次 session XP 恰好是斐波那契数",
+    flavor: "1, 1, 2, 3, 5, 8, 13... 宇宙的密码藏在 session 里。",
+    condition: ({ hasFibonacciSession }) => hasFibonacciSession,
+  },
+];
+
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app");
 document.title = "Vibe Tree";
 
-const viewMode: ViewMode = new URLSearchParams(location.search).get("view") === "manager" ? "manager" : "pet";
+const viewParam = new URLSearchParams(location.search).get("view");
+const viewMode: ViewMode = viewParam === "manager" ? "manager" : viewParam === "toast" ? "toast" : "pet";
 let ledger: LedgerFile | null = null;
 let tree: TreeAsset | null = null;
 let gameBalance: GameBalance | null = null;
 let usageStatus: UsageStatus | null = null;
+let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
 let levelUpTimer: number | undefined;
+let achievementSyncInFlight = false;
+let achievementToastTimer: number | undefined;
+let lockedAchievementHintTimer: number | undefined;
+const achievementToastQueue: AchievementDef[] = [];
+const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
+const TOAST_PREVIEW_IDS = ["sprout", "deep_night", "xp_1m", "xp_100m", "fibonacci"];
+let toastPreviewIndex = 0;
 let pendingLevelUp: { from: number; to: number } | null = null;
 const AUTO_BADGE_FLIP_MS = 30_000;
 const BADGE_TOKEN_HOLD_MS = 2_500;
@@ -100,6 +589,10 @@ let badgeAutoFlipTimer: number | undefined;
 let historyFilter: HistoryFilter = "all";
 let lastHistoryChartKey = "";
 let sourceScope: SourceScope = "today";
+let dashboardTab: DashboardTab = "home";
+let achievementCategoryFilter: AchievementCategoryFilter = "growth";
+let achievementStatusFilter: AchievementStatusFilter = "all";
+let seenAchievementIds = new Set<string>();
 let expandedSourceKey: string | null = null;
 let dragState: null | {
   startMouse: { x: number; y: number };
@@ -128,7 +621,7 @@ if (viewMode === "pet") {
       </section>
     </main>
   `;
-} else {
+} else if (viewMode === "manager") {
   app.innerHTML = `
     <main class="manager-root" data-weather="clear" data-active="false">
       <aside class="pet-preview-panel">
@@ -153,6 +646,11 @@ if (viewMode === "pet") {
             </span>
           </div>
         </section>
+
+        <nav class="side-tabs" id="sideTabs" aria-label="页面切换">
+          <button type="button" data-dashboard-tab="home">主页</button>
+          <button type="button" data-dashboard-tab="achievements">成就</button>
+        </nav>
 
       </aside>
       <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置">⚙</button>
@@ -194,6 +692,35 @@ if (viewMode === "pet") {
           </div>
         </section>
 
+        <section class="achievement-card" aria-label="Achievements">
+          <div class="section-header">
+            <div>
+              <h3>纪念 / 成就</h3>
+            </div>
+            <div class="achievement-header-tools">
+              <button class="achievement-preview-button" id="achievementToastPreviewButton" type="button">预览弹窗</button>
+              <span id="achievementSummary">0 / 0</span>
+            </div>
+          </div>
+          <div class="achievement-overview" id="achievementOverview"></div>
+          <div class="achievement-filter-panel">
+            <div class="achievement-category-tabs" id="achievementCategoryTabs" role="tablist" aria-label="成就分类">
+              <button type="button" data-achievement-category="growth">成长之路</button>
+              <button type="button" data-achievement-category="peak">巅峰时刻</button>
+              <button type="button" data-achievement-category="time">时间档案</button>
+              <button type="button" data-achievement-category="agent">Agent</button>
+              <button type="button" data-achievement-category="hidden">未解之谜</button>
+            </div>
+            <div class="achievement-status-tabs" id="achievementStatusTabs" role="tablist" aria-label="成就状态">
+              <button type="button" data-achievement-status="all">全部</button>
+              <button type="button" data-achievement-status="unlocked">已点亮</button>
+              <button type="button" data-achievement-status="locked">未点亮</button>
+            </div>
+          </div>
+          <div class="achievement-recent" id="achievementRecent"></div>
+          <div class="achievement-grid" id="achievementGrid"></div>
+        </section>
+
         <section class="source-card" aria-label="Token 来源">
           <div class="section-header">
             <h3>数据来源</h3>
@@ -214,6 +741,7 @@ if (viewMode === "pet") {
           </div>
         </section>
       </section>
+      <div class="achievement-toast-layer" id="achievementToastLayer" aria-live="polite"></div>
 
       <section class="settings-modal" id="settingsModal" aria-hidden="true">
         <div class="settings-backdrop" id="settingsBackdrop"></div>
@@ -275,25 +803,6 @@ if (viewMode === "pet") {
           </section>
 
           <section class="settings-section">
-            <h4>小树</h4>
-            <div class="pet-settings">
-              <label class="toggle-row">
-                <input id="lockInput" type="checkbox" />
-                <span>锁定小树</span>
-              </label>
-              <label class="scale-select">
-                大小
-                <select id="scaleSelect">
-                  <option value="0.5">0.5x</option>
-                  <option value="1">1x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="2">2x</option>
-                </select>
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section">
             <h4>设备</h4>
             <div class="device-controls" aria-label="设备设置">
               <label class="toggle-row">
@@ -332,9 +841,17 @@ if (viewMode === "pet") {
       </section>
     </main>
   `;
+} else {
+  app.innerHTML = `
+    <main class="toast-root" data-placement="right">
+      <div class="achievement-toast-layer" id="achievementToastLayer" aria-live="polite"></div>
+    </main>
+  `;
 }
 
-const root = document.querySelector<HTMLElement>(viewMode === "pet" ? ".pet-root" : ".manager-root")!;
+const root = document.querySelector<HTMLElement>(
+  viewMode === "pet" ? ".pet-root" : viewMode === "manager" ? ".manager-root" : ".toast-root",
+)!;
 const treeImage = document.querySelector<HTMLImageElement>("#treeImage");
 const previewTreeImage = document.querySelector<HTMLImageElement>("#previewTreeImage");
 const weatherBack = document.querySelector<HTMLElement>("#weatherBack");
@@ -368,6 +885,15 @@ const historyTabs = document.querySelector<HTMLElement>("#historyTabs");
 const historyLegend = document.querySelector<HTMLElement>("#historyLegend");
 const sourceScopeTabs = document.querySelector<HTMLElement>("#sourceScopeTabs");
 const sourceBreakdownElement = document.querySelector<HTMLElement>("#sourceBreakdown");
+const sideTabs = document.querySelector<HTMLElement>("#sideTabs");
+const achievementSummaryElement = document.querySelector<HTMLElement>("#achievementSummary");
+const achievementOverviewElement = document.querySelector<HTMLElement>("#achievementOverview");
+const achievementRecentElement = document.querySelector<HTMLElement>("#achievementRecent");
+const achievementGridElement = document.querySelector<HTMLElement>("#achievementGrid");
+const achievementCategoryTabs = document.querySelector<HTMLElement>("#achievementCategoryTabs");
+const achievementStatusTabs = document.querySelector<HTMLElement>("#achievementStatusTabs");
+const achievementToastPreviewButton = document.querySelector<HTMLButtonElement>("#achievementToastPreviewButton");
+const achievementToastLayer = document.querySelector<HTMLElement>("#achievementToastLayer");
 
 function setupHistoryCard() {
   const card = document.querySelector<HTMLElement>(".chart-card");
@@ -397,6 +923,11 @@ function setupHistoryCard() {
 }
 
 async function boot() {
+  if (viewMode === "toast") {
+    bindToastOverlayEvents();
+    return;
+  }
+
   const [manifest, balance] = await Promise.all([
     fetch(assetUrl("/assets/trees/vibe-bonsai/config/pure-svg-manifest.json")).then(
       (res) => res.json() as Promise<PureSvgManifest>,
@@ -409,6 +940,8 @@ async function boot() {
   gameBalance = balance;
   ledger = await window.bonsai.getLedger();
   usageStatus = await window.bonsai.getUsageStatus();
+  achievementState = await window.bonsai.getAchievements();
+  initializeSeenAchievements();
 
   bindEvents();
   render();
@@ -422,6 +955,20 @@ async function boot() {
   window.bonsai.onUsageStatus((nextStatus) => {
     usageStatus = nextStatus;
     renderUsageStatus();
+  });
+  window.bonsai.onAchievements((nextState, unlocked) => {
+    achievementState = nextState;
+    renderAchievements();
+  });
+}
+
+function bindToastOverlayEvents() {
+  window.bonsai.onAchievementToast((payload) => {
+    root.dataset.placement = payload.placement;
+    queueAchievementToasts(payload.ids);
+  });
+  window.bonsai.onAchievementToastPlacement((placement) => {
+    root.dataset.placement = placement;
   });
 }
 
@@ -580,6 +1127,61 @@ function bindEvents() {
     renderScopedSourceBreakdown();
   });
 
+  sideTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-dashboard-tab]");
+    if (!button) return;
+    const nextTab = button.dataset.dashboardTab as DashboardTab | undefined;
+    if (!nextTab || nextTab === dashboardTab) return;
+    dashboardTab = nextTab;
+    renderDashboardTabs();
+  });
+
+  achievementCategoryTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-achievement-category]");
+    if (!button) return;
+    const nextCategory = button.dataset.achievementCategory as AchievementCategoryFilter | undefined;
+    if (!nextCategory || nextCategory === achievementCategoryFilter) return;
+    achievementCategoryFilter = nextCategory;
+    renderAchievements();
+  });
+
+  achievementStatusTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-achievement-status]");
+    if (!button) return;
+    const nextStatus = button.dataset.achievementStatus as AchievementStatusFilter | undefined;
+    if (!nextStatus || nextStatus === achievementStatusFilter) return;
+    achievementStatusFilter = nextStatus;
+    renderAchievements();
+  });
+
+  achievementGridElement?.addEventListener("click", (event) => {
+    const item = (event.target as HTMLElement).closest<HTMLElement>("[data-achievement-id]");
+    if (!item) return;
+    const id = item.dataset.achievementId;
+    const def = ACHIEVEMENTS.find((d) => d.id === id);
+    if (!def) return;
+    if (!achievementUnlockedIds().has(def.id)) {
+      showLockedAchievementHint(item);
+      return;
+    }
+    markAchievementSeen(def.id);
+    showAchievementDetail(def);
+  });
+
+  achievementRecentElement?.addEventListener("click", (event) => {
+    const item = (event.target as HTMLElement).closest<HTMLElement>("[data-achievement-id]");
+    if (!item) return;
+    const id = item.dataset.achievementId;
+    const def = ACHIEVEMENTS.find((d) => d.id === id);
+    if (!def) return;
+    markAchievementSeen(def.id);
+    showAchievementDetail(def);
+  });
+
+  achievementToastPreviewButton?.addEventListener("click", () => {
+    previewAchievementToast();
+  });
+
 }
 
 async function updatePathSetting(
@@ -612,6 +1214,7 @@ function render() {
   root.dataset.active = String(stats.recentXp > 0 || stats.weather.tokensPerMinute > 0);
   root.dataset.scale = String(ledger.settings.scale).replace(".", "-");
   root.dataset.stage = stats.stage.id;
+  root.dataset.tab = dashboardTab;
 
   if (treeImage) {
     treeImage.src = assetUrl(stats.stage.image);
@@ -668,6 +1271,19 @@ function render() {
   if (pendingLevelUp) triggerLevelUpAnimation(pendingLevelUp);
   renderUsageStatus();
   renderHistoryChart(getSevenDayRows(ledger.entries, historyFilter), historyFilter);
+  const achievementContext = buildAchievementContext(stats);
+  renderAchievements(stats, achievementContext);
+  renderDashboardTabs();
+  syncAchievements(stats, achievementContext);
+}
+
+function renderDashboardTabs() {
+  root.dataset.tab = dashboardTab;
+  sideTabs?.querySelectorAll<HTMLButtonElement>("[data-dashboard-tab]").forEach((button) => {
+    const active = button.dataset.dashboardTab === dashboardTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
 }
 
 function triggerLevelUpAnimation(levels: { from: number; to: number }) {
@@ -682,6 +1298,502 @@ function triggerLevelUpAnimation(levels: { from: number; to: number }) {
     root.classList.remove("level-up");
     levelUpTimer = undefined;
   }, 2200);
+}
+
+function renderAchievements(stats?: Stats, context?: AchievementContext) {
+  if (!achievementSummaryElement || !achievementGridElement) return;
+  if (!stats && ledger && tree && gameBalance) stats = calculateStats(ledger.entries, tree, gameBalance);
+  if (!context && stats) context = buildAchievementContext(stats);
+  const unlockedIds = achievementUnlockedIds();
+  const unseenIds = new Set([...unlockedIds].filter((id) => !seenAchievementIds.has(id)));
+  const visibleDefs = ACHIEVEMENTS.filter((def) => !def.planned || unlockedIds.has(def.id));
+  const unlockedCount = visibleDefs.filter((def) => unlockedIds.has(def.id)).length;
+  const completion = visibleDefs.length ? Math.round((unlockedCount / visibleDefs.length) * 100) : 0;
+  const legendaryCount = visibleDefs.filter((def) => unlockedIds.has(def.id) && def.rarity === "legendary").length;
+  const hiddenCount = visibleDefs.filter((def) => unlockedIds.has(def.id) && def.hidden).length;
+  const filteredDefs = visibleDefs.filter((def) => matchesAchievementFilters(def, unlockedIds));
+
+  achievementSummaryElement.textContent = `${unlockedCount} / ${visibleDefs.length}`;
+
+  achievementCategoryTabs?.querySelectorAll<HTMLButtonElement>("[data-achievement-category]").forEach((button) => {
+    const active = button.dataset.achievementCategory === achievementCategoryFilter;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+
+  achievementStatusTabs?.querySelectorAll<HTMLButtonElement>("[data-achievement-status]").forEach((button) => {
+    const active = button.dataset.achievementStatus === achievementStatusFilter;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+
+  if (achievementOverviewElement) {
+    achievementOverviewElement.innerHTML = `
+      <article>
+        <span>完成率</span>
+        <strong>${completion}%</strong>
+      </article>
+      <article>
+        <span>已点亮</span>
+        <strong>${unlockedCount}</strong>
+      </article>
+      <article>
+        <span>传说</span>
+        <strong>${legendaryCount}</strong>
+      </article>
+      <article>
+        <span>隐藏</span>
+        <strong>${hiddenCount}</strong>
+      </article>
+    `;
+  }
+
+  if (achievementRecentElement) {
+    const showcase = visibleDefs
+      .filter((def) => unlockedIds.has(def.id) && (def.rarity === "legendary" || def.rarity === "epic"))
+      .sort((a, b) => rarityOrder(a.rarity) - rarityOrder(b.rarity));
+    achievementRecentElement.innerHTML = showcase.length
+      ? showcase
+          .map(
+            (def) =>
+              `<button type="button" class="rarity-${def.rarity}" data-achievement-id="${escapeHtml(def.id)}">${escapeHtml(def.name)}</button>`,
+          )
+          .join("")
+      : `<span>还没有高阶成就，等下一次点亮</span>`;
+  }
+
+  if (!filteredDefs.length) {
+    achievementGridElement.innerHTML = `<div class="achievement-empty">这个筛选下还没有成就。</div>`;
+    return;
+  }
+
+  achievementGridElement.innerHTML = CATEGORY_ORDER
+    .map((cat) => {
+      const defs = filteredDefs.filter((def) => def.category === cat);
+      if (!defs.length) return "";
+      const sorted = [...defs].sort((a, b) => {
+        const aUnlocked = unlockedIds.has(a.id) ? 0 : 1;
+        const bUnlocked = unlockedIds.has(b.id) ? 0 : 1;
+        if (aUnlocked !== bUnlocked) return aUnlocked - bUnlocked;
+        return rarityOrder(a.rarity) - rarityOrder(b.rarity);
+      });
+      return `
+        <section class="achievement-category">
+          <div class="achievement-category-title">
+            <strong>${escapeHtml(ACHIEVEMENT_CATEGORY_LABELS[cat])}</strong>
+            <span>${defs.filter((def) => unlockedIds.has(def.id)).length}/${defs.length}</span>
+          </div>
+          <div class="achievement-items">
+            ${sorted.map((def) => achievementItemHtml(def, unlockedIds, unseenIds, stats, context)).join("")}
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function matchesAchievementFilters(def: AchievementDef, unlockedIds: Set<string>) {
+  if (def.category !== achievementCategoryFilter) return false;
+  const unlocked = unlockedIds.has(def.id);
+  if (achievementStatusFilter === "unlocked") return unlocked;
+  if (achievementStatusFilter === "locked") return !unlocked;
+  if (achievementStatusFilter === "hidden") return def.hidden;
+  return true;
+}
+
+function achievementItemHtml(
+  def: AchievementDef,
+  unlockedIds: Set<string>,
+  unseenIds: Set<string>,
+  stats?: Stats,
+  context?: AchievementContext,
+) {
+  const unlocked = unlockedIds.has(def.id);
+  const isNew = unlocked && unseenIds.has(def.id);
+  const reveal = unlocked || !def.hidden;
+  const lockedHidden = def.hidden && !unlocked;
+  const progress = achievementProgress(def, stats, context);
+  const rarityLabel = escapeHtml(ACHIEVEMENT_RARITY_LABELS[def.rarity]);
+  const meta = def.planned ? "未开放" : rarityLabel;
+  const markIcon = unlocked ? "✦" : lockedHidden ? "?" : "·";
+  const conditionText = reveal ? def.description : "解锁后揭晓";
+  return `
+    <article class="achievement-item ${unlocked ? "unlocked" : "locked"} ${isNew ? "new" : ""} rarity-${def.rarity}" data-achievement-id="${def.id}">
+      <div class="achievement-mark">${markIcon}</div>
+      <div class="achievement-copy">
+        <div>
+          <strong>${escapeHtml(reveal ? def.name : "???")}</strong>
+          <span>${meta}</span>
+        </div>
+        <p>${escapeHtml(conditionText)}</p>
+        <div class="achievement-progress ${progress ? "" : "empty"}"><span style="width:${progress?.percent ?? 0}%"></span></div>
+        <em>${escapeHtml(progress?.label ?? " ")}</em>
+      </div>
+      ${isNew ? `<span class="achievement-new-badge">NEW</span>` : ""}
+    </article>
+  `;
+}
+
+function showAchievementDetail(def: AchievementDef) {
+  const unlockedIds = achievementUnlockedIds();
+  const unlocked = unlockedIds.has(def.id);
+  const reveal = unlocked || !def.hidden;
+  const unlock = achievementState.unlocked.find((u) => u.id === def.id);
+  const unlockDate = unlock ? new Date(unlock.unlockedAt).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" }) : null;
+  const rarityLabel = ACHIEVEMENT_RARITY_LABELS[def.rarity];
+  const categoryLabel = ACHIEVEMENT_CATEGORY_LABELS[def.category];
+  const markIcon = unlocked ? "✦" : def.hidden && !unlocked ? "?" : "·";
+
+  const stats = ledger && tree && gameBalance ? calculateStats(ledger.entries, tree, gameBalance) : undefined;
+  const context = stats ? buildAchievementContext(stats) : undefined;
+  const progress = achievementProgress(def, stats, context);
+
+  const existing = document.querySelector(".achievement-detail-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "achievement-detail-overlay";
+  overlay.innerHTML = `
+    <div class="achievement-detail-backdrop"></div>
+    <div class="achievement-detail rarity-${def.rarity} ${unlocked ? "unlocked" : "locked"}">
+      <button class="achievement-detail-close" type="button" aria-label="关闭">×</button>
+      <div class="achievement-detail-mark">${markIcon}</div>
+      <h3>${escapeHtml(reveal ? def.name : "???")}</h3>
+      <span class="achievement-detail-rarity">${escapeHtml(rarityLabel)}</span>
+      <p class="achievement-detail-condition">${escapeHtml(reveal ? def.description : "解锁后揭晓")}</p>
+      ${reveal && def.flavor ? `<p class="achievement-detail-flavor">${escapeHtml(def.flavor)}</p>` : ""}
+      <div class="achievement-detail-meta">
+        <span>${escapeHtml(categoryLabel)}</span>
+        ${unlockDate ? `<span>达成于 ${escapeHtml(unlockDate)}</span>` : `<span>未解锁</span>`}
+      </div>
+      ${progress ? `
+        <div class="achievement-detail-progress">
+          <div class="achievement-progress"><span style="width:${progress.percent}%"></span></div>
+          <em>${escapeHtml(progress.label)}</em>
+        </div>
+      ` : ""}
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".achievement-detail-backdrop")?.addEventListener("click", close);
+  overlay.querySelector(".achievement-detail-close")?.addEventListener("click", close);
+  overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+}
+
+function showLockedAchievementHint(target: HTMLElement) {
+  const existing = document.querySelector(".locked-achievement-hint");
+  if (existing) existing.remove();
+  if (lockedAchievementHintTimer) window.clearTimeout(lockedAchievementHintTimer);
+
+  const hint = document.createElement("div");
+  hint.className = "locked-achievement-hint";
+  hint.textContent = "未解锁";
+  document.body.appendChild(hint);
+
+  const itemRect = target.getBoundingClientRect();
+  const hintRect = hint.getBoundingClientRect();
+  const left = itemRect.left + itemRect.width / 2 - hintRect.width / 2;
+  const top = itemRect.top - hintRect.height - 8;
+  hint.style.left = `${clamp(left, 12, window.innerWidth - hintRect.width - 12)}px`;
+  hint.style.top = `${Math.max(12, top)}px`;
+
+  lockedAchievementHintTimer = window.setTimeout(() => {
+    hint.remove();
+    lockedAchievementHintTimer = undefined;
+  }, 1200);
+}
+
+function achievementProgress(def: AchievementDef, stats?: Stats, context?: AchievementContext) {
+  if (!stats) return undefined;
+  const xpMatch = def.id.match(/^xp_(10k|100k|1m|10m|100m|1b)$/);
+  const dailyMatch = def.id.match(/^daily_(1k|10k|50k|1m|10m|100m)$/);
+  const burstMatch = def.id.match(/^burst_(60|10k|100k|1m)$/);
+  const targetByKey: Record<string, number> = {
+    "60": 60,
+    "1k": 1_000,
+    "10k": 10_000,
+    "50k": 50_000,
+    "100k": 100_000,
+    "1m": 1_000_000,
+    "10m": 10_000_000,
+    "100m": 100_000_000,
+    "1b": 1_000_000_000,
+  };
+  if (xpMatch) {
+    const target = targetByKey[xpMatch[1]];
+    return { percent: clamp((stats.xp / target) * 100, 0, 100), label: `${formatCompact(stats.xp)} / ${formatCompact(target)} XP` };
+  }
+  if (dailyMatch && context) {
+    const target = targetByKey[dailyMatch[1]];
+    return {
+      percent: clamp((context.maxDailyXp / target) * 100, 0, 100),
+      label: `${formatCompact(context.maxDailyXp)} / ${formatCompact(target)} XP`,
+    };
+  }
+  if (burstMatch) {
+    const target = targetByKey[burstMatch[1]];
+    const peak = peakStat("peakXpPerMinute", stats.weather.tokensPerMinute);
+    return {
+      percent: clamp((peak / target) * 100, 0, 100),
+      label: `${formatCompact(peak)} / ${formatCompact(target)} XP/min`,
+    };
+  }
+  return undefined;
+}
+
+function peakStat(key: string, current: number): number {
+  const stored = achievementState.stats?.[key];
+  const prev = typeof stored === "number" ? stored : 0;
+  return Math.max(prev, current);
+}
+
+let statsSyncInFlight = false;
+
+function syncPeakStats(stats: Stats, context: AchievementContext) {
+  if (statsSyncInFlight) return;
+  const peaks: Record<string, number> = {
+    peakXpPerMinute: stats.weather.tokensPerMinute,
+    peakDailyXp: context.maxDailyXp,
+  };
+  const existing = achievementState.stats ?? {};
+  const needsUpdate = Object.entries(peaks).some(
+    ([key, value]) => value > (typeof existing[key] === "number" ? (existing[key] as number) : 0),
+  );
+  if (!needsUpdate) return;
+  const merged: Record<string, number> = {};
+  for (const [key, value] of Object.entries(peaks)) {
+    merged[key] = Math.max(value, typeof existing[key] === "number" ? (existing[key] as number) : 0);
+  }
+  statsSyncInFlight = true;
+  void window.bonsai
+    .updateAchievementStats(merged)
+    .then((state) => {
+      achievementState = state;
+    })
+    .finally(() => {
+      statsSyncInFlight = false;
+    });
+}
+
+function syncAchievements(stats: Stats, context: AchievementContext) {
+  if (!ledger || !tree || achievementSyncInFlight) return;
+  syncPeakStats(stats, context);
+  const unlockedIds = achievementUnlockedIds();
+  const items = ACHIEVEMENTS.filter((def) => !def.planned && !unlockedIds.has(def.id) && def.condition(context)).map(
+    (def) => ({
+      id: def.id,
+      trigger: def.trigger?.(context) ?? {
+        xp: stats.xp,
+        level: stats.level,
+        at: new Date().toISOString(),
+      },
+    }),
+  );
+  if (!items.length) return;
+
+  achievementSyncInFlight = true;
+  void window.bonsai
+    .unlockAchievements(items)
+    .then((result) => {
+      achievementState = result.state;
+      queueAchievementToasts(result.unlocked.map((item) => item.id));
+      renderAchievements(stats, context);
+    })
+    .finally(() => {
+      achievementSyncInFlight = false;
+    });
+}
+
+function buildAchievementContext(stats: Stats): AchievementContext {
+  const entries = ledger?.entries ?? [];
+  const dayXp = new Map<string, number>();
+  const daySources = new Map<string, Set<HistorySourceId>>();
+  const activeSources = new Set<HistorySourceId>();
+  const sourceXp: Record<HistorySourceId, number> = { codex: 0, openclaw: 0, opencode: 0, claude: 0 };
+  const hourSet = new Set<number>();
+  const weekendDays = new Map<string, Set<number>>();
+  const hourKeys = new Set<number>();
+  let hasFibonacciSession = false;
+
+  for (const entry of entries) {
+    const xp = xpForEntry(entry);
+    if (xp <= 0) continue;
+    const createdAt = new Date(entry.createdAt);
+    const key = dateKey(createdAt);
+    dayXp.set(key, (dayXp.get(key) ?? 0) + xp);
+    hourSet.add(createdAt.getHours());
+    hourKeys.add(Math.floor(createdAt.getTime() / 3_600_000));
+    if (isFibonacci(xp)) hasFibonacciSession = true;
+
+    const source = historySourceId(entry);
+    if (source) {
+      activeSources.add(source);
+      sourceXp[source] += xp;
+      const sources = daySources.get(key) ?? new Set<HistorySourceId>();
+      sources.add(source);
+      daySources.set(key, sources);
+    }
+
+    if (createdAt.getDay() === 0 || createdAt.getDay() === 6) {
+      const saturday = new Date(createdAt);
+      const day = saturday.getDay();
+      saturday.setDate(saturday.getDate() - (day === 0 ? 1 : 0));
+      const weekendKey = dateKey(saturday);
+      const days = weekendDays.get(weekendKey) ?? new Set<number>();
+      days.add(day);
+      weekendDays.set(weekendKey, days);
+    }
+  }
+
+  const activeDayKeys = [...dayXp.keys()].sort();
+  const maxDailyXp = Math.max(0, ...dayXp.values());
+  const maxSourcesOneDay = Math.max(0, ...[...daySources.values()].map((sources) => sources.size));
+  const stageIndex = tree ? tree.stages.findIndex((stage) => stage.id === stats.stage.id) : 0;
+
+  return {
+    stats,
+    entries,
+    stageIndex,
+    maxDailyXp,
+    consecutiveDays: longestConsecutiveDays(activeDayKeys),
+    activeSources,
+    maxSourcesOneDay,
+    hasAgentSwitchWithinTenMinutes: hasAgentSwitchWithin(entries, 10 * 60 * 1000),
+    sourceXp,
+    hourSet,
+    weekendWarrior: [...weekendDays.values()].some((days) => days.has(0) && days.has(6)),
+    touchGrassReturn: hasReturnAfterInactiveGap(activeDayKeys, 7),
+    coffeeOverdose: hasConsecutiveHourActivity(hourKeys, 8),
+    hasFibonacciSession,
+  };
+}
+
+function achievementUnlockedIds() {
+  return new Set(achievementState.unlocked.map((item) => item.id));
+}
+
+function initializeSeenAchievements() {
+  const unlockedIds = [...achievementUnlockedIds()];
+  const stored = localStorage.getItem("vibe-tree:seen-achievements");
+  if (!stored) {
+    seenAchievementIds = new Set(unlockedIds);
+    persistSeenAchievements();
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    seenAchievementIds = new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    seenAchievementIds = new Set(unlockedIds);
+    persistSeenAchievements();
+  }
+}
+
+function persistSeenAchievements() {
+  localStorage.setItem("vibe-tree:seen-achievements", JSON.stringify([...seenAchievementIds]));
+}
+
+function markAchievementSeen(id: string) {
+  if (seenAchievementIds.has(id)) return;
+  seenAchievementIds.add(id);
+  persistSeenAchievements();
+  renderAchievements();
+}
+
+function queueAchievementToasts(ids: string[]) {
+  const defs = ids.map((id) => ACHIEVEMENTS.find((def) => def.id === id)).filter((def): def is AchievementDef => Boolean(def));
+  if (!defs.length) return;
+  achievementToastQueue.push(...defs);
+  showNextAchievementToast();
+}
+
+function previewAchievementToast() {
+  const id = TOAST_PREVIEW_IDS[toastPreviewIndex % TOAST_PREVIEW_IDS.length];
+  toastPreviewIndex += 1;
+  void window.bonsai.previewAchievementToast(id);
+}
+
+function showNextAchievementToast() {
+  if (!achievementToastLayer || achievementToastTimer || !achievementToastQueue.length) return;
+  const def = achievementToastQueue.shift()!;
+  achievementToastLayer.innerHTML = `
+    <div class="achievement-toast rarity-${def.rarity}">
+      <span>${ACHIEVEMENT_RARITY_LABELS[def.rarity]} 路 成就解锁</span>
+      <strong>${escapeHtml(def.name)}</strong>
+      <p>${escapeHtml(def.description)}</p>
+    </div>
+  `;
+  achievementToastTimer = window.setTimeout(() => {
+    achievementToastLayer.innerHTML = "";
+    achievementToastTimer = undefined;
+    showNextAchievementToast();
+  }, ACHIEVEMENT_TOAST_DURATION_MS);
+}
+
+function longestConsecutiveDays(keys: string[]) {
+  let best = 0;
+  let current = 0;
+  let previous = 0;
+  for (const key of keys) {
+    const time = Date.parse(`${key}T00:00:00`);
+    if (!Number.isFinite(time)) continue;
+    current = previous && time - previous === 86_400_000 ? current + 1 : 1;
+    best = Math.max(best, current);
+    previous = time;
+  }
+  return best;
+}
+
+function hasReturnAfterInactiveGap(keys: string[], gapDays: number) {
+  for (let index = 1; index < keys.length; index += 1) {
+    const previous = Date.parse(`${keys[index - 1]}T00:00:00`);
+    const current = Date.parse(`${keys[index]}T00:00:00`);
+    if (Number.isFinite(previous) && Number.isFinite(current) && current - previous >= (gapDays + 1) * 86_400_000) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasConsecutiveHourActivity(hourKeys: Set<number>, target: number) {
+  const sorted = [...hourKeys].sort((a, b) => a - b);
+  let streak = 0;
+  let previous: number | undefined;
+  for (const key of sorted) {
+    streak = previous !== undefined && key - previous === 1 ? streak + 1 : 1;
+    if (streak >= target) return true;
+    previous = key;
+  }
+  return false;
+}
+
+function hasAgentSwitchWithin(entries: LedgerEntry[], windowMs: number) {
+  const sorted = entries
+    .map((entry) => ({ time: new Date(entry.createdAt).getTime(), source: historySourceId(entry) }))
+    .filter((item): item is { time: number; source: HistorySourceId } => Boolean(item.source) && Number.isFinite(item.time))
+    .sort((a, b) => a.time - b.time);
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (sorted[index].source !== sorted[index - 1].source && sorted[index].time - sorted[index - 1].time <= windowMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isFibonacci(value: number) {
+  const rounded = Math.round(value);
+  if (rounded < 2 || rounded > 10_000_000) return false;
+  let a = 1;
+  let b = 1;
+  while (b < rounded) {
+    const next = a + b;
+    a = b;
+    b = next;
+  }
+  return b === rounded;
 }
 
 function renderLevelBadge(
@@ -985,7 +2097,7 @@ function buildTreeAsset(manifest: PureSvgManifest): TreeAsset {
     seedling: "幼苗",
     young: "小树",
     medium: "成长期",
-    lush: "茂盛",
+    lush: "繁茂",
     full: "完全体",
   };
 

@@ -1,15 +1,28 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { MenuItemConstructorOptions } from "electron";
-import type { LedgerEntry, LedgerFile, Settings, UsageEvent, UsageStatus, WindowBounds } from "../shared/types.js";
+import type {
+  AchievementState,
+  AchievementUnlock,
+  AchievementUnlockResult,
+  LedgerEntry,
+  LedgerFile,
+  Settings,
+  UsageEvent,
+  UsageStatus,
+  WindowBounds,
+} from "../shared/types.js";
 import { startClaudeSessionWatcher, startOpenClawSessionWatcher, startOpenCodeSessionWatcher } from "./agentSessionWatchers.js";
 import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const PET_BASE = { width: 192, height: 208 };
+const PET_STAGE_OFFSET = { x: 20, y: 0 };
+const ACHIEVEMENT_TOAST_SIZE = { width: 236, height: 104 };
+const ACHIEVEMENT_TOAST_OVERLAP_PER_SCALE = 48;
+const ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE = 18;
+const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
+const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
 const MAC_TRAY_ICON_SIZE = 18;
 const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
@@ -47,8 +60,11 @@ const MAX_LEVEL = 120;
 
 let petWindow: BrowserWindow | null = null;
 let managerWindow: BrowserWindow | null = null;
+let achievementToastWindow: BrowserWindow | null = null;
+let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let tray: Tray | null = null;
 let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS, installedAt: startOfLocalDayIso(new Date()) };
+let achievementState: AchievementState = { unlocked: [] };
 let codexSessionWatcher: ReturnType<typeof startCodexSessionWatcher> | null = null;
 let claudeSessionWatcher: ReturnType<typeof startClaudeSessionWatcher> | null = null;
 let openclawSessionWatcher: ReturnType<typeof startOpenClawSessionWatcher> | null = null;
@@ -104,6 +120,10 @@ function usageMetaPath() {
 
 function deviceSettingsPath() {
   return join(app.getPath("userData"), "device-settings.json");
+}
+
+function achievementsPath() {
+  return join(app.getPath("userData"), "achievements.json");
 }
 
 function readLedger(): LedgerFile {
@@ -177,6 +197,59 @@ function readDeviceSettings(legacySettings: Partial<Settings> | undefined): Sett
 
 function writeDeviceSettings(settings = ledger.settings) {
   writeJsonAtomic(deviceSettingsPath(), normalizeSettings(settings));
+}
+
+function readAchievementState(): AchievementState {
+  return normalizeAchievementState(readJsonFile<AchievementState>(achievementsPath()));
+}
+
+function writeAchievementState(state = achievementState) {
+  writeJsonAtomic(achievementsPath(), normalizeAchievementState(state));
+}
+
+function normalizeAchievementState(state: Partial<AchievementState> | undefined): AchievementState {
+  const seen = new Set<string>();
+  const unlocked = Array.isArray(state?.unlocked)
+    ? state.unlocked.filter((item): item is AchievementUnlock => {
+        if (typeof item?.id !== "string" || seen.has(item.id)) return false;
+        if (typeof item.unlockedAt !== "string" || !Number.isFinite(Date.parse(item.unlockedAt))) return false;
+        seen.add(item.id);
+        return true;
+      })
+    : [];
+  return {
+    unlocked,
+    stats: state?.stats && typeof state.stats === "object" ? state.stats : undefined,
+  };
+}
+
+function unlockAchievements(items: Array<{ id: string; trigger?: Record<string, unknown> }>): AchievementUnlockResult {
+  const existing = new Set(achievementState.unlocked.map((item) => item.id));
+  const unlocked: AchievementUnlock[] = [];
+  const now = new Date().toISOString();
+
+  for (const item of items) {
+    if (!item?.id || existing.has(item.id)) continue;
+    existing.add(item.id);
+    unlocked.push({
+      id: item.id,
+      unlockedAt: now,
+      trigger: item.trigger,
+    });
+  }
+
+  if (!unlocked.length) {
+    return { state: achievementState, unlocked };
+  }
+
+  achievementState = normalizeAchievementState({
+    ...achievementState,
+    unlocked: [...achievementState.unlocked, ...unlocked],
+  });
+  writeAchievementState();
+  broadcast("bonsai:achievements", achievementState, unlocked);
+  showAchievementToastOverlay(unlocked.map((item) => item.id));
+  return { state: achievementState, unlocked };
 }
 
 function normalizeSettings(settings: Partial<Settings>): Settings {
@@ -277,8 +350,8 @@ function startOfLocalDayIso(date: Date) {
 function petSize(scale = ledger.settings.scale) {
   const safeScale = [0.5, 1, 1.5, 2].includes(scale) ? scale : DEFAULT_SETTINGS.scale;
   return {
-    width: Math.round(PET_BASE.width * safeScale),
-    height: Math.round(PET_BASE.height * safeScale),
+    width: Math.round(PET_BASE.width * safeScale + PET_STAGE_OFFSET.x),
+    height: Math.round(PET_BASE.height * safeScale + PET_STAGE_OFFSET.y),
   };
 }
 
@@ -292,9 +365,17 @@ function defaultPetPosition(width: number, height: number) {
 
 function clampPetPosition(position: { x: number; y: number }, size = petSize()) {
   const display = screen.getDisplayNearestPoint(position).workArea;
+  const stageWidth = size.width - PET_STAGE_OFFSET.x;
+  const stageHeight = size.height - PET_STAGE_OFFSET.y;
   return {
-    x: Math.min(Math.max(position.x, display.x), display.x + display.width - size.width),
-    y: Math.min(Math.max(position.y, display.y), display.y + display.height - size.height),
+    x: Math.min(
+      Math.max(position.x, display.x - PET_STAGE_OFFSET.x),
+      display.x + display.width - PET_STAGE_OFFSET.x - stageWidth,
+    ),
+    y: Math.min(
+      Math.max(position.y, display.y - PET_STAGE_OFFSET.y),
+      display.y + display.height - PET_STAGE_OFFSET.y - stageHeight,
+    ),
   };
 }
 
@@ -309,9 +390,10 @@ function setPetBounds(position: { x: number; y: number }) {
     size,
   );
   petWindow.setBounds({ ...clamped, width: size.width, height: size.height }, false);
+  syncAchievementToastPosition();
 }
 
-async function loadRenderer(window: BrowserWindow, view: "pet" | "manager") {
+async function loadRenderer(window: BrowserWindow, view: "pet" | "manager" | "toast") {
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     await window.loadURL(`${process.env.VITE_DEV_SERVER_URL}?view=${view}`);
     return;
@@ -355,7 +437,10 @@ function createPetWindow() {
     showPetContextMenu();
   });
   void petWindow.webContents.setVisualZoomLevelLimits(1, 1);
-  petWindow.on("moved", persistPetPosition);
+  petWindow.on("moved", () => {
+    syncAchievementToastPosition();
+    persistPetPosition();
+  });
   petWindow.on("resize", () => setPetBounds(petWindowPosition()));
   petWindow.on("closed", () => {
     petWindow = null;
@@ -396,6 +481,117 @@ function createManagerWindow() {
   void managerWindow.webContents.setVisualZoomLevelLimits(1, 1);
   void loadRenderer(managerWindow, "manager");
   return managerWindow;
+}
+
+function createAchievementToastWindow() {
+  if (achievementToastWindow && !achievementToastWindow.isDestroyed()) return achievementToastWindow;
+
+  achievementToastWindow = new BrowserWindow({
+    width: ACHIEVEMENT_TOAST_SIZE.width,
+    height: ACHIEVEMENT_TOAST_SIZE.height,
+    title: `${APP_NAME} Achievement`,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    hasShadow: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: preloadFile,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  achievementToastWindow.setIgnoreMouseEvents(true);
+  achievementToastWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  achievementToastWindow.setAlwaysOnTop(true, "floating");
+  achievementToastWindow.webContents.setZoomFactor(1);
+  achievementToastWindow.webContents.on("zoom-changed", (event) => event.preventDefault());
+  void achievementToastWindow.webContents.setVisualZoomLevelLimits(1, 1);
+  achievementToastWindow.on("closed", () => {
+    achievementToastWindow = null;
+    if (achievementToastHideTimer) {
+      clearTimeout(achievementToastHideTimer);
+      achievementToastHideTimer = null;
+    }
+  });
+  void loadRenderer(achievementToastWindow, "toast");
+  return achievementToastWindow;
+}
+
+function achievementToastPlacement() {
+  const size = ACHIEVEMENT_TOAST_SIZE;
+  const fallbackPetSize = petSize();
+  const fallbackPetPosition = defaultPetPosition(fallbackPetSize.width, fallbackPetSize.height);
+  const petBounds = petWindow && !petWindow.isDestroyed() ? petWindow.getBounds() : {
+    ...fallbackPetPosition,
+    ...fallbackPetSize,
+  };
+  const display = screen.getDisplayMatching(petBounds).workArea;
+  const minX = display.x + 8;
+  const maxX = display.x + display.width - size.width - 8;
+  const minY = display.y + 8;
+  const maxY = display.y + display.height - size.height - 8;
+  const overlap = Math.round(ACHIEVEMENT_TOAST_OVERLAP_PER_SCALE * ledger.settings.scale);
+  const rightX = petBounds.x + petBounds.width - overlap;
+  const leftX = petBounds.x - size.width + overlap;
+  const canUseRight = rightX <= maxX;
+  const canUseLeft = leftX >= minX;
+  const placement = canUseRight || !canUseLeft ? "right" : "left";
+  const rawX = placement === "right" ? rightX : leftX;
+  const downOffset = Math.round(ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE * ledger.settings.scale);
+  const rawY = petBounds.y - size.height + overlap + downOffset;
+
+  return {
+    placement,
+    bounds: {
+      x: Math.min(Math.max(rawX, minX), maxX),
+      y: Math.min(Math.max(rawY, minY), maxY),
+      width: size.width,
+      height: size.height,
+    },
+  };
+}
+
+function syncAchievementToastPosition() {
+  if (!achievementToastWindow || achievementToastWindow.isDestroyed() || !achievementToastWindow.isVisible()) return;
+  const { bounds, placement } = achievementToastPlacement();
+  achievementToastWindow.setBounds(bounds, false);
+  achievementToastWindow.webContents.send("bonsai:achievement-toast-placement", placement);
+}
+
+function showAchievementToastOverlay(ids: string[]) {
+  const cleanIds = ids.filter((id) => typeof id === "string" && id.length);
+  if (!cleanIds.length) return;
+
+  const window = createAchievementToastWindow();
+  const { bounds, placement } = achievementToastPlacement();
+  window.setBounds(bounds, false);
+  window.setAlwaysOnTop(true, "floating");
+
+  const sendToast = () => {
+    if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;
+    achievementToastWindow.webContents.send("bonsai:achievement-toast", { ids: cleanIds, placement });
+    achievementToastWindow.showInactive();
+  };
+
+  if (window.webContents.isLoading()) {
+    window.webContents.once("did-finish-load", sendToast);
+  } else {
+    sendToast();
+  }
+
+  if (achievementToastHideTimer) clearTimeout(achievementToastHideTimer);
+  achievementToastHideTimer = setTimeout(() => {
+    if (achievementToastWindow && !achievementToastWindow.isDestroyed()) achievementToastWindow.hide();
+    achievementToastHideTimer = null;
+  }, cleanIds.length * (ACHIEVEMENT_TOAST_DURATION_MS + 200) + ACHIEVEMENT_TOAST_WINDOW_PADDING_MS);
 }
 
 function showManager() {
@@ -868,6 +1064,7 @@ app.whenReady().then(() => {
   app.setAppUserModelId(APP_ID);
   Menu.setApplicationMenu(null);
   ledger = readLedger();
+  achievementState = readAchievementState();
   applyLoginItemSettings();
   createPetWindow();
   if (!ledger.settings.silentStartup) {
@@ -892,6 +1089,24 @@ app.on("before-quit", () => {
 
 ipcMain.handle("ledger:get", () => ledger);
 ipcMain.handle("usage:get-status", getUsageStatus);
+ipcMain.handle("achievements:get", () => achievementState);
+ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
+  unlockAchievements(Array.isArray(items) ? items : []),
+);
+ipcMain.handle("achievements:preview-toast", (_event, id: string) => {
+  if (typeof id !== "string") return false;
+  showAchievementToastOverlay([id]);
+  return true;
+});
+ipcMain.handle("achievements:update-stats", (_event, stats: Record<string, unknown>) => {
+  if (!stats || typeof stats !== "object") return achievementState;
+  achievementState = normalizeAchievementState({
+    ...achievementState,
+    stats: { ...(achievementState.stats ?? {}), ...stats },
+  });
+  writeAchievementState();
+  return achievementState;
+});
 
 ipcMain.handle("ledger:add-entry", (_event, input: { tokens: number; note?: string }) => {
   const tokens = Math.max(0, Math.round(Number(input.tokens)));

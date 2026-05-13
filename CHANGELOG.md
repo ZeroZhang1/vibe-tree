@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-05-13
+
+- Added a full achievement system with persistent unlock state, rarity levels, category filters, status filters, locked-state hints, and detail modals.
+- Added achievement unlock feedback for the desktop pet, including a separate toast window that follows the pet position and avoids covering the tree.
+- Added a `NEW` state for newly unlocked achievements so users are guided to open the detail view and read the reward copy.
+- Reworked the achievement page into a collection view with summary stats, category navigation, high-rarity showcase chips, and compact source-list-style achievement rows.
+- Added hidden-achievement behavior: locked hidden achievements hide their name and condition until unlocked.
+- Added achievement detail copy separation: card rows show achievement conditions, while detail views reveal the flavor text after unlock.
+- Refined achievement visual design to match the main dashboard: dark panels, green progress language, rarity-colored markers, clearer text contrast, and a custom in-panel scrollbar.
+- Added click-through details for high-rarity showcase chips.
+- Removed the duplicate hidden status filter and kept hidden achievements as their own category.
+- Cleaned dashboard copy and token-source separators, replacing stray separator text with proper dot separators.
+
 ## 2026-05-11
 
 - Moved pet lock and scale controls into the settings panel, keeping the main dashboard focused on the tree and live stats.
