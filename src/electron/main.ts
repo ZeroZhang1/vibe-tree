@@ -741,16 +741,19 @@ function createTrayIcon() {
 }
 
 function createMacTrayIcon() {
-  const svg = encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="${MAC_TRAY_ICON_SIZE}" height="${MAC_TRAY_ICON_SIZE}" viewBox="0 0 18 18" shape-rendering="crispEdges">
-      <path fill="#000" d="M7 8h2v5H7zM9 7h2v6H9zM4 13h10v2H4zM5 15h8v1H5zM5 6h5v3H5zM7 4h5v4H7zM11 7h4v3h-4zM3 9h5v3H3z"/>
-    </svg>
-  `);
-  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;charset=utf-8,${svg}`);
-  icon.setTemplateImage(true);
-  const resized = icon.resize({ width: MAC_TRAY_ICON_SIZE, height: MAC_TRAY_ICON_SIZE });
-  resized.setTemplateImage(true);
-  return resized.isEmpty() ? icon : resized;
+  for (const iconPath of APP_ICON_PATHS) {
+    try {
+      if (!existsSync(iconPath)) continue;
+      const icon = nativeImage.createFromPath(iconPath);
+      if (icon.isEmpty()) continue;
+      const resized = icon.resize({ width: MAC_TRAY_ICON_SIZE, height: MAC_TRAY_ICON_SIZE });
+      resized.setTemplateImage(false);
+      return resized.isEmpty() ? icon : resized;
+    } catch {
+      // Fall back to the embedded icon below.
+    }
+  }
+  return createAppIcon().resize({ width: MAC_TRAY_ICON_SIZE, height: MAC_TRAY_ICON_SIZE });
 }
 
 function createAppIcon() {

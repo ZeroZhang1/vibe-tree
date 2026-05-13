@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-05-13 (v0.2.2)
+
+- Fixed the macOS menu bar icon by using a real resized PNG app icon instead of the SVG template image that could render as an invisible zero-width status item.
+
 ## 2026-05-13 (v0.2.1)
 
 - Added hourly update checks with a small in-app `新版本` / `NEW` badge on the settings button.
