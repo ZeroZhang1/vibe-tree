@@ -19,7 +19,7 @@ export interface Settings {
   scale: 0.5 | 1 | 1.5 | 2 | number;
   badgeFrontMetric: "level" | "total" | "rate";
   badgeBackMetric: "level" | "total" | "rate";
-  totalDisplayUnit: "k" | "m";
+  totalDisplayUnit: "raw" | "k" | "m" | "wan" | "yi";
   launchOnStartup: boolean;
   silentStartup: boolean;
   windowPosition?: {

@@ -272,6 +272,7 @@ button {
   bottom: 12px;
   z-index: 6;
   width: var(--badge-front-width, 62px);
+  max-width: 104px;
   height: 26px;
   --badge-bg: #fff3a3;
   --badge-back-bg: var(--badge-bg);
@@ -334,6 +335,8 @@ button {
   border-radius: 0;
   background: var(--badge-bg);
   box-shadow: var(--pixel-shadow);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -705,8 +708,18 @@ h4 {
   gap: 8px;
 }
 
+.pet-settings {
+  align-items: end;
+}
+
 .pet-settings .scale-select {
   min-width: 0;
+}
+
+.pet-settings .toggle-row {
+  align-self: end;
+  height: 38px;
+  min-height: 38px;
 }
 
 .badge-settings {
@@ -747,8 +760,8 @@ h4 {
 }
 
 .toggle-row input {
-  width: 16px;
-  min-height: 16px;
+  width: 14px;
+  min-height: 14px;
   padding: 0;
   accent-color: var(--leaf);
 }

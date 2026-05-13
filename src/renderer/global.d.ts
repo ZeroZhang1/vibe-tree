@@ -23,6 +23,8 @@ declare global {
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;
       previewAchievementToast: (id: string) => Promise<boolean>;
       updateAchievementStats: (stats: Record<string, unknown>) => Promise<AchievementState>;
+      notifyAchievementToastReady: () => void;
+      notifyAchievementToastDrained: () => void;
       onLedger: (callback: (ledger: LedgerFile) => void) => () => void;
       onExpanded: (callback: (expanded: boolean) => void) => () => void;
       onOpenAddToken: (callback: () => void) => () => void;

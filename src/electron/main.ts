@@ -62,6 +62,9 @@ let petWindow: BrowserWindow | null = null;
 let managerWindow: BrowserWindow | null = null;
 let achievementToastWindow: BrowserWindow | null = null;
 let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
+let achievementToastFallbackHideAt = 0;
+let achievementToastRendererReady = false;
+let achievementToastPendingIds: string[] = [];
 let tray: Tray | null = null;
 let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS, installedAt: startOfLocalDayIso(new Date()) };
 let achievementState: AchievementState = { unlocked: [] };
@@ -277,7 +280,7 @@ function normalizeBadgeMetric(value: unknown, fallback: Settings["badgeFrontMetr
 }
 
 function normalizeTotalDisplayUnit(value: unknown): Settings["totalDisplayUnit"] {
-  return value === "k" || value === "m" ? value : "m";
+  return value === "raw" || value === "k" || value === "m" || value === "wan" || value === "yi" ? value : "m";
 }
 
 function cleanPath(value: unknown) {
@@ -486,6 +489,7 @@ function createManagerWindow() {
 function createAchievementToastWindow() {
   if (achievementToastWindow && !achievementToastWindow.isDestroyed()) return achievementToastWindow;
 
+  achievementToastRendererReady = false;
   achievementToastWindow = new BrowserWindow({
     width: ACHIEVEMENT_TOAST_SIZE.width,
     height: ACHIEVEMENT_TOAST_SIZE.height,
@@ -512,10 +516,15 @@ function createAchievementToastWindow() {
   achievementToastWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   achievementToastWindow.setAlwaysOnTop(true, "floating");
   achievementToastWindow.webContents.setZoomFactor(1);
+  achievementToastWindow.webContents.on("did-start-loading", () => {
+    achievementToastRendererReady = false;
+  });
   achievementToastWindow.webContents.on("zoom-changed", (event) => event.preventDefault());
   void achievementToastWindow.webContents.setVisualZoomLevelLimits(1, 1);
   achievementToastWindow.on("closed", () => {
     achievementToastWindow = null;
+    achievementToastRendererReady = false;
+    achievementToastFallbackHideAt = 0;
     if (achievementToastHideTimer) {
       clearTimeout(achievementToastHideTimer);
       achievementToastHideTimer = null;
@@ -566,32 +575,64 @@ function syncAchievementToastPosition() {
   achievementToastWindow.webContents.send("bonsai:achievement-toast-placement", placement);
 }
 
+function clearAchievementToastHideTimer() {
+  if (!achievementToastHideTimer) return;
+  clearTimeout(achievementToastHideTimer);
+  achievementToastHideTimer = null;
+}
+
+function scheduleAchievementToastFallbackHide(count: number) {
+  const now = Date.now();
+  achievementToastFallbackHideAt =
+    Math.max(achievementToastFallbackHideAt, now) + count * (ACHIEVEMENT_TOAST_DURATION_MS + 200);
+  clearAchievementToastHideTimer();
+  achievementToastHideTimer = setTimeout(() => {
+    if (achievementToastWindow && !achievementToastWindow.isDestroyed()) achievementToastWindow.hide();
+    achievementToastHideTimer = null;
+    achievementToastFallbackHideAt = 0;
+  }, Math.max(0, achievementToastFallbackHideAt - now) + ACHIEVEMENT_TOAST_WINDOW_PADDING_MS);
+}
+
+function scheduleAchievementToastDrainedHide() {
+  clearAchievementToastHideTimer();
+  achievementToastHideTimer = setTimeout(() => {
+    if (achievementToastWindow && !achievementToastWindow.isDestroyed()) achievementToastWindow.hide();
+    achievementToastHideTimer = null;
+    achievementToastFallbackHideAt = 0;
+  }, ACHIEVEMENT_TOAST_WINDOW_PADDING_MS);
+}
+
+function flushAchievementToastOverlay() {
+  if (
+    !achievementToastWindow ||
+    achievementToastWindow.isDestroyed() ||
+    !achievementToastRendererReady ||
+    !achievementToastPendingIds.length
+  ) {
+    return;
+  }
+
+  const ids = achievementToastPendingIds;
+  achievementToastPendingIds = [];
+  const { bounds, placement } = achievementToastPlacement();
+  achievementToastWindow.setBounds(bounds, false);
+  achievementToastWindow.setAlwaysOnTop(true, "floating");
+  achievementToastWindow.webContents.send("bonsai:achievement-toast", { ids, placement });
+  achievementToastWindow.showInactive();
+  scheduleAchievementToastFallbackHide(ids.length);
+}
+
 function showAchievementToastOverlay(ids: string[]) {
   const cleanIds = ids.filter((id) => typeof id === "string" && id.length);
   if (!cleanIds.length) return;
 
+  achievementToastPendingIds.push(...cleanIds);
   const window = createAchievementToastWindow();
   const { bounds, placement } = achievementToastPlacement();
   window.setBounds(bounds, false);
   window.setAlwaysOnTop(true, "floating");
-
-  const sendToast = () => {
-    if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;
-    achievementToastWindow.webContents.send("bonsai:achievement-toast", { ids: cleanIds, placement });
-    achievementToastWindow.showInactive();
-  };
-
-  if (window.webContents.isLoading()) {
-    window.webContents.once("did-finish-load", sendToast);
-  } else {
-    sendToast();
-  }
-
-  if (achievementToastHideTimer) clearTimeout(achievementToastHideTimer);
-  achievementToastHideTimer = setTimeout(() => {
-    if (achievementToastWindow && !achievementToastWindow.isDestroyed()) achievementToastWindow.hide();
-    achievementToastHideTimer = null;
-  }, cleanIds.length * (ACHIEVEMENT_TOAST_DURATION_MS + 200) + ACHIEVEMENT_TOAST_WINDOW_PADDING_MS);
+  window.webContents.send("bonsai:achievement-toast-placement", placement);
+  flushAchievementToastOverlay();
 }
 
 function showManager() {
@@ -1106,6 +1147,23 @@ ipcMain.handle("achievements:update-stats", (_event, stats: Record<string, unkno
   });
   writeAchievementState();
   return achievementState;
+});
+
+ipcMain.on("achievements:toast-ready", (event) => {
+  if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;
+  if (event.sender !== achievementToastWindow.webContents) return;
+  achievementToastRendererReady = true;
+  flushAchievementToastOverlay();
+});
+
+ipcMain.on("achievements:toast-drained", (event) => {
+  if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;
+  if (event.sender !== achievementToastWindow.webContents) return;
+  if (achievementToastPendingIds.length) {
+    flushAchievementToastOverlay();
+    return;
+  }
+  scheduleAchievementToastDrainedHide();
 });
 
 ipcMain.handle("ledger:add-entry", (_event, input: { tokens: number; note?: string }) => {

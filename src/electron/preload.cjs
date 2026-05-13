@@ -13,6 +13,8 @@ const api = {
   unlockAchievements: (items) => ipcRenderer.invoke("achievements:unlock", items),
   previewAchievementToast: (id) => ipcRenderer.invoke("achievements:preview-toast", id),
   updateAchievementStats: (stats) => ipcRenderer.invoke("achievements:update-stats", stats),
+  notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
+  notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
   onLedger: (callback) => {
     const listener = (_event, ledger) => callback(ledger);
     ipcRenderer.on("bonsai:ledger", listener);

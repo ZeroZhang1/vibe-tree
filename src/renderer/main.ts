@@ -15,7 +15,7 @@ type ViewMode = "pet" | "manager" | "toast";
 type HistoryFilter = "all" | "codex" | "openclaw" | "opencode" | "claude";
 type SourceScope = "today" | "total";
 type BadgeMetric = "level" | "total" | "rate";
-type TotalDisplayUnit = "k" | "m";
+type TotalDisplayUnit = "raw" | "k" | "m" | "wan" | "yi";
 type DashboardTab = "home" | "achievements";
 type AchievementCategory = "growth" | "peak" | "time" | "agent" | "hidden";
 type AchievementRarity = "common" | "rare" | "epic" | "legendary" | "hidden";
@@ -795,8 +795,11 @@ if (viewMode === "pet") {
               <label>
                 总量单位
                 <select id="totalDisplayUnitSelect">
+                  <option value="raw">完整数字</option>
                   <option value="k">k</option>
                   <option value="m">m</option>
+                  <option value="wan">万</option>
+                  <option value="yi">亿</option>
                 </select>
               </label>
             </div>
@@ -970,6 +973,7 @@ function bindToastOverlayEvents() {
   window.bonsai.onAchievementToastPlacement((placement) => {
     root.dataset.placement = placement;
   });
+  window.bonsai.notifyAchievementToastReady();
 }
 
 function bindEvents() {
@@ -1717,11 +1721,15 @@ function previewAchievementToast() {
 }
 
 function showNextAchievementToast() {
-  if (!achievementToastLayer || achievementToastTimer || !achievementToastQueue.length) return;
+  if (!achievementToastLayer || achievementToastTimer) return;
+  if (!achievementToastQueue.length) {
+    if (viewMode === "toast") window.bonsai.notifyAchievementToastDrained();
+    return;
+  }
   const def = achievementToastQueue.shift()!;
   achievementToastLayer.innerHTML = `
     <div class="achievement-toast rarity-${def.rarity}">
-      <span>${ACHIEVEMENT_RARITY_LABELS[def.rarity]} 路 成就解锁</span>
+      <span>${ACHIEVEMENT_RARITY_LABELS[def.rarity]} · 成就解锁</span>
       <strong>${escapeHtml(def.name)}</strong>
       <p>${escapeHtml(def.description)}</p>
     </div>
@@ -1815,6 +1823,8 @@ function renderLevelBadge(
   back.textContent = backText;
   badge.style.setProperty("--badge-front-width", `${badgeWidthForText(frontText)}px`);
   badge.style.setProperty("--badge-back-width", `${badgeWidthForText(backText)}px`);
+  front.style.fontSize = badgeFontSizeForText(frontText);
+  back.style.fontSize = badgeFontSizeForText(backText);
 }
 
 function badgeMetricText(metric: BadgeMetric, stats: Stats, totalUnit: TotalDisplayUnit) {
@@ -1825,7 +1835,14 @@ function badgeMetricText(metric: BadgeMetric, stats: Stats, totalUnit: TotalDisp
 
 function badgeWidthForText(...values: string[]) {
   const longest = Math.max(...values.map((value) => value.length));
-  return clamp(54 + Math.max(0, longest - 5) * 7, 54, 132);
+  return clamp(54 + Math.max(0, longest - 5) * 7, 54, 104);
+}
+
+function badgeFontSizeForText(value: string) {
+  if (value.length >= 13) return "0.48rem";
+  if (value.length >= 11) return "0.54rem";
+  if (value.length >= 9) return "0.6rem";
+  return "";
 }
 
 function startAutoBadgeFlipLoop() {
@@ -2492,12 +2509,22 @@ function normalizeBadgeMetric(value: string, fallback: BadgeMetric): BadgeMetric
 }
 
 function normalizeTotalDisplayUnit(value: string): TotalDisplayUnit {
-  return value === "k" || value === "m" ? value : "m";
+  return value === "raw" || value === "k" || value === "m" || value === "wan" || value === "yi" ? value : "m";
 }
 
 function formatByUnit(value: number, unit: TotalDisplayUnit) {
+  const safeValue = Math.max(0, value);
+  if (unit === "raw") return formatIntegerWithCommas(safeValue);
+  if (unit === "wan") return `${formatScaledUnit(safeValue, 10_000)}万`;
+  if (unit === "yi") return `${formatScaledUnit(safeValue, 100_000_000)}亿`;
   const divisor = unit === "m" ? 1_000_000 : 1_000;
-  return `${formatIntegerWithCommas(Math.round(Math.max(0, value) / divisor))}${unit}`;
+  return `${formatIntegerWithCommas(Math.round(safeValue / divisor))}${unit}`;
+}
+
+function formatScaledUnit(value: number, divisor: number) {
+  const scaled = value / divisor;
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: digits }).format(scaled);
 }
 
 function formatIntegerWithCommas(value: number) {

@@ -27,6 +27,8 @@ const api = {
   previewAchievementToast: (id: string) => ipcRenderer.invoke("achievements:preview-toast", id) as Promise<boolean>,
   updateAchievementStats: (stats: Record<string, unknown>) =>
     ipcRenderer.invoke("achievements:update-stats", stats) as Promise<AchievementState>,
+  notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
+  notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
   onLedger: (callback: (ledger: LedgerFile) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, ledger: LedgerFile) => callback(ledger);
     ipcRenderer.on("bonsai:ledger", listener);

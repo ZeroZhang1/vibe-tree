@@ -35,7 +35,7 @@ npm run build
 - Electron 桌面宠物窗口：透明、置顶、可拖动、可锁定。
 - Electron 管理窗口：显示等级、天气、活跃会话、来源统计、模型占比和最近 7 天。
 - 设置面板：小树大小、锁定/置顶、开机启动、静默启动、来源路径覆盖和等级牌显示偏好。
-- 等级牌：支持立体翻牌，可配置正面/背面显示等级、累计 token 或 token/s。
+- 等级牌：支持立体翻牌，可配置正面/背面显示等级、累计 token 或 token/s；累计 token 支持完整数字、k/m、万/亿。
 - XP 规则：
   - 真实 agent 用量：`XP = inputTokens + outputTokens`
   - `cacheReadTokens` / `cacheWriteTokens` 只记录来源明细，暂不计入 XP。
