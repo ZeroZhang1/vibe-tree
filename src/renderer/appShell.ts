@@ -137,7 +137,10 @@ export function appShellHtml(viewMode: ViewMode) {
               <p class="eyebrow" data-i18n="leaderboardEyebrow">Global rank</p>
               <h3 data-i18n="globalLeaderboard">全球排行榜</h3>
             </div>
-            <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
+            <div class="leaderboard-header-actions">
+              <button class="secondary-button leaderboard-refresh-button" id="leaderboardPageRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新</button>
+              <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
+            </div>
           </div>
           <div class="leaderboard-range-tabs" id="leaderboardRangeTabs" role="tablist" aria-label="全球排行榜范围" data-i18n-aria="leaderboardAria">
             <button type="button" data-leaderboard-range="today" data-i18n="leaderboardToday">今日</button>
@@ -249,15 +252,10 @@ export function appShellHtml(viewMode: ViewMode) {
             <div class="leaderboard-settings" aria-label="全球排行榜设置" data-i18n-aria="leaderboardAria">
               <div class="leaderboard-user-card" id="leaderboardUserCard"></div>
               <div class="leaderboard-status" id="leaderboardStatusText"></div>
-              <label class="toggle-row">
-                <input id="leaderboardJoinInput" type="checkbox" />
-                <span data-i18n="joinGlobalLeaderboard">加入全球排行榜</span>
-              </label>
               <p class="leaderboard-help" data-i18n="leaderboardPrivacyNote">用户说明：加入后仅上传近 30 日每日消耗的 Token，不会包含任何提示词、文件、会话记录、使用模型等其他信息。</p>
               <div class="leaderboard-actions">
-                <button class="secondary-button" id="leaderboardLoginButton" type="button" data-i18n="loginGithub">登录 GitHub</button>
+                <button class="secondary-button" id="leaderboardMembershipButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
                 <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncNow">立即同步</button>
-                <button class="secondary-button danger-button" id="leaderboardLogoutButton" type="button" data-i18n="leaveLeaderboard">退出排行榜</button>
               </div>
             </div>
           </section>

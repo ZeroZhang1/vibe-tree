@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-05-14 (v0.3.7)
+
+- Reduced automatic update checks to once per day and persisted the last check time so restarts do not repeatedly hit GitHub.
+- Reduced automatic leaderboard sync to once per day and removed the startup-time forced sync.
+- Stopped loading the public leaderboard when the manager window opens or when ranges change; the leaderboard now loads only after pressing Refresh.
+- Added a leaderboard Refresh button and loading/empty copy for manual leaderboard fetches.
+- Combined leaderboard join and leave controls into one membership button.
+- Added a confirmation prompt before leaving the leaderboard, clearly warning that remote daily token data will be fully deleted.
+
 ## 2026-05-14 (v0.3.6)
 
 - Added source visibility settings so installed agents can be included or excluded from token statistics.

@@ -1264,6 +1264,14 @@ label {
   align-items: flex-start;
 }
 
+.leaderboard-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.leaderboard-refresh-button,
 .leaderboard-sync-button {
   min-width: 104px;
   padding: 0 12px;

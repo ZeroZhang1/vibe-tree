@@ -60,6 +60,7 @@ export interface Settings {
   badgeBackMetric: "level" | "total" | "rate";
   totalDisplayUnit: "raw" | "k" | "m" | "wan" | "yi";
   updateCheckEnabled: boolean;
+  lastUpdateCheckedAt?: string;
   lastUpdateReminderVersion?: string;
   leaderboardEnabled: boolean;
   leaderboardProfile?: LeaderboardProfile;

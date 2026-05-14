@@ -39,7 +39,7 @@ const ACHIEVEMENT_TOAST_OVERLAP_PER_SCALE = 48;
 const ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE = 18;
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
-const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
 const UPDATE_LATEST_RELEASE_URL = "https://api.github.com/repos/Olorinm/vibe-tree/releases/latest";
@@ -47,7 +47,7 @@ const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per
 const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
 const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
 const LEADERBOARD_API_URL = (process.env.VIBE_TREE_LEADERBOARD_API_URL ?? DEFAULT_LEADERBOARD_API_URL).replace(/\/+$/, "");
-const LEADERBOARD_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+const LEADERBOARD_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const LEADERBOARD_AUTH_TIMEOUT_MS = 2 * 60 * 1000;
 const LEADERBOARD_CALLBACK_PATH = "/leaderboard/auth/callback";
 const MAC_TRAY_ICON_SIZE = 18;
@@ -73,6 +73,7 @@ const DEFAULT_SETTINGS: Settings = {
   badgeBackMetric: "total",
   totalDisplayUnit: "m",
   updateCheckEnabled: true,
+  lastUpdateCheckedAt: undefined,
   leaderboardEnabled: false,
   leaderboardProfile: undefined,
   leaderboardLastSyncedAt: undefined,
@@ -105,7 +106,7 @@ let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let achievementToastFallbackHideAt = 0;
 let achievementToastRendererReady = false;
 let achievementToastPendingIds: string[] = [];
-let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
+let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateStatus: UpdateStatus = {
   checking: false,
   installing: false,
@@ -396,6 +397,10 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     alwaysOnTop: settings.alwaysOnTop !== false,
     language: normalizeLanguage(settings.language),
     updateCheckEnabled: settings.updateCheckEnabled !== false,
+    lastUpdateCheckedAt:
+      typeof settings.lastUpdateCheckedAt === "string" && Number.isFinite(Date.parse(settings.lastUpdateCheckedAt))
+        ? settings.lastUpdateCheckedAt
+        : undefined,
     lastUpdateReminderVersion:
       typeof settings.lastUpdateReminderVersion === "string" ? settings.lastUpdateReminderVersion : undefined,
     leaderboardEnabled: Boolean(settings.leaderboardEnabled && leaderboardProfile),
@@ -1273,7 +1278,6 @@ function updateSettings(partial: Partial<Settings>) {
   }
   if (partial.updateCheckEnabled !== undefined) {
     startUpdateChecks();
-    if (ledger.settings.updateCheckEnabled) void checkForUpdates({ remind: true });
   }
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
@@ -1344,7 +1348,7 @@ function getUsageStatus(): UsageStatus {
 
 function startUpdateChecks() {
   if (updateCheckTimer) {
-    clearInterval(updateCheckTimer);
+    clearTimeout(updateCheckTimer);
     updateCheckTimer = null;
   }
   if (!ledger.settings.updateCheckEnabled) {
@@ -1359,12 +1363,19 @@ function startUpdateChecks() {
     return;
   }
 
-  setTimeout(() => {
-    void checkForUpdates({ remind: true });
-  }, UPDATE_REMINDER_DELAY_MS);
-  updateCheckTimer = setInterval(() => {
-    void checkForUpdates({ remind: true });
-  }, UPDATE_CHECK_INTERVAL_MS);
+  scheduleNextUpdateCheck();
+}
+
+function scheduleNextUpdateCheck() {
+  if (updateCheckTimer) {
+    clearTimeout(updateCheckTimer);
+    updateCheckTimer = null;
+  }
+  if (!ledger.settings.updateCheckEnabled) return;
+
+  updateCheckTimer = setTimeout(() => {
+    void checkForUpdates({ remind: true }).finally(scheduleNextUpdateCheck);
+  }, nextDailyDelay(ledger.settings.lastUpdateCheckedAt, UPDATE_CHECK_INTERVAL_MS, UPDATE_REMINDER_DELAY_MS));
 }
 
 async function checkForUpdates(options: { manual?: boolean; remind?: boolean; reopenTrayMenu?: boolean } = {}): Promise<UpdateStatus> {
@@ -1386,6 +1397,7 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean; re
     const latest = await fetchLatestUpdate();
     const currentVersion = currentAppVersion();
     const available = compareVersions(latest.version, currentVersion) > 0;
+    const checkedAt = new Date().toISOString();
     updateStatus = {
       ...updateStatus,
       checking: false,
@@ -1395,27 +1407,39 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean; re
       currentVersion,
       latestVersion: latest.version,
       releaseUrl: latest.releaseUrl,
-      checkedAt: new Date().toISOString(),
+      checkedAt,
       error: undefined,
     };
+    updateSettings({ lastUpdateCheckedAt: checkedAt });
     if (available && options.remind) {
       remindUpdateAvailable(updateStatus);
     }
   } catch (error) {
+    const checkedAt = new Date().toISOString();
     updateStatus = {
       ...updateStatus,
       checking: false,
       available: false,
       canTerminalUpdate: canTerminalUpdate(),
-      checkedAt: new Date().toISOString(),
+      checkedAt,
       error: error instanceof Error ? error.message : mainText("updateCheckFailed"),
     };
+    updateSettings({ lastUpdateCheckedAt: checkedAt });
   }
 
   broadcastUpdateStatus();
   refreshTrayMenu();
+  if (options.manual) scheduleNextUpdateCheck();
   if (options.reopenTrayMenu) reopenTrayMenuSoon(80);
   return updateStatus;
+}
+
+function nextDailyDelay(lastRunAt: string | undefined, intervalMs: number, dueDelayMs: number) {
+  if (!lastRunAt) return dueDelayMs;
+  const lastRunTime = Date.parse(lastRunAt);
+  if (!Number.isFinite(lastRunTime)) return dueDelayMs;
+  const nextRunTime = lastRunTime + intervalMs;
+  return Math.max(dueDelayMs, nextRunTime - Date.now());
 }
 
 async function fetchLatestUpdate() {
@@ -1839,7 +1863,6 @@ app.whenReady().then(() => {
   setTimeout(startUsageWatchers, 500);
   startUpdateChecks();
   leaderboardService.startSync();
-  void leaderboardService.syncUsage();
 
   app.on("activate", () => {
     createPetWindow();
@@ -1853,7 +1876,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   stopUsageWatchers();
-  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  if (updateCheckTimer) clearTimeout(updateCheckTimer);
   leaderboardService.stop();
 });
 
