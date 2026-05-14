@@ -56,6 +56,7 @@ const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
 const APP_ID = "com.vibetree.app";
 const SMOKE_TEST = process.env.VIBE_TREE_SMOKE_TEST === "1";
+const STAT_SOURCE_IDS = ["codex", "openclaw", "opencode", "claude", "gemini", "hermes"] as const;
 const APP_ICON_PATHS = [
   join(__dirname, "../renderer/assets/app-icon.png"),
   join(__dirname, "../renderer/assets/app-icon.ico"),
@@ -77,6 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardLastSyncedAt: undefined,
   launchOnStartup: false,
   silentStartup: false,
+  enabledSourceIds: [...STAT_SOURCE_IDS],
   windowPosition: undefined,
 };
 
@@ -317,7 +319,7 @@ function readDeviceSettings(legacySettings: Partial<Settings> | undefined): Sett
     ...(legacySettings ?? {}),
     ...(stored ?? {}),
   });
-  if (!stored || stored.language === undefined) {
+  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined) {
     writeDeviceSettings(settings);
   }
   return settings;
@@ -401,6 +403,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardLastSyncedAt,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
+    enabledSourceIds: normalizeEnabledSourceIds(settings.enabledSourceIds),
     scale,
     badgeFrontMetric: normalizeBadgeMetric(settings.badgeFrontMetric, "level"),
     badgeBackMetric: normalizeBadgeMetric(settings.badgeBackMetric, "total"),
@@ -431,6 +434,12 @@ function normalizeBadgeMetric(value: unknown, fallback: Settings["badgeFrontMetr
 
 function normalizeTotalDisplayUnit(value: unknown): Settings["totalDisplayUnit"] {
   return value === "raw" || value === "k" || value === "m" || value === "wan" || value === "yi" ? value : "m";
+}
+
+function normalizeEnabledSourceIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...STAT_SOURCE_IDS];
+  const allowed = new Set<string>(STAT_SOURCE_IDS);
+  return [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))];
 }
 
 function normalizeLanguage(value: unknown): AppLanguage {
@@ -856,6 +865,16 @@ function resizePetWindow() {
   persistPetPosition();
 }
 
+function recoverPetWindow() {
+  const size = petSize();
+  const position = defaultPetPosition(size.width, size.height);
+  if (!petWindow) createPetWindow();
+  petWindow?.show();
+  petWindow?.setBounds({ ...position, width: size.width, height: size.height }, false);
+  persistPetPosition();
+  refreshTrayMenu();
+}
+
 function createTray() {
   tray = new Tray(createTrayIcon());
   tray.setToolTip(APP_NAME);
@@ -1017,6 +1036,10 @@ function refreshTrayMenu() {
       click: openManagerSettings,
     },
     {
+      label: mainText("recoverPet"),
+      click: recoverPetWindow,
+    },
+    {
       label: updateTrayMenuLabel(),
       enabled: !updateStatus.checking,
       click: () => {
@@ -1173,7 +1196,21 @@ function sourceStatusLabel(label: string, status: UsageStatus["codexSession"], s
 }
 
 function xpForEntry(entry: LedgerEntry) {
+  const sourceId = statSourceIdForEntry(entry);
+  if (sourceId && !ledger.settings.enabledSourceIds.includes(sourceId)) return 0;
   return countedTokensForEntry(entry);
+}
+
+function statSourceIdForEntry(entry: LedgerEntry): string | undefined {
+  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
+  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
+  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+    return "opencode";
+  }
+  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
+  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
+  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
+  return undefined;
 }
 
 function safeTokens(value: number) {
@@ -1770,7 +1807,7 @@ function applyLoginItemSettings() {
   }
   app.setLoginItemSettings({
     openAtLogin: true,
-    openAsHidden: ledger.settings.silentStartup,
+    openAsHidden: false,
     path: process.execPath,
     args: loginItemArgs(),
   });

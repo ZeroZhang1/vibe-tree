@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-14 (v0.3.6)
+
+- Added source visibility settings so installed agents can be included or excluded from token statistics.
+- Hid uninstalled agents from source breakdowns and history charts while keeping detected agents expanded.
+- Added a tray action to recover the floating tree and clarified startup behavior as hiding only the manager window.
+- Improved renderer startup responsiveness by caching derived stats and avoiding unnecessary history chart rebuilds.
+- Split the large renderer entrypoint into focused modules for app shell, stats, sources, history chart, tree assets, weather art, formatting, and shared renderer types.
+
 ## 2026-05-14 (v0.3.5)
 
 - Added an Electron main-process smoke test to CI so releases must prove the built app can start.

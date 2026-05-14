@@ -66,6 +66,7 @@ export interface Settings {
   leaderboardLastSyncedAt?: string;
   launchOnStartup: boolean;
   silentStartup: boolean;
+  enabledSourceIds: string[];
   windowPosition?: {
     x: number;
     y: number;
