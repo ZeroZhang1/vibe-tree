@@ -25,6 +25,7 @@ import {
   normalizeLanguage,
 } from "./i18n";
 import type { AchievementCategory, AchievementRarity } from "./i18n";
+import { toBlob } from "html-to-image";
 import "./styles.css";
 
 type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
@@ -36,6 +37,7 @@ type TotalDisplayUnit = "raw" | "k" | "m" | "wan" | "yi";
 type DashboardTab = "home" | "achievements" | "leaderboard";
 type AchievementCategoryFilter = AchievementCategory;
 type AchievementStatusFilter = "all" | "unlocked" | "locked" | "hidden";
+type ShareTemplateId = "receipt" | "glass" | "mono";
 
 interface WeatherState {
   id: WeatherId;
@@ -83,6 +85,31 @@ interface SourceBreakdown {
   cacheReadTokens: number;
   cacheWriteTokens: number;
 }
+
+interface ShareReportData {
+  generatedAt: Date;
+  totalTokens: number;
+  todayTokens: number;
+  peakTokensPerMinute: number;
+  level: number;
+  stageLabel: string;
+  treeImage: string;
+  mostUsedAgent: string;
+  activeDays: number;
+  currentStreak: number;
+  heatLevels: number[];
+  favoritePeriod: {
+    label: string;
+    range: string;
+  };
+}
+
+const SHARE_TEMPLATES: Array<{ id: ShareTemplateId; title: string; note: string }> = [
+  { id: "receipt", title: "04 Growth Receipt", note: "收据/日报，有传播梗" },
+  { id: "glass", title: "05 Glass Terrarium", note: "玻璃生态箱，精致偏潮流" },
+  { id: "mono", title: "06 Monochrome Index", note: "极简索引卡，最克制" },
+];
+const SHARE_PREVIEW_SIZE = { width: 328, height: 510 };
 
 interface PureSvgManifest {
   stages: Array<{
@@ -240,6 +267,9 @@ if (viewMode === "pet") {
         <span aria-hidden="true">⚙</span>
         <span class="settings-update-badge" aria-hidden="true">NEW</span>
       </button>
+      <button class="share-export-button share-fab" id="shareExportButton" type="button" aria-label="导出分享图" title="导出分享图">
+        <span aria-hidden="true">↗</span>
+      </button>
 
       <section class="dashboard">
         <header class="dashboard-header">
@@ -250,9 +280,11 @@ if (viewMode === "pet") {
               <span class="help-tip" tabindex="0" aria-label="计入 Token = input + output；Claude 会加上 cache write" data-tooltip="计入 Token = input + output；Claude 会加上 cache write" data-i18n-tooltip="tokenHelp">?</span>
             </div>
           </div>
-          <div class="weather-readout">
-            <span id="weatherLabel">晴朗</span>
-            <strong id="weatherRateText">0 token/min</strong>
+          <div class="dashboard-header-actions">
+            <div class="weather-readout">
+              <span id="weatherLabel">晴朗</span>
+              <strong id="weatherRateText">0 token/min</strong>
+            </div>
           </div>
         </header>
 
@@ -566,6 +598,7 @@ const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#le
 const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
 const leaderboardRows = document.querySelector<HTMLElement>("#leaderboardRows");
+const shareExportButton = document.querySelector<HTMLButtonElement>("#shareExportButton");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -1112,6 +1145,10 @@ function bindEvents() {
     previewAchievementToast();
   });
 
+  shareExportButton?.addEventListener("click", () => {
+    void exportShareImage();
+  });
+
 }
 
 async function endPetDrag() {
@@ -1190,6 +1227,754 @@ function openLeaderboardSettings() {
     leaderboardJoinInput?.scrollIntoView({ block: "center", behavior: "smooth" });
     leaderboardJoinInput?.focus({ preventScroll: true });
   });
+}
+
+async function exportShareImage() {
+  if (!ledger || !tree || !gameBalance || !shareExportButton) return;
+
+  const defaultTitle = "导出分享图";
+  shareExportButton.disabled = true;
+  shareExportButton.dataset.state = "exporting";
+  shareExportButton.title = "生成预览";
+
+  try {
+    const stats = calculateStats(ledger.entries, tree, gameBalance);
+    const report = await buildShareReportData(ledger.entries, stats);
+    openShareExportPreview(report);
+    shareExportButton.title = defaultTitle;
+  } catch (error) {
+    console.error("Failed to export share image", error);
+    shareExportButton.title = error instanceof Error ? error.message : String(error);
+    window.setTimeout(() => {
+      shareExportButton.title = defaultTitle;
+    }, 2200);
+  } finally {
+    shareExportButton.disabled = false;
+    delete shareExportButton.dataset.state;
+  }
+}
+
+function openShareExportPreview(report: ShareReportData) {
+  document.querySelector(".share-export-overlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "share-export-overlay";
+  overlay.innerHTML = `
+    <div class="share-export-backdrop"></div>
+    <section class="share-export-panel" role="dialog" aria-modal="true" aria-label="选择分享图模板">
+      <header class="share-export-head">
+        <div>
+          <p class="eyebrow">Share image</p>
+          <h3>选择分享图模板</h3>
+        </div>
+        <button class="icon-button share-export-close" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="share-template-grid">
+        ${SHARE_TEMPLATES.map(
+          (template) => `
+            <article class="share-template-option">
+              <div class="share-template-title">
+                <strong>${escapeHtml(template.title)}</strong>
+                <span>${escapeHtml(template.note)}</span>
+              </div>
+              <div class="share-template-preview">
+                ${shareReportHtml(report, SHARE_PREVIEW_SIZE.width, SHARE_PREVIEW_SIZE.height, template.id)}
+              </div>
+              <button class="primary-button share-template-export" type="button" data-share-template="${template.id}">
+                导出这张
+              </button>
+            </article>
+          `,
+        ).join("")}
+      </div>
+    </section>
+  `;
+
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".share-export-backdrop")?.addEventListener("click", close);
+  overlay.querySelector(".share-export-close")?.addEventListener("click", close);
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  overlay.querySelectorAll<HTMLButtonElement>("[data-share-template]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const templateId = button.dataset.shareTemplate as ShareTemplateId | undefined;
+      if (templateId) void exportSelectedShareImage(report, templateId, button, close);
+    });
+  });
+  overlay.querySelector<HTMLButtonElement>("[data-share-template]")?.focus();
+}
+
+async function exportSelectedShareImage(
+  report: ShareReportData,
+  templateId: ShareTemplateId,
+  button: HTMLButtonElement,
+  close: () => void,
+) {
+  const allButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".share-template-export"));
+  const defaultLabel = button.textContent ?? "导出这张";
+  allButtons.forEach((item) => {
+    item.disabled = true;
+  });
+  button.textContent = "生成中";
+
+  try {
+    const width = 1080;
+    const height = 1680;
+    const pngBase64 = await renderShareReportPng(report, width, height, templateId);
+    const result = await window.bonsai.saveShareImage({
+      filename: `vibe-tree-share-${templateId}-${dateKey(report.generatedAt)}.png`,
+      pngBase64,
+    });
+    if (result.canceled) {
+      button.textContent = defaultLabel;
+      allButtons.forEach((item) => {
+        item.disabled = false;
+      });
+      return;
+    }
+    button.textContent = "已导出";
+    window.setTimeout(close, 500);
+  } catch (error) {
+    console.error("Failed to export selected share image", error);
+    button.title = error instanceof Error ? error.message : String(error);
+    button.textContent = "导出失败";
+    window.setTimeout(() => {
+      button.textContent = defaultLabel;
+      button.title = "";
+      allButtons.forEach((item) => {
+        item.disabled = false;
+      });
+    }, 2200);
+  }
+}
+
+async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promise<ShareReportData> {
+  const generatedAt = new Date();
+  const hourly = buildShareHourlyProfile(entries, generatedAt);
+  const peakTokensPerMinute = Math.max(
+    Math.round(hourly.maxHourTokens / 60),
+    Math.round(peakStat("peakXpPerMinute", stats.weather.tokensPerMinute)),
+  );
+
+  return {
+    generatedAt,
+    totalTokens: stats.xp,
+    todayTokens: stats.todayXp,
+    peakTokensPerMinute,
+    level: stats.level,
+    stageLabel: stageLabel(stats.stage.id, stats.stage.label),
+    treeImage: await imageToDataUrl(stats.stage.image),
+    mostUsedAgent: mostUsedAgentLabel(entries),
+    activeDays: hourly.activeDays,
+    currentStreak: currentActiveDayStreak(entries, generatedAt),
+    heatLevels: hourly.heatLevels,
+    favoritePeriod: hourly.favoritePeriod,
+  };
+}
+
+function buildShareHourlyProfile(entries: LedgerEntry[], now: Date) {
+  const start = startOfLocalDay(now);
+  start.setDate(start.getDate() - 6);
+  const end = startOfLocalDay(now);
+  end.setDate(end.getDate() + 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const hourTotals = Array.from({ length: 7 * 24 }, () => 0);
+  const activeDays = new Set<string>();
+
+  for (const entry of entries) {
+    const xp = xpForEntry(entry);
+    if (xp <= 0) continue;
+    const createdAt = new Date(entry.createdAt);
+    const timestamp = createdAt.getTime();
+    if (!Number.isFinite(timestamp) || timestamp < start.getTime() || timestamp >= end.getTime()) continue;
+    const dayIndex = Math.floor((startOfLocalDay(createdAt).getTime() - start.getTime()) / dayMs);
+    if (dayIndex < 0 || dayIndex >= 7) continue;
+    const index = dayIndex * 24 + createdAt.getHours();
+    hourTotals[index] += xp;
+    activeDays.add(dateKey(createdAt));
+  }
+
+  const maxHourTokens = Math.max(0, ...hourTotals);
+  const heatLevels = hourTotals.map((value) => heatLevel(value, maxHourTokens));
+  return {
+    activeDays: activeDays.size,
+    favoritePeriod: favoriteCodingPeriod(hourTotals),
+    heatLevels,
+    maxHourTokens,
+  };
+}
+
+function heatLevel(value: number, max: number) {
+  if (value <= 0 || max <= 0) return 0;
+  const ratio = Math.sqrt(value / max);
+  return clamp(Math.ceil(ratio * 4), 1, 4);
+}
+
+function favoriteCodingPeriod(hourTotals: number[]): ShareReportData["favoritePeriod"] {
+  const periods = [
+    { label: "凌晨", range: "0-5 点", hours: [0, 1, 2, 3, 4, 5] },
+    { label: "上午", range: "6-11 点", hours: [6, 7, 8, 9, 10, 11] },
+    { label: "中午", range: "12-1 点", hours: [12, 13] },
+    { label: "午后", range: "2-5 点", hours: [14, 15, 16, 17] },
+    { label: "晚上", range: "6-9 点", hours: [18, 19, 20, 21] },
+    { label: "深夜", range: "10-11 点", hours: [22, 23] },
+  ];
+  let best = periods[0];
+  let bestValue = 0;
+  for (const period of periods) {
+    const value = period.hours.reduce((sum, hour) => {
+      let total = 0;
+      for (let day = 0; day < 7; day += 1) total += hourTotals[day * 24 + hour] ?? 0;
+      return sum + total;
+    }, 0);
+    if (value > bestValue) {
+      best = period;
+      bestValue = value;
+    }
+  }
+  if (bestValue <= 0) return { label: "待观察", range: "待解锁" };
+  return { label: best.label, range: best.range };
+}
+
+function currentActiveDayStreak(entries: LedgerEntry[], now: Date) {
+  const activeDayKeys = new Set<string>();
+  for (const entry of entries) {
+    if (xpForEntry(entry) <= 0) continue;
+    const createdAt = new Date(entry.createdAt);
+    if (Number.isFinite(createdAt.getTime())) activeDayKeys.add(dateKey(createdAt));
+  }
+
+  let streak = 0;
+  const cursor = startOfLocalDay(now);
+  while (activeDayKeys.has(dateKey(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function mostUsedAgentLabel(entries: LedgerEntry[]) {
+  const top = getSourceBreakdown(entries).find((row) => row.xp > 0);
+  return top?.label ?? "待解锁";
+}
+
+async function imageToDataUrl(path: string) {
+  const response = await fetch(assetUrl(path));
+  if (!response.ok) throw new Error(`Failed to load share image asset: ${response.status}`);
+  const blob = await response.blob();
+  return blobToDataUrl(blob);
+}
+
+async function renderShareReportPng(report: ShareReportData, width: number, height: number, templateId: ShareTemplateId) {
+  const host = document.createElement("div");
+  host.setAttribute("aria-hidden", "true");
+  host.style.position = "fixed";
+  host.style.left = "-9999px";
+  host.style.top = "0";
+  host.style.width = `${width}px`;
+  host.style.height = `${height}px`;
+  host.style.pointerEvents = "none";
+  host.style.zIndex = "-1";
+  host.innerHTML = shareReportHtml(report, width, height, templateId);
+  document.body.appendChild(host);
+
+  try {
+    const card = host.firstElementChild;
+    if (!(card instanceof HTMLElement)) throw new Error("Share card render failed");
+    await waitForShareReportAssets(card);
+    const blob = await toBlob(card, {
+      backgroundColor: shareTemplateBackground(templateId),
+      cacheBust: true,
+      pixelRatio: 1,
+    });
+    if (!blob) throw new Error("Share image conversion failed");
+    const dataUrl = await blobToDataUrl(blob);
+    return dataUrl.slice(dataUrl.indexOf(",") + 1);
+  } finally {
+    host.remove();
+  }
+}
+
+async function waitForShareReportAssets(root: HTMLElement) {
+  const images = Array.from(root.querySelectorAll("img"));
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) {
+            resolve();
+            return;
+          }
+          image.addEventListener("load", () => resolve(), { once: true });
+          image.addEventListener("error", () => resolve(), { once: true });
+        }),
+    ),
+  );
+  await document.fonts?.ready;
+  await new Promise((resolve) => window.setTimeout(resolve, 160));
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Failed to read share image blob"));
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read share image blob")));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function shareTemplateBackground(templateId: ShareTemplateId) {
+  if (templateId === "mono") return "#f8f8f5";
+  if (templateId === "receipt") return "#fbf7ec";
+  return "#161922";
+}
+
+function shareReportHtml(report: ShareReportData, width: number, height: number, templateId: ShareTemplateId) {
+  const baseWidth = 430;
+  const baseHeight = 668;
+  const scaleX = width / baseWidth;
+  const scaleY = height / baseHeight;
+  const themeBackground = shareTemplateBackground(templateId);
+  const heatCells = report.heatLevels.map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
+  const heatScale = [0, 1, 2, 3, 4].map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
+  const periodStory =
+    report.favoritePeriod.label === "待观察"
+      ? `这 7 天，<mark>还没有明显时段</mark>，小树在等下一次生长。`
+      : `这 7 天，你最常在<mark>${escapeHtml(report.favoritePeriod.label)}</mark>进入 coding 状态。`;
+
+  return `
+    <div xmlns="http://www.w3.org/1999/xhtml" class="share-card" style="width:${width}px;height:${height}px">
+      <style>
+        .share-card,
+        .share-card * { box-sizing: border-box; }
+        .share-card {
+          position: relative;
+          overflow: hidden;
+          background: ${themeBackground};
+          border-radius: ${Math.round(22 * scaleX)}px;
+          font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
+        }
+        .share-card .poster {
+          --bg: #fbf7ec;
+          --panel: rgba(28, 32, 25, 0.05);
+          --line: rgba(28, 32, 25, 0.18);
+          --ink: #171a14;
+          --muted: rgba(45, 52, 42, 0.6);
+          --leaf: #2c9c52;
+          --accent: #c58a24;
+          --heat0: #ebe5d8;
+          --heat1: #d2dfbd;
+          --heat2: #9bd27f;
+          --heat3: #4fb665;
+          --heat4: #1f7445;
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: ${baseWidth}px;
+          height: ${baseHeight}px;
+          overflow: hidden;
+          padding: 26px;
+          border: 1px solid var(--line);
+          border-radius: 22px;
+          color: var(--ink);
+          background: var(--bg);
+          box-shadow: 0 24px 70px rgba(30, 38, 36, 0.2);
+          transform: scale(${scaleX}, ${scaleY});
+          transform-origin: 0 0;
+        }
+        .share-card .poster.glass {
+          --bg: #161922;
+          --panel: rgba(255, 255, 255, 0.1);
+          --line: rgba(255, 255, 255, 0.2);
+          --ink: #f4f1e9;
+          --muted: rgba(244, 241, 233, 0.56);
+          --leaf: #c7f66c;
+          --accent: #ffcf7a;
+          --heat0: #2b2d32;
+          --heat1: #4a5832;
+          --heat2: #7a9d44;
+          --heat3: #c7f66c;
+          --heat4: #fff07a;
+          background:
+            radial-gradient(circle at 50% 30%, rgba(199, 246, 108, 0.12), transparent 30%),
+            linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 48%),
+            var(--bg);
+        }
+        .share-card .poster.mono {
+          --bg: #f8f8f5;
+          --panel: rgba(20, 20, 16, 0.04);
+          --line: rgba(20, 20, 16, 0.14);
+          --ink: #11120e;
+          --muted: rgba(17, 18, 14, 0.56);
+          --leaf: #11120e;
+          --accent: #4f8f55;
+          --heat0: #e3e3dd;
+          --heat1: #b8c5b4;
+          --heat2: #8aaa84;
+          --heat3: #4f8f55;
+          --heat4: #11120e;
+        }
+        .share-card .poster::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          opacity: 0.06;
+          background-image:
+            linear-gradient(currentColor 1px, transparent 1px),
+            linear-gradient(90deg, currentColor 1px, transparent 1px);
+          background-size: 28px 28px;
+          mask-image: radial-gradient(circle at 50% 32%, black, transparent 74%);
+        }
+        .share-card .top,
+        .share-card .hero,
+        .share-card .metrics,
+        .share-card .heat-card,
+        .share-card .cta {
+          position: relative;
+          z-index: 1;
+        }
+        .share-card .top {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+        }
+        .share-card .brand {
+          display: grid;
+          gap: 5px;
+        }
+        .share-card .eyebrow {
+          color: var(--leaf);
+          font-size: 12px;
+          font-weight: 1000;
+          letter-spacing: 1.7px;
+        }
+        .share-card .brand b {
+          font-size: 21px;
+        }
+        .share-card .weather {
+          display: grid;
+          gap: 6px;
+          justify-items: end;
+          color: var(--accent);
+        }
+        .share-card .weather b {
+          font-size: 21px;
+        }
+        .share-card .weather span {
+          color: var(--muted);
+          font-size: 11px;
+        }
+        .share-card .hero {
+          display: grid;
+          grid-template-columns: 166px 1fr;
+          gap: 18px;
+          align-items: center;
+          margin-top: 18px;
+        }
+        .share-card .tree-frame {
+          position: relative;
+          display: grid;
+          place-items: center;
+          height: 166px;
+          border: 1px solid var(--line);
+          border-radius: 20px;
+          background: var(--panel);
+        }
+        .share-card .tree-frame::before {
+          content: "";
+          position: absolute;
+          width: 126px;
+          height: 126px;
+          border-radius: 50%;
+          background: color-mix(in srgb, var(--leaf) 20%, transparent);
+          filter: blur(18px);
+        }
+        .share-card .tree {
+          position: relative;
+          width: 134px;
+          height: 134px;
+          object-fit: contain;
+          image-rendering: pixelated;
+          filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.24));
+        }
+        .share-card h2 {
+          margin: 0;
+          font-size: 32px;
+          line-height: 1.04;
+        }
+        .share-card h2 span {
+          color: var(--leaf);
+        }
+        .share-card .level {
+          margin-top: 12px;
+          color: var(--accent);
+          font-size: 31px;
+          font-weight: 1000;
+          line-height: 1;
+        }
+        .share-card .metrics {
+          display: grid;
+          grid-template-columns: 0.92fr 1.16fr 0.92fr;
+          gap: 10px;
+          margin-top: 12px;
+        }
+        .share-card .metric {
+          display: grid;
+          gap: 5px;
+          min-height: 72px;
+          padding: 12px;
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          background: var(--panel);
+        }
+        .share-card .metric small {
+          color: var(--muted);
+          font-size: 11px;
+          line-height: 1.25;
+        }
+        .share-card .metric b {
+          font-size: 18px;
+          white-space: nowrap;
+        }
+        .share-card .metric.featured {
+          min-height: 82px;
+          padding: 13px;
+          border-color: color-mix(in srgb, var(--leaf) 36%, var(--line));
+          background: color-mix(in srgb, var(--panel) 72%, var(--leaf) 10%);
+        }
+        .share-card .metric.featured small {
+          color: var(--leaf);
+          font-weight: 900;
+        }
+        .share-card .metric.featured b {
+          font-size: 24px;
+        }
+        .share-card .heat-card {
+          margin-top: 12px;
+          padding: 14px;
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          background: color-mix(in srgb, var(--bg) 76%, #000 24%);
+        }
+        .share-card .heat-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 8px;
+        }
+        .share-card .heat-head strong {
+          display: block;
+          font-size: 16px;
+        }
+        .share-card .heat-head mark {
+          color: var(--leaf);
+          background: transparent;
+        }
+        .share-card .heat-meta {
+          display: grid;
+          grid-template-columns: repeat(2, auto);
+          gap: 8px;
+          color: var(--muted);
+          font-size: 9px;
+          text-align: right;
+        }
+        .share-card .heat-meta b {
+          color: var(--ink);
+          font-size: 10px;
+        }
+        .share-card .heat-meta span {
+          display: grid;
+          gap: 2px;
+        }
+        .share-card .heat-foot {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 10px;
+          margin-top: 8px;
+          padding-top: 7px;
+          border-top: 1px dashed color-mix(in srgb, var(--line) 72%, transparent);
+          color: var(--muted);
+          font-size: 9.5px;
+          line-height: 1.45;
+        }
+        .share-card .heat-foot b {
+          color: var(--accent);
+          font-size: 10px;
+        }
+        .share-card .heat-foot mark {
+          color: var(--accent);
+          background: transparent;
+          font-weight: 900;
+        }
+        .share-card .heat-story {
+          display: grid;
+          gap: 2px;
+        }
+        .share-card .heat-scale {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          min-width: 86px;
+          text-align: right;
+        }
+        .share-card .heat-scale span {
+          white-space: nowrap;
+        }
+        .share-card .scale-row {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 3px;
+        }
+        .share-card .scale-row i {
+          width: 9px;
+          height: 9px;
+          border-radius: 2px;
+          background: var(--c);
+        }
+        .share-card .heat {
+          display: grid;
+          grid-template-columns: repeat(24, 1fr);
+          gap: 2px;
+        }
+        .share-card .heat i {
+          display: block;
+          aspect-ratio: 1 / 1;
+          border-radius: 3px;
+          background: var(--c);
+        }
+        .share-card .cta {
+          position: absolute;
+          left: 26px;
+          right: 26px;
+          bottom: 26px;
+          display: flex;
+          align-items: flex-end;
+          gap: 30px;
+          justify-content: space-between;
+          color: var(--muted);
+          font-size: 13px;
+        }
+        .share-card .pill {
+          display: grid;
+          gap: 10px;
+          color: var(--muted);
+        }
+        .share-card .pill b {
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.4;
+        }
+        .share-card .pill span {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+        }
+        .share-card .pill span::before {
+          content: "";
+          width: 10px;
+          height: 10px;
+          border-radius: 3px;
+          background: var(--leaf);
+        }
+        .share-card .qr {
+          width: 48px;
+          height: 48px;
+          display: grid;
+          place-items: center;
+          border: 2px dashed currentColor;
+          border-radius: 11px;
+          font-size: 11px;
+          font-weight: 900;
+        }
+      </style>
+      <section class="poster ${templateId}">
+        <div class="top">
+          <div class="brand">
+            <span class="eyebrow">VIBE TREE</span>
+            <b>Token 天气树</b>
+          </div>
+          <div class="weather">
+            <b>${escapeHtml(formatShareNumber(report.peakTokensPerMinute))}/min</b>
+            <span>coding 峰值</span>
+          </div>
+        </div>
+        <div class="hero">
+          <div class="tree-frame">
+            <img class="tree" src="${escapeHtml(report.treeImage)}" alt="" />
+          </div>
+          <div>
+            <h2>我的<br /><span>成长档案</span></h2>
+            <div class="level">Lv.${report.level}</div>
+          </div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><small>今日成长</small><b>+${escapeHtml(formatShareNumber(report.todayTokens))}</b></div>
+          <div class="metric featured"><small>累计 Token</small><b>${escapeHtml(formatShareNumber(report.totalTokens))}</b></div>
+          <div class="metric"><small>最常用 Agent</small><b>${escapeHtml(report.mostUsedAgent)}</b></div>
+        </div>
+        <div class="heat-card">
+          <div class="heat-head">
+            <div>
+              <strong>最近 <mark>7 天</mark> / 24 小时</strong>
+            </div>
+            <div class="heat-meta">
+              <span>活跃天数<b>${report.activeDays}</b></span>
+              <span>当前连续<b>${report.currentStreak}</b></span>
+            </div>
+          </div>
+          <div class="heat">${heatCells}</div>
+          <div class="heat-foot">
+            <div class="heat-story">
+              <span>偏爱时段 <b>${escapeHtml(report.favoritePeriod.range)}</b></span>
+              <span>${periodStory}</span>
+            </div>
+            <div class="heat-scale">
+              <span>少</span>
+              <div class="scale-row">${heatScale}</div>
+              <span>多</span>
+            </div>
+          </div>
+        </div>
+        <div class="cta">
+          <div class="pill">
+            <b>这一周，我把 AI coding 养成了一棵树。</b>
+            <span>扫码领取桌面小树</span>
+          </div>
+          <div class="qr">QR</div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function formatShareNumber(value: number) {
+  const sign = value < 0 ? "-" : "";
+  const absolute = Math.abs(value);
+  if (absolute < 1_000) return `${Math.round(value)}`;
+  const units = [
+    { value: 1_000_000_000, suffix: "B" },
+    { value: 1_000_000, suffix: "M" },
+    { value: 1_000, suffix: "K" },
+  ];
+  const unit = units.find((item) => absolute >= item.value);
+  if (!unit) return `${Math.round(value)}`;
+  const scaled = absolute / unit.value;
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  const formatted = scaled.toFixed(digits).replace(/\.0+$|(\.\d*[1-9])0+$/, "$1");
+  return `${sign}${formatted}${unit.suffix}`;
 }
 
 function render() {

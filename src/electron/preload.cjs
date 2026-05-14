@@ -23,6 +23,7 @@ const api = {
   unlockAchievements: (items) => ipcRenderer.invoke("achievements:unlock", items),
   previewAchievementToast: (id) => ipcRenderer.invoke("achievements:preview-toast", id),
   updateAchievementStats: (stats) => ipcRenderer.invoke("achievements:update-stats", stats),
+  saveShareImage: (input) => ipcRenderer.invoke("share:save-image", input),
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
   notifyManagerReady: () => ipcRenderer.send("manager:ready"),

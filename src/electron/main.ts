@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, net, Notification, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notification, screen, shell, Tray } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
@@ -214,6 +214,14 @@ function achievementsPath() {
 
 function leaderboardAuthPath() {
   return join(app.getPath("userData"), "leaderboard-auth.json");
+}
+
+function sanitizeShareImageFilename(value: unknown) {
+  const fallback = `vibe-tree-share-${new Date().toISOString().slice(0, 10)}.png`;
+  if (typeof value !== "string") return fallback;
+  const name = value.replace(/[<>:"/\\|?*\x00-\x1F]/g, "-").trim();
+  if (!name) return fallback;
+  return name.toLowerCase().endsWith(".png") ? name : `${name}.png`;
 }
 
 function currentAppVersion() {
@@ -1844,6 +1852,29 @@ ipcMain.handle("achievements:update-stats", (_event, stats: Record<string, unkno
   writeAchievementState();
   return achievementState;
 });
+ipcMain.handle(
+  "share:save-image",
+  async (_event, input: { filename?: unknown; pngBase64?: unknown }) => {
+    const pngBase64 = typeof input?.pngBase64 === "string" ? input.pngBase64 : "";
+    if (!pngBase64) throw new Error("Missing share image data");
+
+    const pngBuffer = Buffer.from(pngBase64, "base64");
+    if (!pngBuffer.length) throw new Error("Empty share image");
+
+    const filename = sanitizeShareImageFilename(input?.filename);
+    const parent = managerWindow && !managerWindow.isDestroyed() ? managerWindow : undefined;
+    const options = {
+      title: "保存分享图",
+      defaultPath: join(app.getPath("pictures"), filename),
+      filters: [{ name: "PNG Image", extensions: ["png"] }],
+    };
+    const result = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    writeFileSync(result.filePath, pngBuffer);
+    return { canceled: false, filePath: result.filePath };
+  },
+);
 
 ipcMain.on("achievements:toast-ready", (event) => {
   if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;

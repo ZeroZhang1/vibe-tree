@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vibe Tree Share Template Shortlist</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 36px;
+        color: #161b17;
+        background: #eef0ec;
+        font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
+      }
+
+      .board {
+        width: 1368px;
+        margin: 0 auto;
+      }
+
+      .head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        margin-bottom: 28px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 42px;
+        letter-spacing: 0;
+      }
+
+      .head p {
+        width: 620px;
+        margin: 0;
+        color: #66716d;
+        font-size: 17px;
+        line-height: 1.55;
+      }
+
+      .templates {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 28px;
+      }
+
+      .template {
+        display: grid;
+        gap: 14px;
+      }
+
+      .template-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .template-head strong {
+        font-size: 21px;
+      }
+
+      .template-head span {
+        color: #66716d;
+        font-size: 14px;
+      }
+
+      .poster {
+        --bg: #fbf7ec;
+        --panel: rgba(28, 32, 25, 0.05);
+        --line: rgba(28, 32, 25, 0.18);
+        --ink: #171a14;
+        --muted: rgba(45, 52, 42, 0.6);
+        --leaf: #2c9c52;
+        --accent: #c58a24;
+        --heat0: #ebe5d8;
+        --heat1: #d2dfbd;
+        --heat2: #9bd27f;
+        --heat3: #4fb665;
+        --heat4: #1f7445;
+        position: relative;
+        width: 430px;
+        height: 668px;
+        overflow: hidden;
+        padding: 26px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        color: var(--ink);
+        background: var(--bg);
+        box-shadow: 0 24px 70px rgba(30, 38, 36, 0.2);
+      }
+
+      .poster::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.06;
+        background-image:
+          linear-gradient(currentColor 1px, transparent 1px),
+          linear-gradient(90deg, currentColor 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: radial-gradient(circle at 50% 32%, black, transparent 74%);
+      }
+
+      .top,
+      .hero,
+      .metrics,
+      .heat-card,
+      .quote,
+      .cta {
+        position: relative;
+        z-index: 1;
+      }
+
+      .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+
+      .brand {
+        display: grid;
+        gap: 5px;
+      }
+
+      .eyebrow {
+        color: var(--leaf);
+        font-size: 12px;
+        font-weight: 1000;
+        letter-spacing: 1.7px;
+      }
+
+      .brand b {
+        font-size: 21px;
+      }
+
+      .weather {
+        display: grid;
+        gap: 6px;
+        justify-items: end;
+        color: var(--accent);
+      }
+
+      .weather b {
+        font-size: 21px;
+      }
+
+      .weather span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 166px 1fr;
+        gap: 18px;
+        align-items: center;
+        margin-top: 18px;
+      }
+
+      .tree-frame {
+        position: relative;
+        display: grid;
+        place-items: center;
+        height: 166px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: var(--panel);
+      }
+
+      .tree-frame::before {
+        content: "";
+        position: absolute;
+        width: 126px;
+        height: 126px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--leaf) 20%, transparent);
+        filter: blur(18px);
+      }
+
+      .tree {
+        position: relative;
+        width: 134px;
+        height: 134px;
+        object-fit: contain;
+        image-rendering: pixelated;
+        filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.24));
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 32px;
+        line-height: 1.04;
+      }
+
+      h2 span {
+        color: var(--leaf);
+      }
+
+      .level {
+        margin-top: 12px;
+        color: var(--accent);
+        font-size: 31px;
+        font-weight: 1000;
+        line-height: 1;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: 0.92fr 1.16fr 0.92fr;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .metric {
+        display: grid;
+        gap: 5px;
+        min-height: 72px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+      }
+
+      .metric small {
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.25;
+      }
+
+      .metric b {
+        font-size: 18px;
+      }
+
+      .metric.featured {
+        min-height: 82px;
+        padding: 13px;
+        border-color: color-mix(in srgb, var(--leaf) 36%, var(--line));
+        background: color-mix(in srgb, var(--panel) 72%, var(--leaf) 10%);
+      }
+
+      .metric.featured small {
+        color: var(--leaf);
+        font-weight: 900;
+      }
+
+      .metric.featured b {
+        font-size: 24px;
+      }
+
+      .heat-card {
+        margin-top: 12px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: color-mix(in srgb, var(--bg) 76%, #000 24%);
+      }
+
+      .heat-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 8px;
+      }
+
+      .heat-head strong {
+        display: block;
+        font-size: 16px;
+      }
+
+      .heat-head em {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+        font-style: normal;
+        font-weight: 500;
+      }
+
+      .heat-meta {
+        display: grid;
+        grid-template-columns: repeat(2, auto);
+        gap: 8px;
+        color: var(--muted);
+        font-size: 9px;
+        text-align: right;
+      }
+
+      .heat-meta b {
+        color: var(--ink);
+        font-size: 10px;
+      }
+
+      .heat-meta span {
+        display: grid;
+        gap: 2px;
+      }
+
+      .heat-foot {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 10px;
+        margin-top: 8px;
+        padding-top: 7px;
+        border-top: 1px dashed color-mix(in srgb, var(--line) 72%, transparent);
+        color: var(--muted);
+        font-size: 9.5px;
+        line-height: 1.45;
+      }
+
+      .heat-foot b {
+        color: var(--accent);
+        font-size: 10px;
+      }
+
+      .heat-foot mark {
+        color: var(--accent);
+        background: transparent;
+        font-weight: 900;
+      }
+
+      .heat-story {
+        display: grid;
+        gap: 2px;
+      }
+
+      .heat-scale {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 86px;
+        text-align: right;
+      }
+
+      .heat-scale span {
+        white-space: nowrap;
+      }
+
+      .scale-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 3px;
+      }
+
+      .scale-row i {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        background: var(--c);
+      }
+
+      .heat {
+        display: grid;
+        grid-template-columns: repeat(24, 1fr);
+        gap: 2px;
+      }
+
+      .heat i {
+        display: block;
+        aspect-ratio: 1 / 1;
+        border-radius: 3px;
+        background: var(--c);
+      }
+
+      .quote {
+        margin-top: 19px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .profile-card {
+        position: relative;
+        z-index: 1;
+        margin-top: 13px;
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+
+      .profile-top,
+      .peak-line {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .profile-top span,
+      .peak-line span {
+        color: var(--muted);
+        font-size: 9px;
+      }
+
+      .profile-top b {
+        color: var(--accent);
+        font-size: 12px;
+      }
+
+      .profile-chips {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .profile-line {
+        display: grid;
+        gap: 2px;
+        min-height: 40px;
+        padding: 6px 7px;
+        border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--panel) 72%, transparent);
+      }
+
+      .profile-line span {
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.25;
+      }
+
+      .profile-line b {
+        color: var(--ink);
+        font-size: 11px;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
+
+      .peak-line {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px dashed var(--line);
+      }
+
+      .peak-line b {
+        color: var(--accent);
+        font-size: 10.5px;
+        line-height: 1.25;
+      }
+
+      .cta {
+        position: absolute;
+        left: 26px;
+        right: 26px;
+        bottom: 26px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .qr {
+        display: grid;
+        place-items: center;
+        width: 48px;
+        height: 48px;
+        border: 2px dashed currentColor;
+        border-radius: 11px;
+        font-size: 11px;
+        font-weight: 900;
+      }
+
+      .pill {
+        display: grid;
+        gap: 10px;
+        color: var(--muted);
+      }
+
+      .pill b {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.4;
+      }
+
+      .pill span {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .pill span::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        background: var(--leaf);
+      }
+
+      .receipt {
+        --bg: #fbf7ec;
+        --panel: rgba(28, 32, 25, 0.05);
+        --line: rgba(28, 32, 25, 0.18);
+        --ink: #171a14;
+        --muted: rgba(45, 52, 42, 0.6);
+        --leaf: #2c9c52;
+        --accent: #c58a24;
+        --heat0: #ebe5d8;
+        --heat1: #d2dfbd;
+        --heat2: #9bd27f;
+        --heat3: #4fb665;
+        --heat4: #1f7445;
+      }
+
+      .glass {
+        --bg: #161922;
+        --panel: rgba(255, 255, 255, 0.1);
+        --line: rgba(255, 255, 255, 0.2);
+        --ink: #f4f1e9;
+        --muted: rgba(244, 241, 233, 0.56);
+        --leaf: #c7f66c;
+        --accent: #ffcf7a;
+        --heat0: #2b2d32;
+        --heat1: #4a5832;
+        --heat2: #7a9d44;
+        --heat3: #c7f66c;
+        --heat4: #fff07a;
+      }
+
+      .glass {
+        background:
+          radial-gradient(circle at 50% 30%, rgba(199, 246, 108, 0.12), transparent 30%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 48%),
+          var(--bg);
+      }
+
+      .mono {
+        --bg: #f8f8f5;
+        --panel: rgba(20, 20, 16, 0.04);
+        --line: rgba(20, 20, 16, 0.14);
+        --ink: #11120e;
+        --muted: rgba(17, 18, 14, 0.56);
+        --leaf: #11120e;
+        --accent: #4f8f55;
+        --heat0: #e3e3dd;
+        --heat1: #b8c5b4;
+        --heat2: #8aaa84;
+        --heat3: #4f8f55;
+        --heat4: #11120e;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="board">
+      <header class="head">
+        <h1>三套分享图模板</h1>
+        <p>保留 04 / 05 / 06 三个方向，让用户在导出分享图时选择。三套共用数据结构，只换视觉皮肤。</p>
+      </header>
+
+      <section class="templates" id="templates"></section>
+    </main>
+
+    <script>
+      const templates = [
+        ["receipt", "04 Growth Receipt", "收据/日报，有传播梗"],
+        ["glass", "05 Glass Terrarium", "玻璃生态箱，精致偏潮流"],
+        ["mono", "06 Monochrome Index", "极简索引卡，最克制"],
+      ];
+
+      const heatLevels = Array.from({ length: 7 * 24 }, (_, index) => {
+        const hour = index % 24;
+        const day = Math.floor(index / 24);
+        const pulse = hour >= 14 && hour <= 17 ? 3 : hour >= 9 && hour <= 11 ? 1 : hour >= 20 && hour <= 22 ? 2 : 0;
+        const dayLift = day >= 3 && day <= 5 ? 1 : day === 6 ? -1 : 0;
+        const texture = (day * 5 + hour * 3) % 11 === 0 ? 1 : 0;
+        const peak = day === 5 && hour === 15 ? 1 : 0;
+        return Math.max(0, Math.min(4, pulse + dayLift + texture + peak - (hour < 8 ? 1 : 0)));
+      });
+
+      document.querySelector("#templates").innerHTML = templates
+        .map(
+          ([className, title, note]) => `
+            <article class="template">
+              <div class="template-head">
+                <strong>${title}</strong>
+                <span>${note}</span>
+              </div>
+              <section class="poster ${className}">
+                <div class="top">
+                  <div class="brand">
+                    <span class="eyebrow">VIBE TREE</span>
+                    <b>Token 天气树</b>
+                  </div>
+                  <div class="weather">
+                    <b>420K/min</b>
+                    <span>coding 峰值</span>
+                  </div>
+                </div>
+                <div class="hero">
+                  <div class="tree-frame">
+                    <img class="tree" src="../public/assets/trees/vibe-bonsai/pure-svg/02-seedling-layered-idle.svg" alt="" />
+                  </div>
+                  <div>
+                    <h2>我的<br /><span>成长档案</span></h2>
+                    <div class="level">Lv.35</div>
+                  </div>
+                </div>
+                <div class="metrics">
+                  <div class="metric"><small>今日成长</small><b>48.1M</b></div>
+                  <div class="metric featured"><small>累计 Token</small><b>470M</b></div>
+                  <div class="metric"><small>最常用 Agent</small><b>Codex</b></div>
+                </div>
+                <div class="heat-card">
+                  <div class="heat-head">
+                    <div>
+                      <strong>最近 7 天 / 24 小时</strong>
+                    </div>
+                    <div class="heat-meta">
+                      <span>活跃天数<b>6</b></span>
+                      <span>当前连续<b>3</b></span>
+                    </div>
+                  </div>
+                  <div class="heat">
+                    ${heatLevels.map((level) => `<i style="--c:var(--heat${level})"></i>`).join("")}
+                  </div>
+                  <div class="heat-foot">
+                    <div class="heat-story">
+                      <span>偏爱时段 <b>2-5 点</b></span>
+                      <span>这 7 天，你最常在<mark>午后</mark>进入 coding 状态。</span>
+                    </div>
+                    <div class="heat-scale">
+                      <span>少</span>
+                      <div class="scale-row">
+                        ${[0, 1, 2, 3, 4].map((level) => `<i style="--c:var(--heat${level})"></i>`).join("")}
+                      </div>
+                      <span>多</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="cta">
+                  <div class="pill">
+                    <b>这一周，我把 AI coding 养成了一棵树。</b>
+                    <span>扫码领取桌面小树</span>
+                  </div>
+                  <div class="qr">QR</div>
+                </div>
+              </section>
+            </article>
+          `,
+        )
+        .join("");
+    </script>
+  </body>
+</html>

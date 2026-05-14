@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vibe Tree Visual Schemes</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 34px;
+        color: #16201b;
+        background: #edf0ec;
+        font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
+      }
+
+      .board {
+        width: 1720px;
+        margin: 0 auto;
+      }
+
+      .head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        margin-bottom: 26px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 42px;
+        letter-spacing: 0;
+      }
+
+      .head p {
+        width: 720px;
+        margin: 0;
+        color: #66716d;
+        font-size: 18px;
+        line-height: 1.55;
+      }
+
+      .schemes {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+      }
+
+      .scheme {
+        display: grid;
+        gap: 12px;
+      }
+
+      .scheme-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .scheme-title strong {
+        font-size: 20px;
+      }
+
+      .scheme-title span {
+        color: #66716d;
+        font-size: 14px;
+      }
+
+      .poster {
+        --bg: #101524;
+        --panel: rgba(255, 255, 255, 0.08);
+        --line: rgba(255, 255, 255, 0.18);
+        --ink: #f5f7f5;
+        --muted: rgba(245, 247, 245, 0.58);
+        --leaf: #62e979;
+        --accent: #f5db63;
+        --heat0: #242832;
+        --heat1: #1e4b32;
+        --heat2: #2f9551;
+        --heat3: #56e574;
+        --heat4: #a0ff64;
+        position: relative;
+        width: 520px;
+        height: 720px;
+        overflow: hidden;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        color: var(--ink);
+        background: var(--bg);
+        box-shadow: 0 24px 70px rgba(30, 38, 36, 0.22);
+      }
+
+      .poster::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        opacity: var(--texture, 0.22);
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: radial-gradient(circle at 50% 32%, black, transparent 74%);
+      }
+
+      .top {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+      }
+
+      .brand {
+        display: grid;
+        gap: 5px;
+      }
+
+      .eyebrow {
+        color: var(--leaf);
+        font-size: 13px;
+        font-weight: 900;
+        letter-spacing: 1.8px;
+      }
+
+      .brand b {
+        font-size: 23px;
+      }
+
+      .weather {
+        display: grid;
+        gap: 4px;
+        justify-items: end;
+        color: var(--accent);
+      }
+
+      .weather b {
+        font-size: 24px;
+      }
+
+      .weather span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .hero {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: 210px 1fr;
+        gap: 18px;
+        align-items: center;
+        margin-top: 42px;
+      }
+
+      .tree-wrap {
+        position: relative;
+        display: grid;
+        place-items: center;
+        height: 210px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: var(--panel);
+      }
+
+      .tree-wrap::before {
+        content: "";
+        position: absolute;
+        width: 154px;
+        height: 154px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--leaf) 20%, transparent);
+        filter: blur(18px);
+      }
+
+      .tree {
+        position: relative;
+        width: 168px;
+        height: 168px;
+        object-fit: contain;
+        image-rendering: pixelated;
+        filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.24));
+      }
+
+      .headline {
+        display: grid;
+        gap: 12px;
+      }
+
+      .headline h2 {
+        margin: 0;
+        font-size: 36px;
+        line-height: 1.04;
+        letter-spacing: 0;
+      }
+
+      .headline h2 span {
+        color: var(--leaf);
+      }
+
+      .level {
+        color: var(--accent);
+        font-size: 38px;
+        font-weight: 1000;
+        line-height: 1;
+      }
+
+      .metrics {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 26px;
+      }
+
+      .metric {
+        display: grid;
+        gap: 5px;
+        min-height: 78px;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+      }
+
+      .metric small {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .metric b {
+        font-size: 20px;
+      }
+
+      .heat-block {
+        position: relative;
+        z-index: 1;
+        margin-top: 24px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: color-mix(in srgb, var(--bg) 72%, #000 28%);
+      }
+
+      .heat-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+
+      .heat-head strong {
+        font-size: 18px;
+      }
+
+      .heat-head span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .heat {
+        display: grid;
+        grid-template-columns: repeat(24, 1fr);
+        gap: 3px;
+      }
+
+      .heat i {
+        display: block;
+        aspect-ratio: 1 / 1;
+        border-radius: 3px;
+        background: var(--c);
+      }
+
+      .quote {
+        position: relative;
+        z-index: 1;
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.5;
+      }
+
+      .cta {
+        position: absolute;
+        left: 28px;
+        right: 28px;
+        bottom: 24px;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .qr {
+        display: grid;
+        place-items: center;
+        width: 56px;
+        height: 56px;
+        border: 2px dashed currentColor;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .swatches {
+        display: flex;
+        gap: 7px;
+      }
+
+      .swatches i {
+        width: 26px;
+        height: 18px;
+        border-radius: 6px;
+        background: var(--s);
+        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+      }
+
+      .nocturne {
+        --bg: #101524;
+        --panel: rgba(255, 255, 255, 0.07);
+        --line: rgba(144, 154, 200, 0.34);
+        --ink: #f7f8ff;
+        --muted: rgba(210, 218, 255, 0.58);
+        --leaf: #65ee7c;
+        --accent: #f6dc68;
+        --heat0: #242832;
+        --heat1: #1d4a34;
+        --heat2: #2f9754;
+        --heat3: #56e574;
+        --heat4: #a4ff66;
+      }
+
+      .mist {
+        --bg: #f1f5ef;
+        --panel: rgba(255, 255, 255, 0.58);
+        --line: rgba(55, 82, 65, 0.18);
+        --ink: #142018;
+        --muted: rgba(40, 60, 48, 0.56);
+        --leaf: #2fa85b;
+        --accent: #9a6d23;
+        --heat0: #dfe7dd;
+        --heat1: #c1dfbd;
+        --heat2: #82cb81;
+        --heat3: #39af65;
+        --heat4: #146e42;
+        --texture: 0.08;
+      }
+
+      .radar {
+        --bg: #071821;
+        --panel: rgba(116, 205, 245, 0.08);
+        --line: rgba(116, 205, 245, 0.24);
+        --ink: #edfaff;
+        --muted: rgba(205, 238, 247, 0.6);
+        --leaf: #52f29a;
+        --accent: #75d6ff;
+        --heat0: #15242d;
+        --heat1: #174b43;
+        --heat2: #238769;
+        --heat3: #52f29a;
+        --heat4: #d5ff6f;
+      }
+
+      .receipt {
+        --bg: #fbf7ec;
+        --panel: rgba(28, 32, 25, 0.05);
+        --line: rgba(28, 32, 25, 0.18);
+        --ink: #171a14;
+        --muted: rgba(45, 52, 42, 0.6);
+        --leaf: #2c9c52;
+        --accent: #c58a24;
+        --heat0: #ebe5d8;
+        --heat1: #d2dfbd;
+        --heat2: #9bd27f;
+        --heat3: #4fb665;
+        --heat4: #1f7445;
+        --texture: 0.04;
+      }
+
+      .glass {
+        --bg: #161922;
+        --panel: rgba(255, 255, 255, 0.1);
+        --line: rgba(255, 255, 255, 0.2);
+        --ink: #f4f1e9;
+        --muted: rgba(244, 241, 233, 0.56);
+        --leaf: #c7f66c;
+        --accent: #ffcf7a;
+        --heat0: #2b2d32;
+        --heat1: #4a5832;
+        --heat2: #7a9d44;
+        --heat3: #c7f66c;
+        --heat4: #fff07a;
+      }
+
+      .mono {
+        --bg: #f8f8f5;
+        --panel: rgba(20, 20, 16, 0.04);
+        --line: rgba(20, 20, 16, 0.14);
+        --ink: #11120e;
+        --muted: rgba(17, 18, 14, 0.56);
+        --leaf: #11120e;
+        --accent: #4f8f55;
+        --heat0: #e3e3dd;
+        --heat1: #b8c5b4;
+        --heat2: #8aaa84;
+        --heat3: #4f8f55;
+        --heat4: #11120e;
+        --texture: 0.03;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="board">
+      <header class="head">
+        <h1>Vibe Tree 视觉方案</h1>
+        <p>同一套信息骨架，先看色彩、材质、氛围。这里不是最终版式，只用于判断哪条视觉方向更高级、更像 Vibe Tree。</p>
+      </header>
+
+      <section class="schemes" id="schemes"></section>
+    </main>
+
+    <script>
+      const schemes = [
+        {
+          className: "nocturne",
+          title: "01 Nocturne Console",
+          note: "延续当前产品，但更安静",
+          swatches: ["#101524", "#232a43", "#65ee7c", "#f6dc68"],
+        },
+        {
+          className: "mist",
+          title: "02 Botanical Mist",
+          note: "植物标本感，最温和高级",
+          swatches: ["#f1f5ef", "#ffffff", "#2fa85b", "#9a6d23"],
+        },
+        {
+          className: "radar",
+          title: "03 Weather Radar",
+          note: "天气系统记忆点最强",
+          swatches: ["#071821", "#123243", "#52f29a", "#75d6ff"],
+        },
+        {
+          className: "receipt",
+          title: "04 Growth Receipt",
+          note: "收据/日报，有传播梗",
+          swatches: ["#fbf7ec", "#171a14", "#2c9c52", "#c58a24"],
+        },
+        {
+          className: "glass",
+          title: "05 Glass Terrarium",
+          note: "玻璃生态箱，精致偏潮流",
+          swatches: ["#161922", "#303441", "#c7f66c", "#ffcf7a"],
+        },
+        {
+          className: "mono",
+          title: "06 Monochrome Index",
+          note: "极简索引卡，最克制",
+          swatches: ["#f8f8f5", "#11120e", "#4f8f55", "#e3e3dd"],
+        },
+      ];
+
+      const heatLevels = Array.from({ length: 96 }, (_, index) => {
+        const hour = index % 24;
+        const row = Math.floor(index / 24);
+        const pulse = hour >= 8 && hour <= 10 ? 2 : hour >= 14 && hour <= 16 ? 3 : hour >= 19 && hour <= 21 ? 2 : 0;
+        return Math.max(0, Math.min(4, pulse + ((index + row) % 7 === 0 ? 1 : 0) - (row === 0 ? 1 : 0)));
+      });
+
+      const schemesRoot = document.querySelector("#schemes");
+      schemesRoot.innerHTML = schemes
+        .map(
+          (scheme) => `
+            <article class="scheme">
+              <div class="scheme-title">
+                <strong>${scheme.title}</strong>
+                <span>${scheme.note}</span>
+              </div>
+              <section class="poster ${scheme.className}">
+                <div class="top">
+                  <div class="brand">
+                    <span class="eyebrow">VIBE TREE</span>
+                    <b>Token 天气树</b>
+                  </div>
+                  <div class="weather">
+                    <b>420K XP/min</b>
+                    <span>当前天气：大雨</span>
+                  </div>
+                </div>
+                <div class="hero">
+                  <div class="tree-wrap">
+                    <img class="tree" src="../public/assets/trees/vibe-bonsai/pure-svg/02-seedling-layered-idle.svg" alt="" />
+                  </div>
+                  <div class="headline">
+                    <h2>我的<br /><span>成长档案</span></h2>
+                    <div class="level">Lv.35</div>
+                  </div>
+                </div>
+                <div class="metrics">
+                  <div class="metric"><small>累计 XP</small><b>470M</b></div>
+                  <div class="metric"><small>今日成长</small><b>48.1M</b></div>
+                  <div class="metric"><small>活跃天数</small><b>7</b></div>
+                </div>
+                <div class="heat-block">
+                  <div class="heat-head"><strong>最近 7 天 / 24 小时</strong><span>峰值 3 PM</span></div>
+                  <div class="heat">
+                    ${heatLevels.map((level) => `<i style="--c:var(--heat${level})"></i>`).join("")}
+                  </div>
+                </div>
+                <p class="quote">这一周，我把 AI coding 养成了一棵树。</p>
+                <div class="cta">
+                  <div class="swatches">
+                    ${scheme.swatches.map((color) => `<i style="--s:${color}"></i>`).join("")}
+                  </div>
+                  <div class="qr">QR</div>
+                </div>
+              </section>
+            </article>
+          `,
+        )
+        .join("");
+    </script>
+  </body>
+</html>
