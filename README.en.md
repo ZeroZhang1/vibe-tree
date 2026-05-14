@@ -7,9 +7,11 @@
 Vibe Tree is a desktop-resident token weather tree — it turns the cost, rhythm, and activity of vibe coding into a pixel bonsai you can nurture.
 
 <p align="center">
-  <img src="previews/pet-window.png" width="200" alt="Vibe Tree Desktop Pet" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="previews/manager-window.png" width="600" alt="Vibe Tree Manager" />
+  <img src="previews/weather-showcase.png" width="900" alt="Vibe Tree weather modes" />
+</p>
+
+<p align="center">
+  <img src="previews/manager-window.png" width="900" alt="Vibe Tree home dashboard" />
 </p>
 
 ---
@@ -33,7 +35,7 @@ A transparent floating window lives on your desktop. The tree grows as tokens ar
 ### 📊 See Where Your Tokens Go
 The manager panel shows source breakdowns, model ratios, and 7-day charts. View all agents or drill into a single agent's input / output / cache details.
 
-### 🏅 Turn Milestones into Achievements
+### 🏅 Unlock Legendary Achievements
 The built-in achievement system tracks streaks, total usage, and coding rhythm, then celebrates key moments with a small pixel toast.
 
 ### 🏆 Compete with Global Vibe Coders

@@ -7,9 +7,11 @@
 Vibe Tree 是一个桌面常驻的 token 天气树——把 vibe coding 的消耗、节奏和活跃度，变成一棵可以养成的像素盆栽。
 
 <p align="center">
-  <img src="previews/pet-window.png" width="200" alt="Vibe Tree 桌面宠物" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="previews/manager-window.png" width="600" alt="Vibe Tree 管理面板" />
+  <img src="previews/weather-showcase.png" width="900" alt="Vibe Tree 四种天气组图" />
+</p>
+
+<p align="center">
+  <img src="previews/manager-window.png" width="900" alt="Vibe Tree 主页管理面板" />
 </p>
 
 ---
@@ -33,7 +35,7 @@ npm start
 ### 📊 看见你的 token 去向
 管理面板展示来源统计、模型占比、最近 7 天图表。支持按 agent 拆分或查看单个 agent 的 input / output / cache 明细。
 
-### 🏅 把里程碑变成成就
+### 🏅 解锁传说成就
 内置成就系统会记录你的连续活跃、累计消耗和使用节奏，关键时刻用像素弹窗给你一点小小的反馈。
 
 ### 🏆 和全球 vibe coder 比一比
