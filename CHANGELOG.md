@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-14 (v0.3.3)
+
+- Added Gemini and Hermes session ingestion alongside Codex, Claude Code, OpenClaw, and OpenCode.
+- Expanded source breakdowns, achievements, settings, and tray monitor status for the new agents.
+- Made missing sources compact and sorted them below installed sources.
+- Updated tray actions so settings opens directly, hide-tree lives with the checkbox controls, and manual update checks reopen the tray menu instead of sending notifications.
+- Improved leaderboard opt-out copy and backend cleanup so user-linked remote rows are removed when leaving.
+
 ## 2026-05-14 (v0.3.2)
 
 - Fixed macOS update checks by reading the running app bundle's package version before falling back to the repository package.
