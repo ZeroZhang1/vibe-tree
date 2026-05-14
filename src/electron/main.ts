@@ -55,6 +55,7 @@ const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
 const APP_ID = "com.vibetree.app";
+const SMOKE_TEST = process.env.VIBE_TREE_SMOKE_TEST === "1";
 const APP_ICON_PATHS = [
   join(__dirname, "../renderer/assets/app-icon.png"),
   join(__dirname, "../renderer/assets/app-icon.ico"),
@@ -1542,6 +1543,7 @@ async function installUpdate(): Promise<UpdateStatus> {
     await runUpdateStep(mainText("pullMain"), "git", ["pull", "--ff-only", "origin", "main"], cwd);
     await runUpdateStep(mainText("syncDependencies"), npmCommand(), ["install"], cwd);
     await runUpdateStep(mainText("buildApp"), npmCommand(), ["run", "build"], cwd);
+    await runUpdateStep(mainText("verifyUpdate"), npmCommand(), ["run", "smoke:electron"], cwd);
 
     updateStatus = {
       ...updateStatus,
@@ -1783,6 +1785,10 @@ function loginItemArgs() {
 app.whenReady().then(() => {
   app.setName(APP_NAME);
   app.setAppUserModelId(APP_ID);
+  if (SMOKE_TEST) {
+    app.quit();
+    return;
+  }
   Menu.setApplicationMenu(null);
   ledger = readLedger();
   achievementState = readAchievementState();

@@ -31,3 +31,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Smoke Electron main process
+        run: npm run smoke:electron
