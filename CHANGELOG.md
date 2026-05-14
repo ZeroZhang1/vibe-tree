@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-05-14 (v0.3.2)
+
+- Fixed macOS update checks by reading the running app bundle's package version before falling back to the repository package.
+- Updated release detection to prefer GitHub's latest published release and only fall back to tags when needed.
+- Included package metadata in the Electron build output so app version comparisons stay consistent across platforms.
+
 ## 2026-05-14 (v0.3.1)
 
 - Renamed user-facing scoring to Token across the dashboard, achievements, charts, tray menu, README, and leaderboard copy.
