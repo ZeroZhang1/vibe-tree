@@ -539,6 +539,7 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     secondsAgo: "秒前",
     minutesAgo: "分钟前",
     hoursAgo: "小时前",
+    fontSize: "字体大小",
     manualFeed: "手动喂养",
   },
   "en-US": {
@@ -708,6 +709,7 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     secondsAgo: "s ago",
     minutesAgo: "min ago",
     hoursAgo: "h ago",
+    fontSize: "Font Size",
     manualFeed: "Manual Feed",
   },
 };

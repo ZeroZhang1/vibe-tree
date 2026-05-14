@@ -408,6 +408,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     badgeFrontMetric: normalizeBadgeMetric(settings.badgeFrontMetric, "level"),
     badgeBackMetric: normalizeBadgeMetric(settings.badgeBackMetric, "total"),
     totalDisplayUnit: normalizeTotalDisplayUnit(settings.totalDisplayUnit),
+    fontScale: typeof settings.fontScale === "number" && [1, 1.15, 1.3, 1.5].includes(settings.fontScale) ? settings.fontScale : undefined,
     codexSessionsDir: cleanPath(settings.codexSessionsDir),
     claudeSessionsDir: cleanPath(settings.claudeSessionsDir),
     openclawSessionsDir: cleanPath(settings.openclawSessionsDir),

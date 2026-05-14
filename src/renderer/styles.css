@@ -51,7 +51,7 @@
   --radius-lg: 6px;
 
   font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
 }
 
 * {

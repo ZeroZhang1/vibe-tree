@@ -173,6 +173,7 @@ const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settings
 const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
 const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
+const fontScaleSelect = document.querySelector<HTMLSelectElement>("#fontScaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
 const silentStartupInput = document.querySelector<HTMLInputElement>("#silentStartupInput");
 const updateCheckEnabledInput = document.querySelector<HTMLInputElement>("#updateCheckEnabledInput");
@@ -590,6 +591,13 @@ function bindEvents() {
     render();
   });
 
+  fontScaleSelect?.addEventListener("change", async () => {
+    if (!ledger) return;
+    const scale = Number(fontScaleSelect.value);
+    document.documentElement.style.setProperty("--font-scale", String(scale));
+    ledger = await window.bonsai.updateSettings({ fontScale: scale });
+  });
+
   languageSelect?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ language: normalizeLanguage(languageSelect.value) });
@@ -952,6 +960,11 @@ function render() {
     if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
     if (lockInput) lockInput.checked = ledger.settings.locked;
     if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
+    if (fontScaleSelect) {
+      const fs = ledger.settings.fontScale ?? 1;
+      fontScaleSelect.value = String(fs);
+      document.documentElement.style.setProperty("--font-scale", String(fs));
+    }
     if (languageSelect) languageSelect.value = ledger.settings.language;
     syncStatsSourceInputs();
     if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;

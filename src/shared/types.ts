@@ -71,6 +71,7 @@ export interface Settings {
     x: number;
     y: number;
   };
+  fontScale?: number;
   codexSessionsDir?: string;
   claudeSessionsDir?: string;
   openclawSessionsDir?: string;
