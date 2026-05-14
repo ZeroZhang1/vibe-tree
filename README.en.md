@@ -33,6 +33,9 @@ A transparent floating window lives on your desktop. The tree grows as tokens ar
 ### 📊 See Where Your Tokens Go
 The manager panel shows source breakdowns, model ratios, and 7-day charts. View all agents or drill into a single agent's input / output / cache details.
 
+### 🏅 Turn Milestones into Achievements
+The built-in achievement system tracks streaks, total usage, and coding rhythm, then celebrates key moments with a small pixel toast.
+
 ### 🏆 Compete with Global Vibe Coders
 An optional global leaderboard — sign in with GitHub to join. Only daily token totals are uploaded; no code or session content ever leaves your machine.
 
