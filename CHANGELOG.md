@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-05-14 (v0.3.4)
+
+- Fixed Windows startup after v0.3.3 by marking compiled shared runtime files as CommonJS during the Electron build.
+
 ## 2026-05-14 (v0.3.3)
 
 - Added Gemini and Hermes session ingestion alongside Codex, Claude Code, OpenClaw, and OpenCode.
