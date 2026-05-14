@@ -5,6 +5,7 @@ export type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "s
 export const MAIN_TEXT: Record<AppLanguage, Record<string, string>> = {
   "zh-CN": {
     openManager: "打开管理窗口",
+    openSettings: "打开设置",
     unlockPet: "解锁小树位置",
     lockPet: "锁定小树位置",
     petSize: "小树大小",
@@ -19,6 +20,7 @@ export const MAIN_TEXT: Record<AppLanguage, Record<string, string>> = {
     quit: "退出",
     today: "今日",
     checkUpdate: "检查更新",
+    checkingUpdate: "正在检查更新",
     updateFound: "发现新版本",
     terminalUpdate: "终端更新",
     openUpdatePage: "打开更新页",
@@ -56,6 +58,7 @@ export const MAIN_TEXT: Record<AppLanguage, Record<string, string>> = {
     leaderboardRequestTimedOut: "排行榜服务请求超时",
     updateNotificationTitle: "Vibe Tree 有新版本",
     updateNotificationBody: "已发布，当前版本",
+    updateAlreadyLatestTitle: "已是最新版本",
     justNow: "刚刚",
     minutesAgo: "分钟前",
     hoursAgo: "小时前",
@@ -72,6 +75,7 @@ export const MAIN_TEXT: Record<AppLanguage, Record<string, string>> = {
   },
   "en-US": {
     openManager: "Open Manager",
+    openSettings: "Open Settings",
     unlockPet: "Unlock Tree Position",
     lockPet: "Lock Tree Position",
     petSize: "Tree Size",
@@ -86,6 +90,7 @@ export const MAIN_TEXT: Record<AppLanguage, Record<string, string>> = {
     quit: "Quit",
     today: "Today",
     checkUpdate: "Check for Updates",
+    checkingUpdate: "Checking for Updates",
     updateFound: "New version available",
     terminalUpdate: "Terminal Update",
     openUpdatePage: "Open Releases",
@@ -123,6 +128,7 @@ export const MAIN_TEXT: Record<AppLanguage, Record<string, string>> = {
     leaderboardRequestTimedOut: "Leaderboard service request timed out",
     updateNotificationTitle: "Vibe Tree has an update",
     updateNotificationBody: "is available. Current version",
+    updateAlreadyLatestTitle: "You're up to date",
     justNow: "just now",
     minutesAgo: "min ago",
     hoursAgo: "h ago",

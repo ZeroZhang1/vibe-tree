@@ -44,6 +44,7 @@ const api = {
     ipcRenderer.invoke("achievements:update-stats", stats) as Promise<AchievementState>,
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
+  notifyManagerReady: () => ipcRenderer.send("manager:ready"),
   onLedger: (callback: (ledger: LedgerFile) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, ledger: LedgerFile) => callback(ledger);
     ipcRenderer.on("bonsai:ledger", listener);
@@ -58,6 +59,11 @@ const api = {
     const listener = () => callback();
     ipcRenderer.on("bonsai:open-add-token", listener);
     return () => ipcRenderer.removeListener("bonsai:open-add-token", listener);
+  },
+  onOpenSettings: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("bonsai:open-settings", listener);
+    return () => ipcRenderer.removeListener("bonsai:open-settings", listener);
   },
   onUsageStatus: (callback: (status: UsageStatus) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: UsageStatus) => callback(status);

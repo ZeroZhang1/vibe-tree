@@ -1,7 +1,7 @@
 import type { LedgerEntry } from "../shared/types";
 import type { AchievementCategory, AchievementRarity } from "./i18n";
 
-type HistorySourceId = "codex" | "openclaw" | "opencode" | "claude";
+type HistorySourceId = "codex" | "openclaw" | "opencode" | "claude" | "gemini" | "hermes";
 
 interface AchievementStatsSnapshot {
   xp: number;
@@ -353,19 +353,37 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     id: "opencode_connected",
     category: "agent",
     rarity: "rare",
-    name: "四合一",
-    description: "OpenCode 也接上了",
-    flavor: "集齐四个 agent 可以召唤神龙。",
+    name: "OpenCode 接入",
+    description: "OpenCode 有第一条事件",
+    flavor: "阵容开始变得完整。",
     condition: ({ activeSources }) => activeSources.has("opencode"),
+  },
+  {
+    id: "gemini_connected",
+    category: "agent",
+    rarity: "rare",
+    name: "Gemini 接入",
+    description: "Gemini 有第一条事件",
+    flavor: "又多了一条思路。",
+    condition: ({ activeSources }) => activeSources.has("gemini"),
+  },
+  {
+    id: "hermes_connected",
+    category: "agent",
+    rarity: "rare",
+    name: "Hermes 接入",
+    description: "Hermes 有第一条事件",
+    flavor: "消息送达，树也收到了。",
+    condition: ({ activeSources }) => activeSources.has("hermes"),
   },
   {
     id: "all_agents",
     category: "agent",
     rarity: "legendary",
     name: "全家桶",
-    description: "四种 agent 全部接入",
+    description: "六种 agent 全部接入",
     flavor: "恭喜获得全家桶套餐，附赠加大可乐。",
-    condition: ({ activeSources }) => activeSources.size >= 4,
+    condition: ({ activeSources }) => activeSources.size >= 6,
   },
   {
     id: "multi_agent_day",

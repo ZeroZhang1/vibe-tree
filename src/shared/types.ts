@@ -74,6 +74,8 @@ export interface Settings {
   claudeSessionsDir?: string;
   openclawSessionsDir?: string;
   opencodeSessionsDir?: string;
+  geminiSessionsDir?: string;
+  hermesSessionsDir?: string;
 }
 
 export interface LedgerFile {
@@ -136,6 +138,8 @@ export interface UsageStatus {
   claudeSession: SessionMonitorStatus;
   openclawSession: SessionMonitorStatus;
   opencodeSession: SessionMonitorStatus;
+  geminiSession: SessionMonitorStatus;
+  hermesSession: SessionMonitorStatus;
 }
 
 export interface SessionMonitorStatus {

@@ -18,7 +18,13 @@ import type {
   UsageStatus,
   WindowBounds,
 } from "../shared/types.js";
-import { startClaudeSessionWatcher, startOpenClawSessionWatcher, startOpenCodeSessionWatcher } from "./agentSessionWatchers.js";
+import {
+  startClaudeSessionWatcher,
+  startGeminiSessionWatcher,
+  startHermesSessionWatcher,
+  startOpenClawSessionWatcher,
+  startOpenCodeSessionWatcher,
+} from "./agentSessionWatchers.js";
 import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
 import { MAIN_TEXT, WEATHER_LABELS } from "./i18n.js";
 import type { WeatherId } from "./i18n.js";
@@ -89,6 +95,8 @@ const MAX_LEVEL = 120;
 
 let petWindow: BrowserWindow | null = null;
 let managerWindow: BrowserWindow | null = null;
+let managerRendererReady = false;
+let pendingOpenSettings = false;
 let achievementToastWindow: BrowserWindow | null = null;
 let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let achievementToastFallbackHideAt = 0;
@@ -103,12 +111,15 @@ let updateStatus: UpdateStatus = {
   currentVersion: currentAppVersion(),
 };
 let tray: Tray | null = null;
+let trayMenuReopenTimer: ReturnType<typeof setTimeout> | null = null;
 let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS, installedAt: startOfLocalDayIso(new Date()) };
 let achievementState: AchievementState = { unlocked: [] };
 let codexSessionWatcher: ReturnType<typeof startCodexSessionWatcher> | null = null;
 let claudeSessionWatcher: ReturnType<typeof startClaudeSessionWatcher> | null = null;
 let openclawSessionWatcher: ReturnType<typeof startOpenClawSessionWatcher> | null = null;
 let opencodeSessionWatcher: ReturnType<typeof startOpenCodeSessionWatcher> | null = null;
+let geminiSessionWatcher: ReturnType<typeof startGeminiSessionWatcher> | null = null;
+let hermesSessionWatcher: ReturnType<typeof startHermesSessionWatcher> | null = null;
 let codexSessionStatus: UsageStatus["codexSession"] = {
   running: false,
   sessionsRoot: "",
@@ -134,6 +145,22 @@ let openclawSessionStatus: UsageStatus["openclawSession"] = {
   importHistory: false,
 };
 let opencodeSessionStatus: UsageStatus["opencodeSession"] = {
+  running: false,
+  sessionsRoot: "",
+  exists: false,
+  filesWatched: 0,
+  eventsImported: 0,
+  importHistory: false,
+};
+let geminiSessionStatus: UsageStatus["geminiSession"] = {
+  running: false,
+  sessionsRoot: "",
+  exists: false,
+  filesWatched: 0,
+  eventsImported: 0,
+  importHistory: false,
+};
+let hermesSessionStatus: UsageStatus["hermesSession"] = {
   running: false,
   sessionsRoot: "",
   exists: false,
@@ -381,6 +408,8 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     claudeSessionsDir: cleanPath(settings.claudeSessionsDir),
     openclawSessionsDir: cleanPath(settings.openclawSessionsDir),
     opencodeSessionsDir: cleanPath(settings.opencodeSessionsDir),
+    geminiSessionsDir: cleanPath(settings.geminiSessionsDir),
+    hermesSessionsDir: cleanPath(settings.hermesSessionsDir),
   };
 }
 
@@ -619,9 +648,14 @@ function createManagerWindow() {
 
   managerWindow.on("closed", () => {
     managerWindow = null;
+    managerRendererReady = false;
+    pendingOpenSettings = false;
     refreshTrayMenu();
   });
   managerWindow.webContents.setZoomFactor(1);
+  managerWindow.webContents.on("did-start-loading", () => {
+    managerRendererReady = false;
+  });
   managerWindow.webContents.on("zoom-changed", (event) => event.preventDefault());
   void managerWindow.webContents.setVisualZoomLevelLimits(1, 1);
   void loadRenderer(managerWindow, "manager");
@@ -785,6 +819,19 @@ function showManager() {
   refreshTrayMenu();
 }
 
+function openManagerSettings() {
+  pendingOpenSettings = true;
+  showManager();
+  flushManagerCommands();
+}
+
+function flushManagerCommands() {
+  if (!managerWindow || managerWindow.isDestroyed() || !managerRendererReady) return;
+  if (!pendingOpenSettings) return;
+  managerWindow.webContents.send("bonsai:open-settings");
+  pendingOpenSettings = false;
+}
+
 function persistPetPosition() {
   if (!petWindow) return;
   const [x, y] = petWindow.getPosition();
@@ -872,8 +919,8 @@ function createAppIcon() {
 function showPetContextMenu() {
   const menu = Menu.buildFromTemplate([
     {
-      label: mainText("openManager"),
-      click: showManager,
+      label: mainText("openSettings"),
+      click: openManagerSettings,
     },
     {
       label: ledger.settings.locked ? mainText("unlockPet") : mainText("lockPet"),
@@ -965,25 +1012,14 @@ function refreshTrayMenu() {
     },
     { type: "separator" },
     {
-      label: mainText("openManager"),
-      click: showManager,
+      label: mainText("openSettings"),
+      click: openManagerSettings,
     },
     {
-      label: petWindow?.isVisible() ? mainText("hidePet") : mainText("showPet"),
-      click: () => {
-        if (!petWindow) createPetWindow();
-        petWindow?.isVisible() ? petWindow.hide() : petWindow?.show();
-        refreshTrayMenu();
-      },
-    },
-    {
-      label:
-        updateStatus.available && updateStatus.latestVersion
-          ? `${mainText("updateFound")} v${updateStatus.latestVersion}`
-          : mainText("checkUpdate"),
+      label: updateTrayMenuLabel(),
       enabled: !updateStatus.checking,
       click: () => {
-        void checkForUpdates({ manual: true, remind: true });
+        void checkForUpdates({ manual: true, reopenTrayMenu: true });
       },
     },
     ...(updateStatus.available && updateStatus.releaseUrl
@@ -1014,6 +1050,18 @@ function refreshTrayMenu() {
       label: sourceStatusLabel("OpenClaw", openclawSessionStatus, "openclaw-session"),
       enabled: false,
     },
+    {
+      label: sourceStatusLabel("OpenCode", opencodeSessionStatus, "opencode-session"),
+      enabled: false,
+    },
+    {
+      label: sourceStatusLabel("Gemini", geminiSessionStatus, "gemini-session"),
+      enabled: false,
+    },
+    {
+      label: sourceStatusLabel("Hermes", hermesSessionStatus, "hermes-session"),
+      enabled: false,
+    },
     { type: "separator" },
     {
       label: mainText("petSize"),
@@ -1024,6 +1072,20 @@ function refreshTrayMenu() {
       type: "checkbox",
       checked: ledger.settings.locked,
       click: () => updateSettings({ locked: !ledger.settings.locked }),
+    },
+    {
+      label: mainText("hidePet"),
+      type: "checkbox",
+      checked: !petWindow?.isVisible(),
+      click: (item) => {
+        if (!petWindow) createPetWindow();
+        if (item.checked) {
+          petWindow?.hide();
+        } else {
+          petWindow?.show();
+        }
+        refreshTrayMenu();
+      },
     },
     {
       label: mainText("alwaysOnTop"),
@@ -1051,6 +1113,25 @@ function refreshTrayMenu() {
   ]);
   tray.setContextMenu(template);
   tray.setToolTip(`${APP_NAME} · Lv.${trayStats.level} · ${trayStats.weatherLabel}`);
+}
+
+function updateTrayMenuLabel() {
+  if (updateStatus.checking) return mainText("checkingUpdate");
+  if (updateStatus.available && updateStatus.latestVersion) return `${mainText("updateFound")} v${updateStatus.latestVersion}`;
+  if (updateStatus.error) return mainText("updateCheckFailed");
+  if (updateStatus.checkedAt) return `${mainText("updateAlreadyLatestTitle")} v${updateStatus.currentVersion}`;
+  return mainText("checkUpdate");
+}
+
+function reopenTrayMenuSoon(delayMs = 120) {
+  if (!tray) return;
+  if (trayMenuReopenTimer) clearTimeout(trayMenuReopenTimer);
+  trayMenuReopenTimer = setTimeout(() => {
+    trayMenuReopenTimer = null;
+    if (!tray) return;
+    refreshTrayMenu();
+    tray.popUpContextMenu();
+  }, delayMs);
 }
 
 function getTrayStats() {
@@ -1154,7 +1235,7 @@ function updateSettings(partial: Partial<Settings>) {
   }
   if (partial.updateCheckEnabled !== undefined) {
     startUpdateChecks();
-    if (ledger.settings.updateCheckEnabled) void checkForUpdates({ manual: true, remind: true });
+    if (ledger.settings.updateCheckEnabled) void checkForUpdates({ remind: true });
   }
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
@@ -1172,7 +1253,9 @@ function updateSettings(partial: Partial<Settings>) {
     previous.codexSessionsDir !== ledger.settings.codexSessionsDir ||
     previous.claudeSessionsDir !== ledger.settings.claudeSessionsDir ||
     previous.openclawSessionsDir !== ledger.settings.openclawSessionsDir ||
-    previous.opencodeSessionsDir !== ledger.settings.opencodeSessionsDir
+    previous.opencodeSessionsDir !== ledger.settings.opencodeSessionsDir ||
+    previous.geminiSessionsDir !== ledger.settings.geminiSessionsDir ||
+    previous.hermesSessionsDir !== ledger.settings.hermesSessionsDir
   ) {
     restartUsageWatchers();
   }
@@ -1216,6 +1299,8 @@ function getUsageStatus(): UsageStatus {
     claudeSession: claudeSessionStatus,
     openclawSession: openclawSessionStatus,
     opencodeSession: opencodeSessionStatus,
+    geminiSession: geminiSessionStatus,
+    hermesSession: hermesSessionStatus,
   };
 }
 
@@ -1244,7 +1329,7 @@ function startUpdateChecks() {
   }, UPDATE_CHECK_INTERVAL_MS);
 }
 
-async function checkForUpdates(options: { manual?: boolean; remind?: boolean } = {}): Promise<UpdateStatus> {
+async function checkForUpdates(options: { manual?: boolean; remind?: boolean; reopenTrayMenu?: boolean } = {}): Promise<UpdateStatus> {
   if (updateStatus.checking) return updateStatus;
   if (!options.manual && !ledger.settings.updateCheckEnabled) return updateStatus;
 
@@ -1257,6 +1342,7 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean } =
   };
   broadcastUpdateStatus();
   refreshTrayMenu();
+  if (options.reopenTrayMenu) reopenTrayMenuSoon();
 
   try {
     const latest = await fetchLatestUpdate();
@@ -1274,7 +1360,9 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean } =
       checkedAt: new Date().toISOString(),
       error: undefined,
     };
-    if (available && options.remind) remindUpdateAvailable(updateStatus);
+    if (available && options.remind) {
+      remindUpdateAvailable(updateStatus);
+    }
   } catch (error) {
     updateStatus = {
       ...updateStatus,
@@ -1288,6 +1376,7 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean } =
 
   broadcastUpdateStatus();
   refreshTrayMenu();
+  if (options.reopenTrayMenu) reopenTrayMenuSoon(80);
   return updateStatus;
 }
 
@@ -1629,6 +1718,26 @@ function startUsageWatchers() {
       broadcast("bonsai:usage-status", getUsageStatus());
     },
   });
+  geminiSessionWatcher = startGeminiSessionWatcher({
+    ...common,
+    sessionsRoot: ledger.settings.geminiSessionsDir,
+    onUsage: appendUsageEvent,
+    onStatus: (status) => {
+      geminiSessionStatus = status;
+      refreshTrayMenu();
+      broadcast("bonsai:usage-status", getUsageStatus());
+    },
+  });
+  hermesSessionWatcher = startHermesSessionWatcher({
+    ...common,
+    sessionsRoot: ledger.settings.hermesSessionsDir,
+    onUsage: appendUsageEvent,
+    onStatus: (status) => {
+      hermesSessionStatus = status;
+      refreshTrayMenu();
+      broadcast("bonsai:usage-status", getUsageStatus());
+    },
+  });
 }
 
 function stopUsageWatchers() {
@@ -1636,10 +1745,14 @@ function stopUsageWatchers() {
   claudeSessionWatcher?.close();
   openclawSessionWatcher?.close();
   opencodeSessionWatcher?.close();
+  geminiSessionWatcher?.close();
+  hermesSessionWatcher?.close();
   codexSessionWatcher = null;
   claudeSessionWatcher = null;
   openclawSessionWatcher = null;
   opencodeSessionWatcher = null;
+  geminiSessionWatcher = null;
+  hermesSessionWatcher = null;
 }
 
 function restartUsageWatchers() {
@@ -1704,7 +1817,7 @@ app.on("before-quit", () => {
 ipcMain.handle("ledger:get", () => ledger);
 ipcMain.handle("usage:get-status", getUsageStatus);
 ipcMain.handle("updates:get-status", () => updateStatus);
-ipcMain.handle("updates:check", () => checkForUpdates({ manual: true, remind: true }));
+ipcMain.handle("updates:check", () => checkForUpdates({ manual: true }));
 ipcMain.handle("updates:install", () => installUpdate());
 ipcMain.handle("updates:open", (_event, url?: string) => openUpdatePage(typeof url === "string" ? url : undefined));
 ipcMain.handle("leaderboard:get-status", () => leaderboardService.status());
@@ -1770,6 +1883,12 @@ ipcMain.handle("ledger:add-entry", (_event, input: { tokens: number; note?: stri
 ipcMain.handle("settings:update", (_event, partial: Partial<Settings>) => {
   updateSettings(partial);
   return ledger;
+});
+
+ipcMain.on("manager:ready", (event) => {
+  if (event.sender !== managerWindow?.webContents) return;
+  managerRendererReady = true;
+  flushManagerCommands();
 });
 
 ipcMain.handle("window:set-expanded", (_event, expanded: boolean) => {

@@ -20,7 +20,7 @@ The IP limit is a coarse abuse brake, not identity. Public networks, VPNs, mobil
 - `GET /auth/github/callback` completes OAuth and returns a short-lived one-time code to the desktop app's localhost callback.
 - `POST /auth/session` exchanges the one-time code plus the app-held verifier for a session token.
 - `GET /api/me` returns the signed-in GitHub profile.
-- `DELETE /api/me` removes the user, sessions, and leaderboard token rows.
+- `DELETE /api/me` removes the user, sessions, leaderboard token rows, sync state, auth codes, and user-linked security log rows.
 - `POST /api/usage/daily` upserts daily token aggregates.
 - `GET /api/leaderboard?range=today|7d|30d|all` returns the top 100 users.
 

@@ -1714,6 +1714,14 @@ label {
   background: var(--muted-light);
 }
 
+.history-tooltip-dot.gemini {
+  background: #8ab4f8;
+}
+
+.history-tooltip-dot.hermes {
+  background: #fbbc04;
+}
+
 .legend-codex,
 .history-segment.codex {
   background: var(--leaf);
@@ -1732,6 +1740,16 @@ label {
 .legend-claude,
 .history-segment.claude {
   background: #a8e063;
+}
+
+.legend-gemini,
+.history-segment.gemini {
+  background: #8ab4f8;
+}
+
+.legend-hermes,
+.history-segment.hermes {
+  background: #fbbc04;
 }
 
 /* ============================
@@ -1766,6 +1784,19 @@ label {
   border-color: var(--leaf);
   background: var(--bg-warm);
   box-shadow: 0 0 8px var(--leaf-glow);
+}
+
+.source-row.compact {
+  min-height: 42px;
+  padding: 8px 12px;
+  grid-template-columns: 1fr;
+  cursor: default;
+  background: var(--bg);
+}
+
+.source-row.compact:hover {
+  border-color: var(--border-strong);
+  background: var(--bg);
 }
 
 .source-main,
@@ -1828,6 +1859,27 @@ label {
   background: var(--hp-red);
   box-shadow: 0 0 6px rgba(232, 64, 64, 0.2);
   animation: none;
+}
+
+.source-row.compact .source-status {
+  width: auto;
+  height: auto;
+  min-height: 22px;
+  padding: 0 8px;
+  display: inline-grid;
+  place-items: center;
+  border: 2px solid var(--border-strong);
+  background: var(--bg-light);
+  color: var(--muted);
+  box-shadow: none;
+  font-size: 0.66rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.source-row.compact .source-status.missing {
+  border-color: rgba(232, 64, 64, 0.35);
+  color: var(--hp-red);
 }
 
 .source-usage {

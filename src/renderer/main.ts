@@ -29,7 +29,7 @@ import "./styles.css";
 
 type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
 type ViewMode = "pet" | "manager" | "toast";
-type HistoryFilter = "all" | "codex" | "openclaw" | "opencode" | "claude";
+type HistoryFilter = "all" | HistorySourceId;
 type SourceScope = "today" | "total";
 type BadgeMetric = "level" | "total" | "rate";
 type TotalDisplayUnit = "raw" | "k" | "m" | "wan" | "yi";
@@ -72,7 +72,7 @@ interface HistoryDayRow {
   sources: Record<HistorySourceId, number>;
 }
 
-type HistorySourceId = "codex" | "openclaw" | "opencode" | "claude";
+type HistorySourceId = "codex" | "openclaw" | "opencode" | "claude" | "gemini" | "hermes";
 
 interface SourceBreakdown {
   id: string;
@@ -492,6 +492,14 @@ if (viewMode === "pet") {
                 <span data-i18n="opencodePath">OpenCode 路径</span>
                 <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/storage/message" />
               </label>
+              <label>
+                <span data-i18n="geminiPath">Gemini 路径</span>
+                <input id="geminiSessionsDirInput" type="text" placeholder="~/.gemini/tmp" />
+              </label>
+              <label>
+                <span data-i18n="hermesPath">Hermes 路径</span>
+                <input id="hermesSessionsDirInput" type="text" placeholder="~/.hermes/state.db" />
+              </label>
             </div>
           </section>
 
@@ -546,6 +554,8 @@ const codexSessionsDirInput = document.querySelector<HTMLInputElement>("#codexSe
 const claudeSessionsDirInput = document.querySelector<HTMLInputElement>("#claudeSessionsDirInput");
 const openclawSessionsDirInput = document.querySelector<HTMLInputElement>("#openclawSessionsDirInput");
 const opencodeSessionsDirInput = document.querySelector<HTMLInputElement>("#opencodeSessionsDirInput");
+const geminiSessionsDirInput = document.querySelector<HTMLInputElement>("#geminiSessionsDirInput");
+const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermesSessionsDirInput");
 const leaderboardJoinInput = document.querySelector<HTMLInputElement>("#leaderboardJoinInput");
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
@@ -591,6 +601,8 @@ function setupHistoryCard() {
         <button type="button" data-history-filter="openclaw">OpenClaw</button>
         <button type="button" data-history-filter="opencode">OpenCode</button>
         <button type="button" data-history-filter="claude">Claude Code</button>
+        <button type="button" data-history-filter="gemini">Gemini</button>
+        <button type="button" data-history-filter="hermes">Hermes</button>
       </div>
     </div>
     <div class="history-legend" id="historyLegend" aria-label="token 类型" data-i18n-aria="historyTokenAria">
@@ -737,8 +749,14 @@ async function boot() {
   initializeSeenAchievements();
 
   bindEvents();
+  if (viewMode === "manager") {
+    window.bonsai.onOpenSettings(() => setSettingsOpen(true));
+  }
   applyI18n();
   render();
+  if (viewMode === "manager") {
+    window.bonsai.notifyManagerReady();
+  }
   setInterval(render, 1_000);
   startAutoBadgeFlipLoop();
 
@@ -950,7 +968,12 @@ function bindEvents() {
     void syncAndRefreshLeaderboard();
   });
 
-  leaderboardPageSyncButton?.addEventListener("click", () => {
+  leaderboardPageSyncButton?.addEventListener("click", async () => {
+    if (leaderboardStatus.joined) {
+      leaderboardStatus = await window.bonsai.logoutLeaderboard();
+      await refreshLeaderboard();
+      return;
+    }
     openLeaderboardSettings();
   });
 
@@ -988,6 +1011,12 @@ function bindEvents() {
   opencodeSessionsDirInput?.addEventListener("change", () =>
     updatePathSetting("opencodeSessionsDir", opencodeSessionsDirInput),
   );
+  geminiSessionsDirInput?.addEventListener("change", () =>
+    updatePathSetting("geminiSessionsDir", geminiSessionsDirInput),
+  );
+  hermesSessionsDirInput?.addEventListener("change", () =>
+    updatePathSetting("hermesSessionsDir", hermesSessionsDirInput),
+  );
 
   historyTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-history-filter]");
@@ -1001,6 +1030,7 @@ function bindEvents() {
   sourceBreakdownElement?.addEventListener("click", (event) => {
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-source-key]");
     if (!row || !ledger) return;
+    if (row.dataset.compact === "true") return;
     const sourceKey = row.dataset.sourceKey;
     if (!sourceKey) return;
     expandedSourceKey = expandedSourceKey === sourceKey ? null : sourceKey;
@@ -1119,7 +1149,13 @@ function pointerDistance(start: { x: number; y: number }, event: PointerEvent) {
 }
 
 async function updatePathSetting(
-  key: "codexSessionsDir" | "claudeSessionsDir" | "openclawSessionsDir" | "opencodeSessionsDir",
+  key:
+    | "codexSessionsDir"
+    | "claudeSessionsDir"
+    | "openclawSessionsDir"
+    | "opencodeSessionsDir"
+    | "geminiSessionsDir"
+    | "hermesSessionsDir",
   input: HTMLInputElement,
 ) {
   if (!ledger) return;
@@ -1221,6 +1257,8 @@ function render() {
   syncInputValue(claudeSessionsDirInput, ledger.settings.claudeSessionsDir ?? "");
   syncInputValue(openclawSessionsDirInput, ledger.settings.openclawSessionsDir ?? "");
   syncInputValue(opencodeSessionsDirInput, ledger.settings.opencodeSessionsDir ?? "");
+  syncInputValue(geminiSessionsDirInput, ledger.settings.geminiSessionsDir ?? "");
+  syncInputValue(hermesSessionsDirInput, ledger.settings.hermesSessionsDir ?? "");
 
   if (lastWeatherId !== stats.weather.id) {
     lastWeatherId = stats.weather.id;
@@ -1576,7 +1614,7 @@ function buildAchievementContext(stats: Stats): AchievementContext {
   const dayXp = new Map<string, number>();
   const daySources = new Map<string, Set<HistorySourceId>>();
   const activeSources = new Set<HistorySourceId>();
-  const sourceXp: Record<HistorySourceId, number> = { codex: 0, openclaw: 0, opencode: 0, claude: 0 };
+  const sourceXp: Record<HistorySourceId, number> = emptySourceTotals();
   const hourSet = new Set<number>();
   const weekendDays = new Map<string, Set<number>>();
   const hourKeys = new Set<number>();
@@ -1935,8 +1973,12 @@ function renderLeaderboardSettings() {
     leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncNow");
   }
   if (leaderboardPageSyncButton) {
-    leaderboardPageSyncButton.disabled = !leaderboardStatus.configured;
-    leaderboardPageSyncButton.textContent = t("joinLeaderboard");
+    leaderboardPageSyncButton.disabled =
+      leaderboardStatus.syncing ||
+      !leaderboardStatus.configured ||
+      (leaderboardStatus.joined && !leaderboardStatus.authenticated);
+    leaderboardPageSyncButton.textContent = leaderboardStatus.joined ? t("leaveLeaderboard") : t("joinLeaderboard");
+    leaderboardPageSyncButton.classList.toggle("danger-button", leaderboardStatus.joined);
   }
 
   if (leaderboardUserCard) {
@@ -2100,7 +2142,17 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
   element.innerHTML = getMonitorSourceRows(rows)
     .map((row) => {
       const percent = row.xp > 0 && totalXp > 0 ? Math.max(3, Math.round((row.xp / totalXp) * 100)) : 0;
-      const expanded = expandedSourceKey === row.sourceKey;
+      const expanded = !row.compact && expandedSourceKey === row.sourceKey;
+      if (row.compact) {
+        return `
+          <article class="source-row compact ${row.statusClass}" data-source-key="${escapeHtml(row.sourceKey)}" data-compact="true">
+            <div class="source-main">
+              <strong>${escapeHtml(row.label)}</strong>
+              <span class="source-status ${row.statusClass}">${escapeHtml(row.status)}</span>
+            </div>
+          </article>
+        `;
+      }
       return `
         <article class="source-row ${expanded ? "expanded" : ""}" data-source-key="${escapeHtml(row.sourceKey)}" aria-expanded="${expanded}">
           <div class="source-main">
@@ -2136,6 +2188,7 @@ type SourceRowView = SourceBreakdown & {
   status: string;
   statusClass: string;
   meta: string;
+  compact: boolean;
 };
 
 function getMonitorSourceRows(rows: SourceBreakdown[]): SourceRowView[] {
@@ -2169,6 +2222,18 @@ function getMonitorSourceRows(rows: SourceBreakdown[]): SourceRowView[] {
       match: (row: SourceBreakdown) =>
         row.id === "opencode" || row.id === "opencode-session" || row.label === "OpenCode" || row.id.startsWith("opencode:"),
     },
+    {
+      sourceKey: "gemini",
+      label: "Gemini",
+      status: usageStatus?.geminiSession,
+      match: (row: SourceBreakdown) => row.id === "gemini" || row.id === "gemini-session" || row.label === "Gemini",
+    },
+    {
+      sourceKey: "hermes",
+      label: "Hermes",
+      status: usageStatus?.hermesSession,
+      match: (row: SourceBreakdown) => row.id === "hermes" || row.id === "hermes-session" || row.label === "Hermes",
+    },
   ];
   const used = new Set<SourceBreakdown>();
   const monitorRows = monitors.map((monitor) => {
@@ -2180,7 +2245,10 @@ function getMonitorSourceRows(rows: SourceBreakdown[]): SourceRowView[] {
       ...monitorStatusView(monitor.status),
     };
   });
-  return monitorRows;
+  return [
+    ...monitorRows.filter((row) => !row.compact),
+    ...monitorRows.filter((row) => row.compact),
+  ];
 }
 
 function combineSourceRows(label: string, rows: SourceBreakdown[]): SourceBreakdown {
@@ -2198,12 +2266,19 @@ function combineSourceRows(label: string, rows: SourceBreakdown[]): SourceBreakd
 }
 
 function monitorStatusView(status: UsageStatus["codexSession"] | undefined) {
-  if (!status) return { status: t("sourceChecking"), statusClass: "pending", meta: t("readingLocalRecords") };
+  if (!status) {
+    return { status: t("sourceChecking"), statusClass: "pending", meta: t("readingLocalRecords"), compact: false };
+  }
+  const installed = status.exists && status.filesWatched > 0;
+  if (!installed) {
+    return { status: t("sourceNotInstalled"), statusClass: "missing", meta: t("sourceNotInstalled"), compact: true };
+  }
   const running = status.exists && status.running;
   return {
     status: running ? t("sourceOnline") : t("sourceOffline"),
     statusClass: running ? "running" : "missing",
     meta: `${status.filesWatched} ${t("files")} · ${status.lastEventAt ? formatRelativeTime(status.lastEventAt) : t("waitingNewToken")}`,
+    compact: false,
   };
 }
 
@@ -2275,6 +2350,8 @@ function entryMatchesSourceKey(entry: LedgerEntry, sourceKey: string) {
   if (sourceKey === "opencode") {
     return entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"));
   }
+  if (sourceKey === "gemini") return entry.source === "gemini-session" || entry.agent === "gemini";
+  if (sourceKey === "hermes") return entry.source === "hermes-session" || entry.agent === "hermes";
   if (sourceKey.startsWith("source:")) {
     const id = sourceKey.slice("source:".length);
     const entryId = entry.source === "manual" ? "manual" : entry.agent || entry.source;
@@ -2440,7 +2517,7 @@ function getSevenDayRows(entries: LedgerEntry[], filter: HistoryFilter = "all") 
     const cacheReadTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.cacheReadTokens ?? 0), 0);
     const cacheWriteTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.cacheWriteTokens ?? 0), 0);
     const tokens = dayEntries.reduce((total, entry) => total + xpForEntry(entry), 0);
-    const sources: Record<HistorySourceId, number> = { codex: 0, openclaw: 0, opencode: 0, claude: 0 };
+    const sources: Record<HistorySourceId, number> = emptySourceTotals();
     for (const entry of dayEntries) {
       const source = historySourceId(entry);
       if (source) sources[source] += xpForEntry(entry);
@@ -2464,21 +2541,14 @@ function historySourceId(entry: LedgerEntry): HistorySourceId | undefined {
     return "opencode";
   }
   if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
+  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
+  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
   return undefined;
 }
 
 function sourceMatchesHistoryFilter(entry: LedgerEntry, filter: HistoryFilter) {
   if (filter === "all") return true;
-  if (filter === "codex") {
-    return entry.source === "codex-session" || entry.agent === "codex-desktop";
-  }
-  if (filter === "openclaw") {
-    return entry.source === "openclaw-session" || entry.agent === "openclaw";
-  }
-  if (filter === "opencode") {
-    return entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"));
-  }
-  return entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"));
+  return historySourceId(entry) === filter;
 }
 
 function getSourceBreakdown(entries: LedgerEntry[]): SourceBreakdown[] {
@@ -2516,6 +2586,8 @@ function sourceLabel(id: string, source: string) {
   if (id === "openclaw" || source === "openclaw-session") return "OpenClaw";
   if (id.startsWith("opencode:")) return `OpenCode ${id.replace("opencode:", "")}`;
   if (id === "opencode" || source === "opencode-session") return "OpenCode";
+  if (id === "gemini" || source === "gemini-session") return "Gemini";
+  if (id === "hermes" || source === "hermes-session") return "Hermes";
   return id;
 }
 
@@ -2526,6 +2598,8 @@ function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
     openclaw: "OpenClaw",
     opencode: "OpenCode",
     claude: "Claude Code",
+    gemini: "Gemini",
+    hermes: "Hermes",
   };
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
   const max = Math.max(1, ...rows.map((row) => row.tokens));
@@ -2554,6 +2628,8 @@ function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
               <span class="history-segment openclaw" style="height:${segmentPercent(row.sources.openclaw, segmentTotal)}%"></span>
               <span class="history-segment opencode" style="height:${segmentPercent(row.sources.opencode, segmentTotal)}%"></span>
               <span class="history-segment claude" style="height:${segmentPercent(row.sources.claude, segmentTotal)}%"></span>
+              <span class="history-segment gemini" style="height:${segmentPercent(row.sources.gemini, segmentTotal)}%"></span>
+              <span class="history-segment hermes" style="height:${segmentPercent(row.sources.hermes, segmentTotal)}%"></span>
             `
           : `
               <span class="history-segment input" style="height:${segmentPercent(row.inputTokens, segmentTotal)}%"></span>
@@ -2591,6 +2667,8 @@ function historyChartKey(rows: HistoryDayRow[], filter: HistoryFilter) {
       row.sources.openclaw,
       row.sources.opencode,
       row.sources.claude,
+      row.sources.gemini,
+      row.sources.hermes,
     ]),
   });
 }
@@ -2603,6 +2681,8 @@ function historyTooltipHtml(row: HistoryDayRow, filter: HistoryFilter) {
           { label: "OpenClaw", value: row.sources.openclaw, tone: "openclaw" },
           { label: "OpenCode", value: row.sources.opencode, tone: "opencode" },
           { label: "Claude", value: row.sources.claude, tone: "claude" },
+          { label: "Gemini", value: row.sources.gemini, tone: "gemini" },
+          { label: "Hermes", value: row.sources.hermes, tone: "hermes" },
         ]
       : [
           { label: "input", value: row.inputTokens, tone: "input" },
@@ -2649,7 +2729,13 @@ function historyAgentLegendHtml() {
     <span><i class="legend-openclaw"></i>OpenClaw</span>
     <span><i class="legend-opencode"></i>OpenCode</span>
     <span><i class="legend-claude"></i>Claude Code</span>
+    <span><i class="legend-gemini"></i>Gemini</span>
+    <span><i class="legend-hermes"></i>Hermes</span>
   `;
+}
+
+function emptySourceTotals(): Record<HistorySourceId, number> {
+  return { codex: 0, openclaw: 0, opencode: 0, claude: 0, gemini: 0, hermes: 0 };
 }
 
 function segmentPercent(value: number, total: number) {

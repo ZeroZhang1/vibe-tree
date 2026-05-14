@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -13,7 +14,7 @@ import {
   type Stats,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { SessionMonitorStatus, UsageEvent } from "../shared/types.js";
 
@@ -27,7 +28,16 @@ interface SessionWatcherOptions {
 
 interface WatchState {
   files: Record<string, number>;
+  events: Record<string, boolean>;
+  sessions: Record<string, UsageSnapshot>;
   historyStartAt?: string;
+}
+
+interface UsageSnapshot {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
 }
 
 interface AgentConfig {
@@ -41,19 +51,35 @@ interface AgentConfig {
 }
 
 interface JsonAgentConfig {
-  source: "opencode-session";
-  agent: "opencode";
+  source: "opencode-session" | "gemini-session";
+  agent: "opencode" | "gemini";
   sessionsRoot: string;
   importHistoryEnv: string;
   stateFileName: string;
   pollIntervalMs: number;
-  parseFile: (filePath: string) => UsageEvent | undefined;
+  parseFile: (filePath: string) => UsageEvent | UsageEvent[] | undefined;
+}
+
+interface HermesSessionRow {
+  id: string;
+  source?: string;
+  model?: string;
+  billing_provider?: string;
+  started_at?: number;
+  ended_at?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  reasoning_tokens?: number;
 }
 
 const READ_CHUNK_SIZE = 64 * 1024;
 const DEFAULT_CLAUDE_ROOT = join(homedir(), ".claude", "projects");
 const DEFAULT_OPENCLAW_ROOT = join(homedir(), ".openclaw", "agents");
 const DEFAULT_OPENCODE_MESSAGES_ROOT = defaultOpenCodeMessagesRoot();
+const DEFAULT_GEMINI_ROOT = join(homedir(), ".gemini", "tmp");
+const DEFAULT_HERMES_STATE_DB = join(homedir(), ".hermes", "state.db");
 
 export function startClaudeSessionWatcher(options: SessionWatcherOptions) {
   return startAgentSessionWatcher(options, {
@@ -91,6 +117,82 @@ export function startOpenCodeSessionWatcher(options: SessionWatcherOptions) {
   });
 }
 
+export function startGeminiSessionWatcher(options: SessionWatcherOptions) {
+  return startJsonAgentSessionWatcher(options, {
+    source: "gemini-session",
+    agent: "gemini",
+    sessionsRoot: options.sessionsRoot || process.env.VIBE_GEMINI_SESSIONS_DIR || DEFAULT_GEMINI_ROOT,
+    importHistoryEnv: "VIBE_GEMINI_IMPORT_HISTORY",
+    stateFileName: "gemini-session-watcher.json",
+    pollIntervalMs: 10_000,
+    parseFile: parseGeminiFile,
+  });
+}
+
+export function startHermesSessionWatcher(options: SessionWatcherOptions) {
+  const stateDbPath = hermesStateDbPath(options.sessionsRoot || process.env.VIBE_HERMES_SESSIONS_DIR);
+  const historyStartAtMs = timestampMs(options.historyStartAt);
+  const importHistory = process.env.VIBE_HERMES_IMPORT_HISTORY === "today" || Boolean(historyStartAtMs);
+  const statePath = join(options.userDataPath, "hermes-session-watcher.json");
+  const state = readState(statePath);
+  if (state.historyStartAt !== options.historyStartAt) {
+    state.files = {};
+    state.events = {};
+    state.sessions = {};
+    state.historyStartAt = options.historyStartAt;
+  }
+  const watcherStartedAt = Date.now();
+  const status: SessionMonitorStatus = {
+    running: true,
+    sessionsRoot: stateDbPath,
+    exists: existsSync(stateDbPath),
+    filesWatched: 0,
+    eventsImported: 0,
+    importHistory,
+    historyStartAt: options.historyStartAt,
+  };
+
+  let closed = false;
+
+  const poll = () => {
+    if (closed) return;
+    status.exists = existsSync(stateDbPath);
+    status.filesWatched = status.exists ? 1 : 0;
+    status.lastScanAt = new Date().toISOString();
+    if (!status.exists) {
+      options.onStatus?.(status);
+      return;
+    }
+
+    const imported = scanHermesStateDb(
+      stateDbPath,
+      state,
+      statePath,
+      { importHistory, watcherStartedAt, historyStartAtMs },
+      options.onUsage,
+    );
+    if (imported > 0) {
+      status.eventsImported += imported;
+      status.lastEventAt = new Date().toISOString();
+    }
+    options.onStatus?.(status);
+  };
+
+  poll();
+  const timer = setInterval(poll, 10_000);
+
+  return {
+    close: () => {
+      closed = true;
+      status.running = false;
+      clearInterval(timer);
+      writeState(statePath, state);
+      options.onStatus?.(status);
+    },
+    getStatus: () => status,
+  };
+}
+
 function startAgentSessionWatcher(options: SessionWatcherOptions, config: AgentConfig) {
   const historyStartAtMs = timestampMs(options.historyStartAt);
   const importHistory = process.env[config.importHistoryEnv] === "today" || Boolean(historyStartAtMs);
@@ -98,6 +200,7 @@ function startAgentSessionWatcher(options: SessionWatcherOptions, config: AgentC
   const state = readState(statePath);
   if (state.historyStartAt !== options.historyStartAt) {
     state.files = {};
+    state.events = {};
     state.historyStartAt = options.historyStartAt;
   }
   const watcherStartedAt = Date.now();
@@ -163,6 +266,7 @@ function startJsonAgentSessionWatcher(options: SessionWatcherOptions, config: Js
   const state = readState(statePath);
   if (state.historyStartAt !== options.historyStartAt) {
     state.files = {};
+    state.events = {};
     state.historyStartAt = options.historyStartAt;
   }
   const watcherStartedAt = Date.now();
@@ -241,7 +345,7 @@ function scanFile(
 
   imported += scanNewLines(filePath, offset, stats.size, (line, lineOffset) => {
     const event = config.parseLine(line, filePath, lineOffset);
-    if (!event || event.totalTokens <= 0) return 0;
+    if (!event || !usageEventHasTokens(event)) return 0;
     if (isBeforeHistoryStart(event.createdAt, settings.historyStartAtMs)) return 0;
     onUsage(event);
     return 1;
@@ -275,11 +379,88 @@ function scanJsonFile(
   state.files[filePath] = stats.mtimeMs;
   writeState(statePath, state);
 
-  const event = config.parseFile(filePath);
-  if (!event || event.totalTokens <= 0) return 0;
-  if (isBeforeHistoryStart(event.createdAt, settings.historyStartAtMs)) return 0;
-  onUsage(event);
-  return 1;
+  const events = toUsageEvents(config.parseFile(filePath));
+  let imported = 0;
+  for (const event of events) {
+    if (!usageEventHasTokens(event)) continue;
+    if (isBeforeHistoryStart(event.createdAt, settings.historyStartAtMs)) {
+      state.events[event.id] = true;
+      continue;
+    }
+    if (state.events[event.id]) continue;
+    state.events[event.id] = true;
+    onUsage(event);
+    imported += 1;
+  }
+  if (imported > 0 || events.length > 0) writeState(statePath, state);
+  return imported;
+}
+
+function scanHermesStateDb(
+  stateDbPath: string,
+  state: WatchState,
+  statePath: string,
+  settings: { importHistory: boolean; watcherStartedAt: number; historyStartAtMs?: number },
+  onUsage: (event: UsageEvent) => void,
+) {
+  const stats = statSync(stateDbPath);
+  const previousMtime = state.files[stateDbPath];
+  if (previousMtime !== undefined && stats.mtimeMs <= previousMtime) {
+    return 0;
+  }
+
+  const rows = readHermesSessionRows(stateDbPath);
+  if (!rows) {
+    return 0;
+  }
+  state.files[stateDbPath] = stats.mtimeMs;
+
+  let imported = 0;
+  for (const row of rows) {
+    const sessionId = stringValue(row.id);
+    if (!sessionId) continue;
+
+    const snapshot = hermesUsageSnapshot(row);
+    if (usageSnapshotTotal(snapshot) <= 0) {
+      state.sessions[sessionId] = maxSnapshot(snapshot, state.sessions[sessionId]);
+      continue;
+    }
+
+    const createdAt = timestampToIso(row.ended_at) || timestampToIso(row.started_at) || new Date().toISOString();
+    const isHistorical = isBeforeHistoryStart(createdAt, settings.historyStartAtMs);
+    const previous = state.sessions[sessionId];
+    state.sessions[sessionId] = maxSnapshot(snapshot, previous);
+
+    if (isHistorical) continue;
+
+    const delta = previous ? diffSnapshot(snapshot, previous) : initialHermesSnapshotDelta(snapshot, row, settings);
+    if (!delta || usageSnapshotTotal(delta) <= 0) continue;
+
+    const eventCreatedAt = previous
+      ? timestampToIso(row.ended_at) || new Date().toISOString()
+      : timestampToIso(row.ended_at) || timestampToIso(row.started_at) || new Date().toISOString();
+    const event: UsageEvent = {
+      id: `hermes-session:${hash(`${sessionId}:${snapshot.inputTokens}:${snapshot.outputTokens}:${snapshot.cacheReadTokens}:${snapshot.cacheWriteTokens}`)}`,
+      createdAt: eventCreatedAt,
+      source: "hermes-session",
+      agent: "hermes",
+      provider: stringValue(row.billing_provider) || stringValue(row.source) || "hermes",
+      model: stringValue(row.model),
+      inputTokens: delta.inputTokens,
+      outputTokens: delta.outputTokens,
+      cacheReadTokens: delta.cacheReadTokens,
+      cacheWriteTokens: delta.cacheWriteTokens,
+      totalTokens: delta.inputTokens + delta.outputTokens,
+      streaming: false,
+    };
+    if (!usageEventHasTokens(event) || state.events[event.id]) continue;
+    state.events[event.id] = true;
+    onUsage(event);
+    imported += 1;
+  }
+
+  writeState(statePath, state);
+  return imported;
 }
 
 function scanNewLines(filePath: string, start: number, end: number, onLine: (line: string, lineOffset: number) => number) {
@@ -424,6 +605,50 @@ function parseOpenCodeFile(filePath: string): UsageEvent | undefined {
   };
 }
 
+function parseGeminiFile(filePath: string): UsageEvent[] | undefined {
+  if (!basename(filePath).startsWith("session-")) return undefined;
+  const parsed = readJsonFile(filePath);
+  if (!parsed) return undefined;
+
+  const messages = Array.isArray(parsed.messages) ? parsed.messages : undefined;
+  if (!messages) return undefined;
+
+  const sessionId = stringValue(parsed.sessionId) || hash(filePath);
+  const events: UsageEvent[] = [];
+  messages.forEach((item, index) => {
+    const message = asRecord(item);
+    if (!message || message.type !== "gemini") return;
+
+    const tokens = asRecord(message.tokens);
+    if (!tokens) return;
+
+    const inputTokens = numberValue(tokens.input);
+    const outputTokens = numberValue(tokens.output) + numberValue(tokens.thoughts);
+    const cacheReadTokens = numberValue(tokens.cached);
+    const totalTokens = inputTokens + outputTokens;
+    if (totalTokens + cacheReadTokens <= 0) return;
+
+    const messageId = stringValue(message.id) || String(index);
+    const model = stringValue(message.model);
+    events.push({
+      id: `gemini-session:${hash(`${sessionId}:${messageId}`)}`,
+      createdAt: stringValue(message.timestamp) || new Date().toISOString(),
+      source: "gemini-session",
+      agent: "gemini",
+      provider: "google",
+      model,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens: 0,
+      totalTokens,
+      streaming: true,
+    });
+  });
+
+  return events;
+}
+
 function parseStandardUsage(usage: Record<string, unknown> | undefined) {
   if (!usage) return undefined;
   const inputTokens = numberValue(usage.input_tokens);
@@ -443,6 +668,96 @@ function parseOpenClawUsage(usage: Record<string, unknown> | undefined) {
   const totalTokens = numberValue(usage.totalTokens) || inputTokens + outputTokens;
   if (totalTokens <= 0) return undefined;
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+}
+
+function toUsageEvents(result: UsageEvent | UsageEvent[] | undefined) {
+  if (!result) return [];
+  return Array.isArray(result) ? result : [result];
+}
+
+function usageEventHasTokens(event: UsageEvent) {
+  return event.inputTokens + event.outputTokens + event.cacheReadTokens + event.cacheWriteTokens > 0;
+}
+
+function readHermesSessionRows(stateDbPath: string): HermesSessionRow[] | undefined {
+  const query = `
+    SELECT id, source, model, billing_provider, started_at, ended_at,
+           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens
+    FROM sessions
+    WHERE input_tokens > 0
+       OR output_tokens > 0
+       OR cache_read_tokens > 0
+       OR cache_write_tokens > 0
+       OR reasoning_tokens > 0
+  `;
+  try {
+    const output = execFileSync("sqlite3", ["-json", stateDbPath, query], {
+      encoding: "utf8",
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(output || "[]");
+    return Array.isArray(parsed) ? (parsed as HermesSessionRow[]) : [];
+  } catch {
+    return undefined;
+  }
+}
+
+function hermesUsageSnapshot(row: HermesSessionRow): UsageSnapshot {
+  return {
+    inputTokens: numberValue(row.input_tokens),
+    outputTokens: numberValue(row.output_tokens) + numberValue(row.reasoning_tokens),
+    cacheReadTokens: numberValue(row.cache_read_tokens),
+    cacheWriteTokens: numberValue(row.cache_write_tokens),
+  };
+}
+
+function initialHermesSnapshotDelta(
+  snapshot: UsageSnapshot,
+  row: HermesSessionRow,
+  settings: { importHistory: boolean; watcherStartedAt: number; historyStartAtMs?: number },
+) {
+  const startedAtMs = timestampMs(timestampToIso(row.started_at));
+  const endedAtMs = timestampMs(timestampToIso(row.ended_at));
+  const activeAtMs = endedAtMs ?? startedAtMs;
+  if (settings.historyStartAtMs && activeAtMs && activeAtMs >= settings.historyStartAtMs - 5_000) {
+    return snapshot;
+  }
+  if (settings.importHistory && activeAtMs && isTodayTimestamp(activeAtMs)) {
+    return snapshot;
+  }
+  if (activeAtMs && activeAtMs >= settings.watcherStartedAt - 5_000) {
+    return snapshot;
+  }
+  return undefined;
+}
+
+function diffSnapshot(next: UsageSnapshot, previous: UsageSnapshot): UsageSnapshot | undefined {
+  const delta = {
+    inputTokens: Math.max(0, next.inputTokens - previous.inputTokens),
+    outputTokens: Math.max(0, next.outputTokens - previous.outputTokens),
+    cacheReadTokens: Math.max(0, next.cacheReadTokens - previous.cacheReadTokens),
+    cacheWriteTokens: Math.max(0, next.cacheWriteTokens - previous.cacheWriteTokens),
+  };
+  return usageSnapshotTotal(delta) > 0 ? delta : undefined;
+}
+
+function maxSnapshot(next: UsageSnapshot, previous: UsageSnapshot | undefined): UsageSnapshot {
+  if (!previous) return next;
+  return {
+    inputTokens: Math.max(next.inputTokens, previous.inputTokens),
+    outputTokens: Math.max(next.outputTokens, previous.outputTokens),
+    cacheReadTokens: Math.max(next.cacheReadTokens, previous.cacheReadTokens),
+    cacheWriteTokens: Math.max(next.cacheWriteTokens, previous.cacheWriteTokens),
+  };
+}
+
+function usageSnapshotTotal(snapshot: UsageSnapshot) {
+  return snapshot.inputTokens + snapshot.outputTokens + snapshot.cacheReadTokens + snapshot.cacheWriteTokens;
+}
+
+function hermesStateDbPath(value: string | undefined) {
+  if (!value) return DEFAULT_HERMES_STATE_DB;
+  return value.endsWith(".db") ? value : join(value, "state.db");
 }
 
 function readJsonFile(path: string) {
@@ -521,10 +836,12 @@ function readState(path: string): WatchState {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<WatchState>;
     return {
       files: parsed.files && typeof parsed.files === "object" ? parsed.files : {},
+      events: parsed.events && typeof parsed.events === "object" ? parsed.events : {},
+      sessions: parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {},
       historyStartAt: typeof parsed.historyStartAt === "string" ? parsed.historyStartAt : undefined,
     };
   } catch {
-    return { files: {} };
+    return { files: {}, events: {}, sessions: {} };
   }
 }
 
@@ -575,6 +892,16 @@ function isBeforeHistoryStart(createdAt: string, historyStartAtMs: number | unde
   if (!historyStartAtMs) return false;
   const time = Date.parse(createdAt);
   return Number.isFinite(time) && time < historyStartAtMs;
+}
+
+function isTodayTimestamp(value: number) {
+  const date = new Date(value);
+  const now = new Date();
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  );
 }
 
 function hash(value: string) {
