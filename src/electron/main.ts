@@ -1459,7 +1459,7 @@ async function runUpdateStep(label: string, command: string, args: string[], cwd
 
 function runTerminalCommand(command: string, args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, shell: false });
+    const child = spawnCommand(command, args, cwd);
     let output = "";
     const collect = (chunk: Buffer) => {
       output = `${output}${chunk.toString("utf8")}`.slice(-12_000);
@@ -1476,6 +1476,22 @@ function runTerminalCommand(command: string, args: string[], cwd: string): Promi
       reject(new Error(`${command} ${args.join(" ")} ${mainText("commandFailed")} (${code ?? "unknown"})${output ? `\n${output.trim()}` : ""}`));
     });
   });
+}
+
+function spawnCommand(command: string, args: string[], cwd: string) {
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(command)) {
+    return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", [command, ...args].map(quoteWindowsCmdArg).join(" ")], {
+      cwd,
+      shell: false,
+      windowsHide: true,
+    });
+  }
+  return spawn(command, args, { cwd, shell: false, windowsHide: true });
+}
+
+function quoteWindowsCmdArg(value: string) {
+  if (!/[()\s"%^&|<>]/.test(value)) return value;
+  return `"${value.replace(/"/g, '\\"')}"`;
 }
 
 function npmCommand() {
