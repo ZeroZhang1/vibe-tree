@@ -38,6 +38,7 @@ This first version focuses on making local usage tracking dependable and pleasan
 - Floating Electron pet window: transparent, draggable, lockable, and always-on-top.
 - Electron manager window: level, weather, active sessions, source stats, model breakdowns, and recent 7-day usage.
 - Settings panel: bonsai size, lock/always-on-top, launch on startup, silent startup, Chinese/English language switching, source path overrides, and badge display preferences.
+- Global leaderboard: optional GitHub sign-in from Settings, with join/leave controls and a leaderboard page in the manager window. Joined users upload only daily token totals from the last 30 days.
 - Level badge: 3D flip badge with configurable front/back faces for level, total token, or token/s; total token supports raw numbers, k/m, and Chinese wan/yi units.
 - Update reminders: automatically checks GitHub for the latest version on launch, then hourly; settings and the tray menu support manual checks and terminal-based updates when a new version is available, then relaunches automatically after a successful update.
 - Tray status panel for quick app status and controls.
@@ -49,6 +50,30 @@ This first version focuses on making local usage tracking dependable and pleasan
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md).
+
+## Global Leaderboard
+
+The leaderboard is optional and off by default. If no service is configured, Settings shows that the leaderboard service is not configured and the app uploads nothing.
+
+Production builds use the deployed Worker by default:
+
+```text
+https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev
+```
+
+For local testing, override it with:
+
+```bash
+VIBE_TREE_LEADERBOARD_API_URL=https://your-worker-subdomain.workers.dev npm start
+```
+
+The backend template lives in:
+
+```text
+server/leaderboard-worker/
+```
+
+Only daily token totals from the last 30 days are uploaded. Prompts, files, session records, models used, and any other information are never uploaded. The first version is a Community leaderboard, not strict cheat-proof scoring; the service limits each GitHub user to one sync every 30 minutes and rejects obviously invalid dirty data. Leaving the leaderboard from Settings stops uploads and attempts to remove the cloud leaderboard profile.
 
 ## XP Rules
 

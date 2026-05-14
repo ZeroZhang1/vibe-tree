@@ -3,6 +3,9 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   LedgerFile,
+  LeaderboardData,
+  LeaderboardRange,
+  LeaderboardStatus,
   Settings,
   UpdateStatus,
   UsageStatus,
@@ -24,6 +27,12 @@ declare global {
       checkForUpdates: () => Promise<UpdateStatus>;
       installUpdate: () => Promise<UpdateStatus>;
       openUpdatePage: (url?: string) => Promise<void>;
+      getLeaderboardStatus: () => Promise<LeaderboardStatus>;
+      loginLeaderboard: () => Promise<LeaderboardStatus>;
+      logoutLeaderboard: () => Promise<LeaderboardStatus>;
+      setLeaderboardEnabled: (enabled: boolean) => Promise<LeaderboardStatus>;
+      syncLeaderboard: () => Promise<LeaderboardStatus>;
+      getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
       getAchievements: () => Promise<AchievementState>;
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;
       previewAchievementToast: (id: string) => Promise<boolean>;
@@ -35,6 +44,7 @@ declare global {
       onOpenAddToken: (callback: () => void) => () => void;
       onUsageStatus: (callback: (status: UsageStatus) => void) => () => void;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
+      onLeaderboardStatus: (callback: (status: LeaderboardStatus) => void) => () => void;
       onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => () => void;
       onPreviewAchievementToast: (callback: (id: string) => void) => () => void;
       onAchievementToast: (callback: (payload: { ids: string[]; placement: "left" | "right" }) => void) => () => void;

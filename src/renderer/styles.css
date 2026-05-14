@@ -569,7 +569,7 @@ h4 {
 
 .side-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -582,6 +582,7 @@ h4 {
   box-shadow: var(--pixel-shadow);
   font-size: 0.78rem;
   font-weight: 700;
+  overflow-wrap: anywhere;
   transition: all 0.1s;
 }
 
@@ -806,6 +807,66 @@ h4 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.leaderboard-settings {
+  display: grid;
+  gap: 8px;
+}
+
+.leaderboard-user-card,
+.leaderboard-status {
+  min-height: 54px;
+  padding: 10px;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.leaderboard-user-card {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.leaderboard-user-card > div,
+.leaderboard-status {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.leaderboard-user-card strong,
+.leaderboard-status strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.leaderboard-user-card span:not(.leaderboard-avatar),
+.leaderboard-status span,
+.leaderboard-help {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+.leaderboard-help {
+  margin: 0;
+}
+
+.leaderboard-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.danger-button:hover {
+  border-color: var(--hp-red);
+  color: var(--hp-red);
 }
 
 .release-settings {
@@ -1101,6 +1162,7 @@ label {
 
 .source-card,
 .achievement-card,
+.leaderboard-card,
 .chart-card {
   padding: 14px;
   display: grid;
@@ -1131,17 +1193,32 @@ label {
 }
 
 .manager-root[data-tab="home"] .achievement-card,
+.manager-root[data-tab="home"] .leaderboard-card,
 .manager-root[data-tab="achievements"] .dashboard-header,
 .manager-root[data-tab="achievements"] .metric-grid,
 .manager-root[data-tab="achievements"] .progress-block,
 .manager-root[data-tab="achievements"] .source-card,
-.manager-root[data-tab="achievements"] .chart-card {
+.manager-root[data-tab="achievements"] .leaderboard-card,
+.manager-root[data-tab="achievements"] .chart-card,
+.manager-root[data-tab="leaderboard"] .dashboard-header,
+.manager-root[data-tab="leaderboard"] .metric-grid,
+.manager-root[data-tab="leaderboard"] .progress-block,
+.manager-root[data-tab="leaderboard"] .source-card,
+.manager-root[data-tab="leaderboard"] .achievement-card,
+.manager-root[data-tab="leaderboard"] .chart-card {
   display: none;
 }
 
 .manager-root[data-tab="achievements"] .achievement-card {
   align-content: start;
   grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  max-height: calc(100vh - 72px);
+  overflow: hidden;
+}
+
+.manager-root[data-tab="leaderboard"] .leaderboard-card {
+  align-content: start;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   max-height: calc(100vh - 72px);
   overflow: hidden;
 }
@@ -1177,6 +1254,170 @@ label {
 .source-scope-tabs button.active {
   color: #1a1c2c;
   background: var(--leaf);
+}
+
+/* ============================
+   LEADERBOARD
+   ============================ */
+
+.leaderboard-card .section-header {
+  align-items: flex-start;
+}
+
+.leaderboard-sync-button {
+  min-width: 104px;
+  padding: 0 12px;
+  font-size: 0.72rem;
+}
+
+.leaderboard-range-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.leaderboard-range-tabs button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.leaderboard-range-tabs button.active {
+  color: #1a1c2c;
+  background: var(--leaf);
+}
+
+.leaderboard-summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.leaderboard-summary strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.leaderboard-summary span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.leaderboard-rows {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.leaderboard-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px 36px minmax(0, 1fr) minmax(120px, auto);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+  box-shadow: var(--pixel-shadow);
+}
+
+.leaderboard-row.is-me {
+  border-color: var(--leaf);
+  background: var(--bg-warm);
+  box-shadow: var(--pixel-shadow), 0 0 10px var(--leaf-glow);
+}
+
+.leaderboard-rank {
+  color: var(--leaf);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.leaderboard-avatar {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  object-fit: cover;
+  color: var(--leaf);
+  font-size: 0.68rem;
+  font-weight: 900;
+  image-rendering: auto;
+}
+
+.leaderboard-person {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.leaderboard-person strong,
+.leaderboard-person span,
+.leaderboard-xp {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-person strong {
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.leaderboard-person em {
+  margin-left: 6px;
+  padding: 1px 5px;
+  color: #1a1c2c;
+  background: var(--leaf);
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.leaderboard-person span {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.leaderboard-xp {
+  color: var(--ink);
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.leaderboard-empty {
+  padding: 24px 14px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: var(--bg-light);
+  font-size: 0.76rem;
+  text-align: center;
 }
 
 /* ============================
@@ -2636,6 +2877,19 @@ label {
   }
 
   .source-row {
+    grid-template-columns: 1fr;
+  }
+
+  .leaderboard-row {
+    grid-template-columns: 42px 34px minmax(0, 1fr);
+  }
+
+  .leaderboard-xp {
+    grid-column: 3;
+    text-align: left;
+  }
+
+  .leaderboard-actions {
     grid-template-columns: 1fr;
   }
 

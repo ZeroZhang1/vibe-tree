@@ -13,6 +13,12 @@ const api = {
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   installUpdate: () => ipcRenderer.invoke("updates:install"),
   openUpdatePage: (url) => ipcRenderer.invoke("updates:open", url),
+  getLeaderboardStatus: () => ipcRenderer.invoke("leaderboard:get-status"),
+  loginLeaderboard: () => ipcRenderer.invoke("leaderboard:login"),
+  logoutLeaderboard: () => ipcRenderer.invoke("leaderboard:logout"),
+  setLeaderboardEnabled: (enabled) => ipcRenderer.invoke("leaderboard:set-enabled", enabled),
+  syncLeaderboard: () => ipcRenderer.invoke("leaderboard:sync"),
+  getLeaderboard: (range) => ipcRenderer.invoke("leaderboard:get", range),
   getAchievements: () => ipcRenderer.invoke("achievements:get"),
   unlockAchievements: (items) => ipcRenderer.invoke("achievements:unlock", items),
   previewAchievementToast: (id) => ipcRenderer.invoke("achievements:preview-toast", id),
@@ -43,6 +49,11 @@ const api = {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on("bonsai:update-status", listener);
     return () => ipcRenderer.removeListener("bonsai:update-status", listener);
+  },
+  onLeaderboardStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("bonsai:leaderboard-status", listener);
+    return () => ipcRenderer.removeListener("bonsai:leaderboard-status", listener);
   },
   onAchievements: (callback) => {
     const listener = (_event, state, unlocked) => callback(state, unlocked);

@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.wrangler/
 
 *.log
 npm-debug.log*
@@ -9,4 +10,3 @@ Thumbs.db
 
 .env
 .env.*
-
