@@ -1405,7 +1405,7 @@ async function installUpdate(): Promise<UpdateStatus> {
 
   try {
     const cwd = process.cwd();
-    const dirty = (await runTerminalCommand("git", ["status", "--porcelain"], cwd)).trim();
+    const dirty = (await runTerminalCommand("git", ["status", "--porcelain", "--untracked-files=no"], cwd)).trim();
     if (dirty) {
       throw new Error(mainText("dirtyWorkspace"));
     }
