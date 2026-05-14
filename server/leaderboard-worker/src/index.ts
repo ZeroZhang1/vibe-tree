@@ -375,6 +375,7 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM auth_codes WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM security_events WHERE actor_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM users WHERE user_id = ?").bind(user.userId),
   ]);
   return json({ ok: true }, env);

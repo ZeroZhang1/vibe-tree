@@ -39,9 +39,11 @@ declare global {
       updateAchievementStats: (stats: Record<string, unknown>) => Promise<AchievementState>;
       notifyAchievementToastReady: () => void;
       notifyAchievementToastDrained: () => void;
+      notifyManagerReady: () => void;
       onLedger: (callback: (ledger: LedgerFile) => void) => () => void;
       onExpanded: (callback: (expanded: boolean) => void) => () => void;
       onOpenAddToken: (callback: () => void) => () => void;
+      onOpenSettings: (callback: () => void) => () => void;
       onUsageStatus: (callback: (status: UsageStatus) => void) => () => void;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       onLeaderboardStatus: (callback: (status: LeaderboardStatus) => void) => () => void;
