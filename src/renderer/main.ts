@@ -100,6 +100,8 @@ let leaderboardData: LeaderboardData = {
   range: "7d",
   entries: [],
 };
+let leaderboardLoadedRange: LeaderboardRange | null = null;
+let leaderboardLoading = false;
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
@@ -191,12 +193,11 @@ const openclawSessionsDirInput = document.querySelector<HTMLInputElement>("#open
 const opencodeSessionsDirInput = document.querySelector<HTMLInputElement>("#opencodeSessionsDirInput");
 const geminiSessionsDirInput = document.querySelector<HTMLInputElement>("#geminiSessionsDirInput");
 const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermesSessionsDirInput");
-const leaderboardJoinInput = document.querySelector<HTMLInputElement>("#leaderboardJoinInput");
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
-const leaderboardLoginButton = document.querySelector<HTMLButtonElement>("#leaderboardLoginButton");
-const leaderboardLogoutButton = document.querySelector<HTMLButtonElement>("#leaderboardLogoutButton");
+const leaderboardMembershipButton = document.querySelector<HTMLButtonElement>("#leaderboardMembershipButton");
 const leaderboardSettingsSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardSettingsSyncButton");
+const leaderboardPageRefreshButton = document.querySelector<HTMLButtonElement>("#leaderboardPageRefreshButton");
 const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardPageSyncButton");
 const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
@@ -408,7 +409,6 @@ async function boot() {
   render();
   if (viewMode === "manager") {
     window.bonsai.notifyManagerReady();
-    void refreshLeaderboard();
   }
   void refreshTreeConfig();
   setInterval(render, RENDER_INTERVAL_MS);
@@ -642,33 +642,21 @@ function bindEvents() {
     void window.bonsai.openUpdatePage();
   });
 
-  leaderboardLoginButton?.addEventListener("click", async () => {
-    leaderboardStatus = await window.bonsai.loginLeaderboard();
-    await refreshLeaderboard();
-  });
-
-  leaderboardJoinInput?.addEventListener("change", async () => {
-    if (leaderboardJoinInput.checked && !leaderboardStatus.authenticated) {
-      leaderboardStatus = await window.bonsai.loginLeaderboard();
-    } else {
-      leaderboardStatus = await window.bonsai.setLeaderboardEnabled(leaderboardJoinInput.checked);
-    }
-    await refreshLeaderboard();
-  });
-
-  leaderboardLogoutButton?.addEventListener("click", async () => {
-    leaderboardStatus = await window.bonsai.logoutLeaderboard();
-    await refreshLeaderboard();
+  leaderboardMembershipButton?.addEventListener("click", async () => {
+    await toggleLeaderboardMembership();
   });
 
   leaderboardSettingsSyncButton?.addEventListener("click", () => {
-    void syncAndRefreshLeaderboard();
+    void syncLeaderboard();
+  });
+
+  leaderboardPageRefreshButton?.addEventListener("click", () => {
+    void refreshLeaderboard();
   });
 
   leaderboardPageSyncButton?.addEventListener("click", async () => {
     if (leaderboardStatus.joined) {
-      leaderboardStatus = await window.bonsai.logoutLeaderboard();
-      await refreshLeaderboard();
+      await leaveLeaderboard();
       return;
     }
     openLeaderboardSettings();
@@ -751,7 +739,7 @@ function bindEvents() {
     if (!nextTab || nextTab === dashboardTab) return;
     dashboardTab = nextTab;
     renderDashboardTabs();
-    if (dashboardTab === "leaderboard") void refreshLeaderboard();
+    renderLeaderboard();
   });
 
   leaderboardRangeTabs?.addEventListener("click", (event) => {
@@ -760,7 +748,10 @@ function bindEvents() {
     const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
     if (nextRange === leaderboardRange) return;
     leaderboardRange = nextRange;
-    void refreshLeaderboard();
+    leaderboardData = { range: leaderboardRange, entries: [] };
+    leaderboardLoadedRange = null;
+    leaderboardRenderKey = "";
+    renderLeaderboard();
   });
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
@@ -862,17 +853,62 @@ async function updatePathSetting(
 }
 
 async function refreshLeaderboard() {
-  leaderboardStatus = await window.bonsai.getLeaderboardStatus();
-  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+  if (leaderboardLoading) return;
+  leaderboardLoading = true;
+  renderLeaderboardSettings();
+  renderLeaderboard();
+  try {
+    leaderboardStatus = await window.bonsai.getLeaderboardStatus();
+    leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+    leaderboardLoadedRange = leaderboardRange;
+  } catch (error) {
+    leaderboardData = {
+      range: leaderboardRange,
+      entries: [],
+      error: error instanceof Error ? error.message : t("leaderboardLoadFailed"),
+    };
+    leaderboardLoadedRange = leaderboardRange;
+  } finally {
+    leaderboardLoading = false;
+    renderLeaderboardSettings();
+    renderLeaderboard();
+  }
+}
+
+async function refreshLeaderboardIfVisible() {
+  if (dashboardTab === "leaderboard") {
+    await refreshLeaderboard();
+    return;
+  }
   renderLeaderboardSettings();
   renderLeaderboard();
 }
 
-async function syncAndRefreshLeaderboard() {
-  leaderboardStatus = await window.bonsai.syncLeaderboard();
-  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+async function toggleLeaderboardMembership() {
+  if (leaderboardStatus.joined) {
+    await leaveLeaderboard();
+    return;
+  } else if (leaderboardStatus.authenticated) {
+    leaderboardStatus = await window.bonsai.setLeaderboardEnabled(true);
+  } else {
+    leaderboardStatus = await window.bonsai.loginLeaderboard();
+  }
+  await refreshLeaderboardIfVisible();
+}
+
+async function leaveLeaderboard() {
+  if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
+  leaderboardStatus = await window.bonsai.logoutLeaderboard();
+  leaderboardData = { range: leaderboardRange, entries: [] };
+  leaderboardLoadedRange = null;
+  leaderboardRenderKey = "";
   renderLeaderboardSettings();
   renderLeaderboard();
+}
+
+async function syncLeaderboard() {
+  leaderboardStatus = await window.bonsai.syncLeaderboard();
+  await refreshLeaderboardIfVisible();
 }
 
 function setSettingsOpen(open: boolean) {
@@ -884,8 +920,8 @@ function setSettingsOpen(open: boolean) {
 function openLeaderboardSettings() {
   setSettingsOpen(true);
   window.requestAnimationFrame(() => {
-    leaderboardJoinInput?.scrollIntoView({ block: "center", behavior: "smooth" });
-    leaderboardJoinInput?.focus({ preventScroll: true });
+    leaderboardMembershipButton?.scrollIntoView({ block: "center", behavior: "smooth" });
+    leaderboardMembershipButton?.focus({ preventScroll: true });
   });
 }
 
@@ -1721,21 +1757,22 @@ function renderLeaderboardSettings() {
   const renderKey = leaderboardSettingsSignature();
   if (renderKey === leaderboardSettingsRenderKey) return;
   leaderboardSettingsRenderKey = renderKey;
-  if (leaderboardJoinInput) {
-    leaderboardJoinInput.checked = leaderboardStatus.joined;
-    leaderboardJoinInput.disabled = leaderboardStatus.syncing || !leaderboardStatus.configured;
-  }
-  if (leaderboardLoginButton) {
-    leaderboardLoginButton.disabled = leaderboardStatus.syncing || !leaderboardStatus.configured || leaderboardStatus.authenticated;
-    leaderboardLoginButton.textContent = t("loginGithub");
-  }
-  if (leaderboardLogoutButton) {
-    leaderboardLogoutButton.disabled = leaderboardStatus.syncing || !leaderboardStatus.authenticated;
+  if (leaderboardMembershipButton) {
+    leaderboardMembershipButton.disabled =
+      leaderboardStatus.syncing ||
+      !leaderboardStatus.configured ||
+      (leaderboardStatus.joined && !leaderboardStatus.authenticated);
+    leaderboardMembershipButton.textContent = leaderboardStatus.joined ? t("leaveLeaderboard") : t("joinLeaderboard");
+    leaderboardMembershipButton.classList.toggle("danger-button", leaderboardStatus.joined);
   }
   if (leaderboardSettingsSyncButton) {
     leaderboardSettingsSyncButton.disabled =
       leaderboardStatus.syncing || !leaderboardStatus.configured || !leaderboardStatus.joined;
     leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncNow");
+  }
+  if (leaderboardPageRefreshButton) {
+    leaderboardPageRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
+    leaderboardPageRefreshButton.textContent = leaderboardLoading ? t("leaderboardRefreshing") : t("refreshLeaderboard");
   }
   if (leaderboardPageSyncButton) {
     leaderboardPageSyncButton.disabled =
@@ -1788,6 +1825,18 @@ function renderLeaderboard() {
   if (!leaderboardStatus.configured) {
     leaderboardSummary.innerHTML = `<strong>${t("leaderboardServiceNotConfigured")}</strong><span>${t("leaderboardNoService")}</span>`;
     leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardNoService")}</div>`;
+    return;
+  }
+
+  if (leaderboardLoading) {
+    leaderboardSummary.innerHTML = `<strong>${t("leaderboardRefreshing")}</strong><span>${leaderboardRangeLabel(leaderboardRange)}</span>`;
+    leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardRefreshing")}</div>`;
+    return;
+  }
+
+  if (leaderboardLoadedRange !== leaderboardRange) {
+    leaderboardSummary.innerHTML = `<strong>${leaderboardRangeLabel(leaderboardRange)}</strong><span>${t("leaderboardClickRefresh")}</span>`;
+    leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardClickRefresh")}</div>`;
     return;
   }
 
@@ -2157,6 +2206,7 @@ function leaderboardSettingsSignature() {
     language: currentLanguage(),
     bucket: relativeRenderBucket(30_000),
     status: leaderboardStatus,
+    loading: leaderboardLoading,
   });
 }
 
@@ -2165,6 +2215,8 @@ function leaderboardRenderSignature() {
     language: currentLanguage(),
     bucket: relativeRenderBucket(30_000),
     range: leaderboardRange,
+    loadedRange: leaderboardLoadedRange,
+    loading: leaderboardLoading,
     status: {
       configured: leaderboardStatus.configured,
       authenticated: leaderboardStatus.authenticated,
