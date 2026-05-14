@@ -19,11 +19,25 @@ Vibe Tree is a desktop-resident token weather tree — it turns the cost, rhythm
 ## Quick Start
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
 > Works on macOS / Windows / Linux. Dev mode: `npm run dev`
+
+If the Electron binary download from GitHub is slow, you can temporarily use a mirror:
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+npm_config_electron_mirror=https://npmmirror.com/mirrors/electron/ \
+npm ci
+```
+
+You can also put this in your local `.npmrc` so you do not need to type it each time:
+
+```ini
+electron_mirror=https://npmmirror.com/mirrors/electron/
+```
 
 ---
 
