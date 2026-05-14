@@ -15,6 +15,41 @@ export interface LedgerEntry {
 
 export type AppLanguage = "zh-CN" | "en-US";
 
+export type LeaderboardRange = "today" | "7d" | "30d" | "all";
+
+export interface LeaderboardProfile {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+}
+
+export interface LeaderboardStatus {
+  configured: boolean;
+  authenticated: boolean;
+  joined: boolean;
+  syncing: boolean;
+  profile?: LeaderboardProfile;
+  lastSyncedAt?: string;
+  error?: string;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  username: string;
+  avatarUrl?: string;
+  xp: number;
+  daysActive?: number;
+}
+
+export interface LeaderboardData {
+  range: LeaderboardRange;
+  entries: LeaderboardEntry[];
+  updatedAt?: string;
+  me?: LeaderboardEntry;
+  error?: string;
+}
+
 export interface Settings {
   locked: boolean;
   alwaysOnTop: boolean;
@@ -25,6 +60,9 @@ export interface Settings {
   totalDisplayUnit: "raw" | "k" | "m" | "wan" | "yi";
   updateCheckEnabled: boolean;
   lastUpdateReminderVersion?: string;
+  leaderboardEnabled: boolean;
+  leaderboardProfile?: LeaderboardProfile;
+  leaderboardLastSyncedAt?: string;
   launchOnStartup: boolean;
   silentStartup: boolean;
   windowPosition?: {

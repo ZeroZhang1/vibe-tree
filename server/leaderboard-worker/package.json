@@ -1,0 +1,14 @@
+{
+  "name": "vibe-tree-leaderboard-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute vibe-tree-leaderboard --file=./schema.sql",
+    "db:migrate:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^3.114.0"
+  }
+}

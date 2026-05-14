@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, net, Notification, screen, shell, Tray } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
@@ -11,6 +11,7 @@ import type {
   AppLanguage,
   LedgerEntry,
   LedgerFile,
+  LeaderboardProfile,
   Settings,
   UpdateStatus,
   UsageEvent,
@@ -21,6 +22,8 @@ import { startClaudeSessionWatcher, startOpenClawSessionWatcher, startOpenCodeSe
 import { startCodexSessionWatcher } from "./codexSessionWatcher.js";
 import { MAIN_TEXT, WEATHER_LABELS } from "./i18n.js";
 import type { WeatherId } from "./i18n.js";
+import { createLeaderboardService } from "./leaderboard.js";
+import type { LeaderboardRequestJsonOptions } from "./leaderboard.js";
 
 const PET_BASE = { width: 192, height: 208 };
 const PET_STAGE_OFFSET = { x: 28, y: 0 };
@@ -34,6 +37,11 @@ const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
 const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per_page=20";
 const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
+const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
+const LEADERBOARD_API_URL = (process.env.VIBE_TREE_LEADERBOARD_API_URL ?? DEFAULT_LEADERBOARD_API_URL).replace(/\/+$/, "");
+const LEADERBOARD_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+const LEADERBOARD_AUTH_TIMEOUT_MS = 2 * 60 * 1000;
+const LEADERBOARD_CALLBACK_PATH = "/leaderboard/auth/callback";
 const MAC_TRAY_ICON_SIZE = 18;
 const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
@@ -55,6 +63,9 @@ const DEFAULT_SETTINGS: Settings = {
   badgeBackMetric: "total",
   totalDisplayUnit: "m",
   updateCheckEnabled: true,
+  leaderboardEnabled: false,
+  leaderboardProfile: undefined,
+  leaderboardLastSyncedAt: undefined,
   launchOnStartup: false,
   silentStartup: false,
   windowPosition: undefined,
@@ -132,6 +143,25 @@ let opencodeSessionStatus: UsageStatus["opencodeSession"] = {
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 const rendererFile = join(__dirname, "../renderer/index.html");
 const preloadFile = join(__dirname, "preload.cjs");
+const leaderboardService = createLeaderboardService({
+  apiUrl: LEADERBOARD_API_URL,
+  appName: APP_NAME,
+  syncIntervalMs: LEADERBOARD_SYNC_INTERVAL_MS,
+  authTimeoutMs: LEADERBOARD_AUTH_TIMEOUT_MS,
+  callbackPath: LEADERBOARD_CALLBACK_PATH,
+  authPath: leaderboardAuthPath,
+  getLedger: () => ledger,
+  updateSettings,
+  xpForEntry,
+  dateKey,
+  currentAppVersion,
+  mainText,
+  openExternal: (url) => shell.openExternal(url),
+  readJsonFile,
+  writeJsonAtomic,
+  broadcastStatus: (status) => broadcast("bonsai:leaderboard-status", status),
+  requestJson: requestJsonWithElectronNet,
+});
 
 function ledgerPath() {
   return join(app.getPath("userData"), "ledger.json");
@@ -151,6 +181,10 @@ function deviceSettingsPath() {
 
 function achievementsPath() {
   return join(app.getPath("userData"), "achievements.json");
+}
+
+function leaderboardAuthPath() {
+  return join(app.getPath("userData"), "leaderboard-auth.json");
 }
 
 function currentAppVersion() {
@@ -293,6 +327,11 @@ function unlockAchievements(items: Array<{ id: string; trigger?: Record<string, 
 
 function normalizeSettings(settings: Partial<Settings>): Settings {
   const scale = typeof settings.scale === "number" && [0.5, 1, 1.5, 2].includes(settings.scale) ? settings.scale : 0.5;
+  const leaderboardProfile = normalizeLeaderboardProfile(settings.leaderboardProfile);
+  const leaderboardLastSyncedAt =
+    typeof settings.leaderboardLastSyncedAt === "string" && Number.isFinite(Date.parse(settings.leaderboardLastSyncedAt))
+      ? settings.leaderboardLastSyncedAt
+      : undefined;
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
@@ -302,6 +341,9 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     updateCheckEnabled: settings.updateCheckEnabled !== false,
     lastUpdateReminderVersion:
       typeof settings.lastUpdateReminderVersion === "string" ? settings.lastUpdateReminderVersion : undefined,
+    leaderboardEnabled: Boolean(settings.leaderboardEnabled && leaderboardProfile),
+    leaderboardProfile,
+    leaderboardLastSyncedAt,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
     scale,
@@ -313,6 +355,17 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     openclawSessionsDir: cleanPath(settings.openclawSessionsDir),
     opencodeSessionsDir: cleanPath(settings.opencodeSessionsDir),
   };
+}
+
+function normalizeLeaderboardProfile(value: unknown): LeaderboardProfile | undefined {
+  const profile = value as Partial<LeaderboardProfile> | undefined;
+  const id = typeof profile?.id === "string" && profile.id.trim() ? profile.id.trim() : undefined;
+  const username =
+    typeof profile?.username === "string" && profile.username.trim() ? profile.username.trim() : undefined;
+  if (!id || !username) return undefined;
+  const avatarUrl =
+    typeof profile?.avatarUrl === "string" && profile.avatarUrl.trim() ? profile.avatarUrl.trim() : undefined;
+  return { id, username, avatarUrl };
 }
 
 function normalizeBadgeMetric(value: unknown, fallback: Settings["badgeFrontMetric"]) {
@@ -1085,6 +1138,18 @@ function updateSettings(partial: Partial<Settings>) {
     if (ledger.settings.updateCheckEnabled) void checkForUpdates({ manual: true, remind: true });
   }
   if (
+    previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
+    previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id
+  ) {
+    leaderboardService.startSync();
+  } else if (
+    partial.leaderboardEnabled !== undefined ||
+    partial.leaderboardProfile !== undefined ||
+    partial.leaderboardLastSyncedAt !== undefined
+  ) {
+    leaderboardService.broadcast();
+  }
+  if (
     previous.codexSessionsDir !== ledger.settings.codexSessionsDir ||
     previous.claudeSessionsDir !== ledger.settings.claudeSessionsDir ||
     previous.openclawSessionsDir !== ledger.settings.openclawSessionsDir ||
@@ -1271,6 +1336,47 @@ function fetchJson(url: string): Promise<unknown> {
     request.on("timeout", () => request.destroy(new Error(mainText("updateSourceTimeout"))));
     request.on("error", reject);
   });
+}
+
+async function requestJsonWithElectronNet<T = unknown>(
+  urlString: string,
+  options: LeaderboardRequestJsonOptions = {},
+): Promise<T> {
+  const method = options.method ?? (options.body === undefined ? "GET" : "POST");
+  const body = options.body === undefined ? undefined : JSON.stringify(options.body);
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": `${APP_NAME}/${currentAppVersion()}`,
+  };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (options.token) headers.Authorization = `Bearer ${options.token}`;
+
+  const response = await net.fetch(urlString, {
+    method,
+    headers,
+    body,
+  });
+  const raw = await response.text();
+  let parsed: unknown = {};
+  if (raw.trim()) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error(mainText("leaderboardResponseParseFailed"));
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      typeof (parsed as { error?: unknown })?.error === "string"
+        ? (parsed as { error: string }).error
+        : `${mainText("leaderboardRequestFailed")} (${response.status})`;
+    throw new Error(message);
+  }
+
+  return parsed as T;
 }
 
 async function installUpdate(): Promise<UpdateStatus> {
@@ -1512,6 +1618,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   ledger = readLedger();
   achievementState = readAchievementState();
+  leaderboardService.readAuth();
   applyLoginItemSettings();
   createPetWindow();
   if (!ledger.settings.silentStartup) {
@@ -1520,6 +1627,8 @@ app.whenReady().then(() => {
   createTray();
   setTimeout(startUsageWatchers, 500);
   startUpdateChecks();
+  leaderboardService.startSync();
+  void leaderboardService.syncUsage();
 
   app.on("activate", () => {
     createPetWindow();
@@ -1534,6 +1643,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   stopUsageWatchers();
   if (updateCheckTimer) clearInterval(updateCheckTimer);
+  leaderboardService.stop();
 });
 
 ipcMain.handle("ledger:get", () => ledger);
@@ -1542,6 +1652,12 @@ ipcMain.handle("updates:get-status", () => updateStatus);
 ipcMain.handle("updates:check", () => checkForUpdates({ manual: true, remind: true }));
 ipcMain.handle("updates:install", () => installUpdate());
 ipcMain.handle("updates:open", (_event, url?: string) => openUpdatePage(typeof url === "string" ? url : undefined));
+ipcMain.handle("leaderboard:get-status", () => leaderboardService.status());
+ipcMain.handle("leaderboard:login", () => leaderboardService.login());
+ipcMain.handle("leaderboard:logout", () => leaderboardService.logout());
+ipcMain.handle("leaderboard:set-enabled", (_event, enabled: boolean) => leaderboardService.setEnabled(Boolean(enabled)));
+ipcMain.handle("leaderboard:sync", () => leaderboardService.syncUsage());
+ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
   unlockAchievements(Array.isArray(items) ? items : []),

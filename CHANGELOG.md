@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-05-14 (v0.3.0)
+
+- Added an optional global leaderboard with GitHub sign-in, join/leave controls in Settings, and a dedicated leaderboard tab in the manager window.
+- Synced only daily token totals from the last 30 days; prompts, files, session records, models used, and other information are not uploaded.
+- Added leaderboard status, sync, and opt-out IPC across Electron main/preload/renderer.
+- Added a Cloudflare Worker + D1 backend template for GitHub OAuth, one-time auth-code session exchange, daily token upserts, leaderboard reads, and cloud opt-out deletion.
+- Added baseline Community leaderboard safety rails: 30-minute per-user sync cooldown, 30-day backfill limit, rate limit bindings, hashed security-event logs, and a very loose dirty-data rejection threshold.
+- Added CI for pull requests and protected-release hygiene around main-branch changes.
+- Documented leaderboard setup and the `VIBE_TREE_LEADERBOARD_API_URL` runtime configuration.
+
 ## 2026-05-13 (v0.2.2)
 
 - Fixed the macOS menu bar icon by using a real resized PNG app icon instead of the SVG template image that could render as an invisible zero-width status item.

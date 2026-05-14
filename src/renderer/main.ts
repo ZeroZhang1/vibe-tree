@@ -4,6 +4,9 @@ import type {
   AppLanguage,
   LedgerEntry,
   LedgerFile,
+  LeaderboardData,
+  LeaderboardRange,
+  LeaderboardStatus,
   TreeAsset,
   TreeStage,
   UpdateStatus,
@@ -29,7 +32,7 @@ type HistoryFilter = "all" | "codex" | "openclaw" | "opencode" | "claude";
 type SourceScope = "today" | "total";
 type BadgeMetric = "level" | "total" | "rate";
 type TotalDisplayUnit = "raw" | "k" | "m" | "wan" | "yi";
-type DashboardTab = "home" | "achievements";
+type DashboardTab = "home" | "achievements" | "leaderboard";
 type AchievementCategoryFilter = AchievementCategory;
 type AchievementStatusFilter = "all" | "unlocked" | "locked" | "hidden";
 
@@ -121,6 +124,17 @@ let updateStatus: UpdateStatus = {
   available: false,
   canTerminalUpdate: false,
   currentVersion: "",
+};
+let leaderboardStatus: LeaderboardStatus = {
+  configured: false,
+  authenticated: false,
+  joined: false,
+  syncing: false,
+};
+let leaderboardRange: LeaderboardRange = "7d";
+let leaderboardData: LeaderboardData = {
+  range: "7d",
+  entries: [],
 };
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
@@ -217,6 +231,7 @@ if (viewMode === "pet") {
         <nav class="side-tabs" id="sideTabs" aria-label="页面切换" data-i18n-aria="pageSwitchAria">
           <button type="button" data-dashboard-tab="home" data-i18n="home">主页</button>
           <button type="button" data-dashboard-tab="achievements" data-i18n="achievements">成就</button>
+          <button type="button" data-dashboard-tab="leaderboard" data-i18n="leaderboard">排行榜</button>
         </nav>
 
       </aside>
@@ -292,6 +307,24 @@ if (viewMode === "pet") {
           </div>
           <div class="achievement-recent" id="achievementRecent"></div>
           <div class="achievement-grid" id="achievementGrid"></div>
+        </section>
+
+        <section class="leaderboard-card" aria-label="全球排行榜" data-i18n-aria="leaderboardAria">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow" data-i18n="leaderboardEyebrow">Global rank</p>
+              <h3 data-i18n="globalLeaderboard">全球排行榜</h3>
+            </div>
+            <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
+          </div>
+          <div class="leaderboard-range-tabs" id="leaderboardRangeTabs" role="tablist" aria-label="全球排行榜范围" data-i18n-aria="leaderboardAria">
+            <button type="button" data-leaderboard-range="today" data-i18n="leaderboardToday">今日</button>
+            <button type="button" data-leaderboard-range="7d" data-i18n="leaderboard7d">7 天</button>
+            <button type="button" data-leaderboard-range="30d" data-i18n="leaderboard30d">30 天</button>
+            <button type="button" data-leaderboard-range="all" data-i18n="leaderboardAllTime">全部</button>
+          </div>
+          <div class="leaderboard-summary" id="leaderboardSummary"></div>
+          <div class="leaderboard-rows" id="leaderboardRows"></div>
         </section>
 
         <section class="source-card" aria-label="Token 来源" data-i18n-aria="sourceAria">
@@ -387,6 +420,24 @@ if (viewMode === "pet") {
                 <option value="en-US" data-i18n="languageEnglish">English</option>
               </select>
             </label>
+          </section>
+
+          <section class="settings-section">
+            <h4 data-i18n="globalLeaderboard">全球排行榜</h4>
+            <div class="leaderboard-settings" aria-label="全球排行榜设置" data-i18n-aria="leaderboardAria">
+              <div class="leaderboard-user-card" id="leaderboardUserCard"></div>
+              <div class="leaderboard-status" id="leaderboardStatusText"></div>
+              <label class="toggle-row">
+                <input id="leaderboardJoinInput" type="checkbox" />
+                <span data-i18n="joinGlobalLeaderboard">加入全球排行榜</span>
+              </label>
+              <p class="leaderboard-help" data-i18n="leaderboardPrivacyNote">用户说明：加入后仅上传近 30 日每日消耗的 Token，不会包含任何提示词、文件、会话记录、使用模型等其他信息。</p>
+              <div class="leaderboard-actions">
+                <button class="secondary-button" id="leaderboardLoginButton" type="button" data-i18n="loginGithub">登录 GitHub</button>
+                <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncNow">立即同步</button>
+                <button class="secondary-button danger-button" id="leaderboardLogoutButton" type="button" data-i18n="leaveLeaderboard">退出排行榜</button>
+              </div>
+            </div>
           </section>
 
           <section class="settings-section">
@@ -494,6 +545,16 @@ const codexSessionsDirInput = document.querySelector<HTMLInputElement>("#codexSe
 const claudeSessionsDirInput = document.querySelector<HTMLInputElement>("#claudeSessionsDirInput");
 const openclawSessionsDirInput = document.querySelector<HTMLInputElement>("#openclawSessionsDirInput");
 const opencodeSessionsDirInput = document.querySelector<HTMLInputElement>("#opencodeSessionsDirInput");
+const leaderboardJoinInput = document.querySelector<HTMLInputElement>("#leaderboardJoinInput");
+const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
+const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
+const leaderboardLoginButton = document.querySelector<HTMLButtonElement>("#leaderboardLoginButton");
+const leaderboardLogoutButton = document.querySelector<HTMLButtonElement>("#leaderboardLogoutButton");
+const leaderboardSettingsSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardSettingsSyncButton");
+const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardPageSyncButton");
+const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
+const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
+const leaderboardRows = document.querySelector<HTMLElement>("#leaderboardRows");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -582,6 +643,8 @@ function applyI18n() {
     if (key) element.textContent = achievementCategoryLabel(key);
   });
   renderUpdateStatus();
+  renderLeaderboardSettings();
+  renderLeaderboard();
 }
 
 function stageLabel(id: string, fallback: string) {
@@ -667,6 +730,8 @@ async function boot() {
   appLanguage = normalizeLanguage(ledger.settings.language);
   usageStatus = await window.bonsai.getUsageStatus();
   updateStatus = await window.bonsai.getUpdateStatus();
+  leaderboardStatus = await window.bonsai.getLeaderboardStatus();
+  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
   achievementState = await window.bonsai.getAchievements();
   initializeSeenAchievements();
 
@@ -689,6 +754,11 @@ async function boot() {
   window.bonsai.onUpdateStatus((nextStatus) => {
     updateStatus = nextStatus;
     renderUpdateStatus();
+  });
+  window.bonsai.onLeaderboardStatus((nextStatus) => {
+    leaderboardStatus = nextStatus;
+    renderLeaderboardSettings();
+    renderLeaderboard();
   });
   window.bonsai.onAchievements((nextState, unlocked) => {
     achievementState = nextState;
@@ -856,6 +926,33 @@ function bindEvents() {
     void window.bonsai.openUpdatePage();
   });
 
+  leaderboardLoginButton?.addEventListener("click", async () => {
+    leaderboardStatus = await window.bonsai.loginLeaderboard();
+    await refreshLeaderboard();
+  });
+
+  leaderboardJoinInput?.addEventListener("change", async () => {
+    if (leaderboardJoinInput.checked && !leaderboardStatus.authenticated) {
+      leaderboardStatus = await window.bonsai.loginLeaderboard();
+    } else {
+      leaderboardStatus = await window.bonsai.setLeaderboardEnabled(leaderboardJoinInput.checked);
+    }
+    await refreshLeaderboard();
+  });
+
+  leaderboardLogoutButton?.addEventListener("click", async () => {
+    leaderboardStatus = await window.bonsai.logoutLeaderboard();
+    await refreshLeaderboard();
+  });
+
+  leaderboardSettingsSyncButton?.addEventListener("click", () => {
+    void syncAndRefreshLeaderboard();
+  });
+
+  leaderboardPageSyncButton?.addEventListener("click", () => {
+    openLeaderboardSettings();
+  });
+
   badgeFrontMetricSelect?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({
@@ -926,6 +1023,16 @@ function bindEvents() {
     if (!nextTab || nextTab === dashboardTab) return;
     dashboardTab = nextTab;
     renderDashboardTabs();
+    if (dashboardTab === "leaderboard") void refreshLeaderboard();
+  });
+
+  leaderboardRangeTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-leaderboard-range]");
+    if (!button) return;
+    const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
+    if (nextRange === leaderboardRange) return;
+    leaderboardRange = nextRange;
+    void refreshLeaderboard();
   });
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
@@ -1020,10 +1127,32 @@ async function updatePathSetting(
   render();
 }
 
+async function refreshLeaderboard() {
+  leaderboardStatus = await window.bonsai.getLeaderboardStatus();
+  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+  renderLeaderboardSettings();
+  renderLeaderboard();
+}
+
+async function syncAndRefreshLeaderboard() {
+  leaderboardStatus = await window.bonsai.syncLeaderboard();
+  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+  renderLeaderboardSettings();
+  renderLeaderboard();
+}
+
 function setSettingsOpen(open: boolean) {
   if (!settingsModal) return;
   settingsModal.classList.toggle("open", open);
   settingsModal.setAttribute("aria-hidden", String(!open));
+}
+
+function openLeaderboardSettings() {
+  setSettingsOpen(true);
+  window.requestAnimationFrame(() => {
+    leaderboardJoinInput?.scrollIntoView({ block: "center", behavior: "smooth" });
+    leaderboardJoinInput?.focus({ preventScroll: true });
+  });
 }
 
 function render() {
@@ -1099,6 +1228,8 @@ function render() {
   if (pendingLevelUp) triggerLevelUpAnimation(pendingLevelUp);
   renderUsageStatus();
   renderUpdateStatus();
+  renderLeaderboardSettings();
+  renderLeaderboard();
   renderHistoryChart(getSevenDayRows(ledger.entries, historyFilter), historyFilter);
   const achievementContext = buildAchievementContext(stats);
   renderAchievements(stats, achievementContext);
@@ -1782,6 +1913,167 @@ function renderUpdateStatus() {
   }
 }
 
+function renderLeaderboardSettings() {
+  if (leaderboardJoinInput) {
+    leaderboardJoinInput.checked = leaderboardStatus.joined;
+    leaderboardJoinInput.disabled = leaderboardStatus.syncing || !leaderboardStatus.configured;
+  }
+  if (leaderboardLoginButton) {
+    leaderboardLoginButton.disabled = leaderboardStatus.syncing || !leaderboardStatus.configured || leaderboardStatus.authenticated;
+    leaderboardLoginButton.textContent = t("loginGithub");
+  }
+  if (leaderboardLogoutButton) {
+    leaderboardLogoutButton.disabled = leaderboardStatus.syncing || !leaderboardStatus.authenticated;
+  }
+  if (leaderboardSettingsSyncButton) {
+    leaderboardSettingsSyncButton.disabled =
+      leaderboardStatus.syncing || !leaderboardStatus.configured || !leaderboardStatus.joined;
+    leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncNow");
+  }
+  if (leaderboardPageSyncButton) {
+    leaderboardPageSyncButton.disabled = !leaderboardStatus.configured;
+    leaderboardPageSyncButton.textContent = t("joinLeaderboard");
+  }
+
+  if (leaderboardUserCard) {
+    const profile = leaderboardStatus.profile;
+    leaderboardUserCard.innerHTML = profile
+      ? `
+        ${leaderboardAvatar(profile.avatarUrl, profile.username)}
+        <div>
+          <strong>${escapeHtml(profile.username)}</strong>
+          <span>${leaderboardStatus.joined ? t("leaderboardOnlyDailyXp") : t("leaderboardSignedInNotJoined")}</span>
+        </div>
+      `
+      : `
+        <span class="leaderboard-avatar placeholder" aria-hidden="true">GH</span>
+        <div>
+          <strong>${t("leaderboardNotSignedIn")}</strong>
+          <span>${t("leaderboardLoginRequired")}</span>
+        </div>
+      `;
+  }
+
+  if (!leaderboardStatusText) return;
+  const { title, detail } = leaderboardStatusCopy();
+  leaderboardStatusText.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    <span>${escapeHtml(detail)}</span>
+  `;
+}
+
+function renderLeaderboard() {
+  if (!leaderboardRows || !leaderboardSummary) return;
+
+  leaderboardRangeTabs?.querySelectorAll<HTMLButtonElement>("[data-leaderboard-range]").forEach((button) => {
+    const active = button.dataset.leaderboardRange === leaderboardRange;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+
+  if (!leaderboardStatus.configured) {
+    leaderboardSummary.innerHTML = `<strong>${t("leaderboardServiceNotConfigured")}</strong><span>${t("leaderboardNoService")}</span>`;
+    leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardNoService")}</div>`;
+    return;
+  }
+
+  if (leaderboardData.error) {
+    leaderboardSummary.innerHTML = `<strong>${escapeHtml(leaderboardData.error)}</strong><span>${leaderboardRangeLabel(leaderboardRange)}</span>`;
+    leaderboardRows.innerHTML = `<div class="leaderboard-empty">${escapeHtml(leaderboardData.error)}</div>`;
+    return;
+  }
+
+  const updated = leaderboardData.updatedAt
+    ? `${t("leaderboardUpdated")} ${formatRelativeTime(leaderboardData.updatedAt)}`
+    : leaderboardRangeLabel(leaderboardRange);
+  leaderboardSummary.innerHTML = `
+    <strong>${leaderboardRangeLabel(leaderboardRange)}</strong>
+    <span>${escapeHtml(updated)}</span>
+  `;
+
+  const entries = leaderboardData.entries;
+  if (!entries.length) {
+    leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardEmpty")}</div>`;
+    return;
+  }
+
+  const myUserId = leaderboardStatus.profile?.id;
+  leaderboardRows.innerHTML = entries
+    .map((entry) => {
+      const isMe = myUserId === entry.userId;
+      const days = entry.daysActive ? `<span>${entry.daysActive} ${t("leaderboardDaysActive")}</span>` : "";
+      return `
+        <article class="leaderboard-row${isMe ? " is-me" : ""}">
+          <strong class="leaderboard-rank">#${entry.rank}</strong>
+          ${leaderboardAvatar(entry.avatarUrl, entry.username)}
+          <div class="leaderboard-person">
+            <strong>${escapeHtml(entry.username || t("unknownUser"))}${isMe ? ` <em>${t("leaderboardMe")}</em>` : ""}</strong>
+            ${days}
+          </div>
+          <strong class="leaderboard-xp">${formatNumber(entry.xp)} XP</strong>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function leaderboardStatusCopy() {
+  if (!leaderboardStatus.configured) {
+    return {
+      title: t("leaderboardServiceNotConfigured"),
+      detail: t("leaderboardNoService"),
+    };
+  }
+  if (leaderboardStatus.syncing) {
+    return {
+      title: t("leaderboardSyncing"),
+      detail: leaderboardStatus.lastSyncedAt
+        ? `${t("leaderboardLastSynced")} ${formatRelativeTime(leaderboardStatus.lastSyncedAt)}`
+        : t("leaderboardOnlyDailyXp"),
+    };
+  }
+  if (leaderboardStatus.error) {
+    return {
+      title: leaderboardStatus.joined ? t("leaderboardJoined") : t("leaderboardLoginRequired"),
+      detail: leaderboardStatus.error,
+    };
+  }
+  if (leaderboardStatus.joined) {
+    return {
+      title: t("leaderboardJoined"),
+      detail: leaderboardStatus.lastSyncedAt
+        ? `${t("leaderboardLastSynced")} ${formatRelativeTime(leaderboardStatus.lastSyncedAt)}`
+        : t("leaderboardOnlyDailyXp"),
+    };
+  }
+  if (leaderboardStatus.authenticated) {
+    return {
+      title: t("leaderboardSignedInNotJoined"),
+      detail: t("leaderboardOnlyDailyXp"),
+    };
+  }
+  return {
+    title: t("leaderboardNotSignedIn"),
+    detail: t("leaderboardLoginRequired"),
+  };
+}
+
+function leaderboardRangeLabel(range: LeaderboardRange) {
+  const labels: Record<LeaderboardRange, string> = {
+    today: t("leaderboardToday"),
+    "7d": t("leaderboard7d"),
+    "30d": t("leaderboard30d"),
+    all: t("leaderboardAllTime"),
+  };
+  return labels[range];
+}
+
+function leaderboardAvatar(avatarUrl: string | undefined, username: string) {
+  const initial = (username || "?").trim().slice(0, 2).toUpperCase();
+  if (!avatarUrl) return `<span class="leaderboard-avatar placeholder" aria-hidden="true">${escapeHtml(initial)}</span>`;
+  return `<img class="leaderboard-avatar" src="${escapeHtml(avatarUrl)}" alt="" loading="lazy" />`;
+}
+
 function renderScopedSourceBreakdown() {
   if (!ledger) return;
   renderSourceBreakdown(getSourceBreakdown(getSourceScopeEntries(ledger.entries)));
@@ -2389,6 +2681,10 @@ function normalizeBadgeMetric(value: string, fallback: BadgeMetric): BadgeMetric
 
 function normalizeTotalDisplayUnit(value: string): TotalDisplayUnit {
   return value === "raw" || value === "k" || value === "m" || value === "wan" || value === "yi" ? value : "m";
+}
+
+function normalizeLeaderboardRange(value: unknown): LeaderboardRange {
+  return value === "today" || value === "30d" || value === "all" ? value : "7d";
 }
 
 function formatByUnit(value: number, unit: TotalDisplayUnit) {

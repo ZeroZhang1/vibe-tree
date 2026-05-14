@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vibe-tree-leaderboard",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-14",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "invocation_logs": false
+    }
+  },
+  "ratelimits": [
+    {
+      "name": "PUBLIC_READ_RATE_LIMITER",
+      "namespace_id": "26051401",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    },
+    {
+      "name": "AUTH_RATE_LIMITER",
+      "namespace_id": "26051402",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    },
+    {
+      "name": "WRITE_RATE_LIMITER",
+      "namespace_id": "26051403",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vibe-tree-leaderboard",
+      "database_id": "ba300075-b956-4e6a-a2bf-c82041d637d0"
+    }
+  ],
+  "vars": {
+    "APP_ORIGIN": "*"
+  }
+}

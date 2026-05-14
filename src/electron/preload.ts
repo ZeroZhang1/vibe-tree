@@ -4,6 +4,9 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   LedgerFile,
+  LeaderboardData,
+  LeaderboardRange,
+  LeaderboardStatus,
   Settings,
   UpdateStatus,
   UsageStatus,
@@ -26,6 +29,13 @@ const api = {
   checkForUpdates: () => ipcRenderer.invoke("updates:check") as Promise<UpdateStatus>,
   installUpdate: () => ipcRenderer.invoke("updates:install") as Promise<UpdateStatus>,
   openUpdatePage: (url?: string) => ipcRenderer.invoke("updates:open", url) as Promise<void>,
+  getLeaderboardStatus: () => ipcRenderer.invoke("leaderboard:get-status") as Promise<LeaderboardStatus>,
+  loginLeaderboard: () => ipcRenderer.invoke("leaderboard:login") as Promise<LeaderboardStatus>,
+  logoutLeaderboard: () => ipcRenderer.invoke("leaderboard:logout") as Promise<LeaderboardStatus>,
+  setLeaderboardEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke("leaderboard:set-enabled", enabled) as Promise<LeaderboardStatus>,
+  syncLeaderboard: () => ipcRenderer.invoke("leaderboard:sync") as Promise<LeaderboardStatus>,
+  getLeaderboard: (range: LeaderboardRange) => ipcRenderer.invoke("leaderboard:get", range) as Promise<LeaderboardData>,
   getAchievements: () => ipcRenderer.invoke("achievements:get") as Promise<AchievementState>,
   unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
     ipcRenderer.invoke("achievements:unlock", items) as Promise<AchievementUnlockResult>,
@@ -58,6 +68,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => callback(status);
     ipcRenderer.on("bonsai:update-status", listener);
     return () => ipcRenderer.removeListener("bonsai:update-status", listener);
+  },
+  onLeaderboardStatus: (callback: (status: LeaderboardStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: LeaderboardStatus) => callback(status);
+    ipcRenderer.on("bonsai:leaderboard-status", listener);
+    return () => ipcRenderer.removeListener("bonsai:leaderboard-status", listener);
   },
   onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => {
     const listener = (
