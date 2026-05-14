@@ -1,129 +1,91 @@
-# Vibe Tree
+# 🌳 Vibe Tree
 
 [简体中文](README.md) | English
 
-Vibe Tree is a tiny desktop companion for vibe coding. It turns local coding-agent token usage into a floating weather tree:
+**Every token your coding agent spends grows a little tree on your desktop.**
 
-- Total XP drives the tree's level and growth stage.
-- Recent XP/min drives the desktop weather.
-- The bonsai lives in a transparent always-on-top window.
-- A manager window shows usage, sources, history, and settings.
+Vibe Tree is a desktop-resident token weather tree — it turns the cost, rhythm, and activity of vibe coding into a pixel bonsai you can nurture.
+
+<p align="center">
+  <img src="previews/pet-window.png" width="200" alt="Vibe Tree Desktop Pet" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="previews/manager-window.png" width="600" alt="Vibe Tree Manager" />
+</p>
+
+---
 
 ## Quick Start
-
-macOS, Linux, and Windows:
 
 ```bash
 npm install
 npm start
 ```
 
-Development mode:
+> Works on macOS / Windows / Linux. Dev mode: `npm run dev`
 
-```bash
-npm run dev
-```
+---
 
-Validation:
+## Why Vibe Tree?
 
-```bash
-npm run typecheck
-npm run build
-```
+### 🌱 Make Coding Feel Alive
+A transparent floating window lives on your desktop. The tree grows as tokens are consumed. Total XP determines your level; recent activity drives the weather — the more you code, the more your tree flourishes.
 
-## Current Scope
+### 📊 See Where Your Tokens Go
+The manager panel shows source breakdowns, model ratios, and 7-day charts. View all agents or drill into a single agent's input / output / cache details.
 
-This first version focuses on making local usage tracking dependable and pleasant to keep running:
+### 🏆 Compete with Global Vibe Coders
+An optional global leaderboard — sign in with GitHub to join. Only daily token totals are uploaded; no code or session content ever leaves your machine.
 
-- Floating Electron pet window: transparent, draggable, lockable, and always-on-top.
-- Electron manager window: level, weather, active sessions, source stats, model breakdowns, and recent 7-day usage.
-- Settings panel: bonsai size, lock/always-on-top, launch on startup, silent startup, Chinese/English language switching, source path overrides, and badge display preferences.
-- Global leaderboard: optional GitHub sign-in from Settings, with join/leave controls and a leaderboard page in the manager window. Joined users upload only daily token totals from the last 30 days.
-- Level badge: 3D flip badge with configurable front/back faces for level, total token, or token/s; total token supports raw numbers, k/m, and Chinese wan/yi units.
-- Update reminders: automatically checks GitHub for the latest version on launch, then hourly; settings and the tray menu support manual checks and terminal-based updates when a new version is available, then relaunches automatically after a successful update.
-- Tray status panel for quick app status and controls.
-- Automatic usage import from local Codex, Claude Code, OpenClaw, and OpenCode session files.
-- Recent 7-day charts:
-  - All sources view shows XP share by agent.
-  - Single-agent views show input, output, cache hit, and cache write.
+---
+
+## Supported Agents
+
+| Agent | Status | Data Source |
+|-------|--------|-------------|
+| Claude Code | ✅ | `~/.claude/projects/**/*.jsonl` |
+| Codex | ✅ | `~/.codex/sessions/**/*.jsonl` |
+| OpenClaw | ✅ | `~/.openclaw/agents/**/sessions/*.jsonl` |
+| OpenCode | ✅ | `~/.local/share/opencode/storage/message/**/*.json` |
+
+Auto-detected on install. Zero configuration required. Source paths can be customized in Settings.
+
+---
+
+## Features
+
+- **Desktop Pet Window** — transparent, always-on-top, draggable, lockable
+- **Manager Panel** — level, weather, active sessions, source stats, 7-day charts
+- **Level Badge** — 3D flip animation, configurable to show level / total tokens / token/s
+- **Global Leaderboard** — GitHub sign-in, join or leave anytime
+- **Auto Updates** — checks GitHub for new versions on launch, supports one-click terminal update
+- **Bilingual** — switch between Chinese and English in Settings
+- **Launch at Startup & Silent Mode** — quietly accompanies your coding sessions
+
+---
 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md).
 
-## Global Leaderboard
+---
 
-The leaderboard is optional and off by default. If no service is configured, Settings shows that the leaderboard service is not configured and the app uploads nothing.
+<details>
+<summary><strong>📖 XP Rules</strong></summary>
 
-Production builds use the deployed Worker by default:
-
-```text
-https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev
 ```
-
-For local testing, override it with:
-
-```bash
-VIBE_TREE_LEADERBOARD_API_URL=https://your-worker-subdomain.workers.dev npm start
-```
-
-The backend template lives in:
-
-```text
-server/leaderboard-worker/
-```
-
-Only daily token totals from the last 30 days are uploaded. Prompts, files, session records, models used, and any other information are never uploaded. The first version is a Community leaderboard, not strict cheat-proof scoring; the service limits each GitHub user to one sync every 30 minutes and rejects obviously invalid dirty data. Leaving the leaderboard from Settings stops uploads and attempts to remove the cloud leaderboard profile.
-
-## XP Rules
-
-Vibe Tree tracks real agent usage as:
-
-```text
 XP = inputTokens + outputTokens
 ```
 
-`cacheReadTokens` and `cacheWriteTokens` are stored for source details, but they are not counted as XP.
+`cacheReadTokens` / `cacheWriteTokens` are stored for source details but not counted as XP.
 
-By default, the bonsai starts counting from the app's install day. Session history before that day is ignored so a new install does not immediately inherit old usage.
+By default, tracking starts from install day. Pre-install history is not imported.
 
-## Source Watchers
+</details>
 
-The app reads local session files from the current system user directory.
+<details>
+<summary><strong>🔧 Advanced Configuration</strong></summary>
 
-Codex:
-
-```text
-macOS:   ~/.codex/sessions/**/*.jsonl
-Windows: %USERPROFILE%\.codex\sessions\**\*.jsonl
-```
-
-Claude Code:
-
-```text
-macOS:   ~/.claude/projects/**/*.jsonl
-Windows: %USERPROFILE%\.claude\projects\**\*.jsonl
-```
-
-OpenClaw:
-
-```text
-macOS:   ~/.openclaw/agents/**/sessions/*.jsonl
-Windows: %USERPROFILE%\.openclaw\agents\**\sessions\*.jsonl
-```
-
-OpenCode:
-
-```text
-macOS:   ~/.local/share/opencode/storage/message/**/*.json
-Windows: %LOCALAPPDATA%\opencode\storage\message\**\*.json
-```
-
-Source paths can also be overridden from the manager window.
-
-### Optional History Import
-
-To force-import today's history on startup, use these environment variables.
+### Import History
 
 macOS / Linux:
 
@@ -145,55 +107,53 @@ $env:VIBE_OPENCODE_IMPORT_HISTORY="today"
 npm start
 ```
 
-## Assets
+### Leaderboard Service
 
-The runtime currently uses the confirmed pure-SVG pixel bonsai assets:
+The leaderboard is off by default. Production builds use the deployed Worker. For local testing:
 
-```text
-public/assets/trees/vibe-bonsai/
-  config/
-    game-balance.json
-    pure-svg-manifest.json
-  pure-svg/
-    01-sprout-layered-idle.svg
-    02-seedling-layered-idle.svg
-    03-young-layered-idle.svg
-    04-medium-layered-idle.svg
-    05-lush-layered-idle.svg
-    06-full-layered-idle.svg
+```bash
+VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm start
 ```
 
-Old PNGs, image-generation candidates, experimental preview pages, and visual checkpoints are not part of the current runtime path.
+Backend template: `server/leaderboard-worker/`
 
-## Game Balance
+Privacy: only daily token totals from the last 30 days are uploaded. No prompts, files, sessions, or model info.
 
-Growth, weather, and activity windows are configured here:
+</details>
 
-```text
+<details>
+<summary><strong>🎮 Game Balance</strong></summary>
+
+Growth, weather, and activity windows are configured in:
+
+```
 public/assets/trees/vibe-bonsai/config/game-balance.json
 ```
 
-It contains:
+Includes: XP level curve, weather thresholds, growth stage thresholds, activity window parameters.
 
-- XP level curve: `levelBase`, `levelExponent`, `maxLevel`
-- Weather thresholds by `minXpPerMinute`
-- Growth stage thresholds by `minLevel`
-- Activity windows for recent and peak usage
+</details>
 
-## Persistence
+<details>
+<summary><strong>💾 Persistence</strong></summary>
 
-Electron stores local app data in its user data directory. In development this may be the default Electron app data path, while packaged builds should use the app's own identity.
+Electron stores local data:
 
-The app writes:
+- `usage-events.jsonl` — append-only event store
+- `usage-meta.json` — install date and metadata
+- `device-settings.json` — machine-local settings
+- `*-session-watcher.json` — watcher state for each agent
 
-- `usage-events.jsonl`: append-only usage event store
-- `usage-meta.json`: install date and usage metadata
-- `device-settings.json`: machine-local settings
-- `codex-session-watcher.json`: Codex watcher offsets and state
-- `claude-session-watcher.json`: Claude watcher offsets and state
-- `openclaw-session-watcher.json`: OpenClaw watcher offsets and state
-- `opencode-session-watcher.json`: OpenCode watcher offsets and state
+</details>
+
+---
 
 ## Product Direction
 
-Vibe Tree is not meant to be just another token dashboard. The goal is to make the cost, rhythm, and activity of vibe coding feel visible through a small desktop companion. The first version prioritizes reliable local ingestion for Codex, Claude Code, OpenClaw, and OpenCode; future work can continue improving the pet behavior, weather feedback, packaging, and game balance.
+Vibe Tree is not just a token dashboard. The goal is to make vibe coding's cost and rhythm perceivable through a desktop companion. The first version prioritizes reliable multi-agent local ingestion; future work refines pet behavior, weather feedback, and game balance.
+
+---
+
+## License
+
+MIT
