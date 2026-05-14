@@ -1270,6 +1270,29 @@ function achievementProgress(def: AchievementDef, stats?: Stats, context?: Achie
       label: `${formatCompact(peak)} / ${formatCompact(target)} token/min`,
     };
   }
+  if (context) {
+    const progressMap: Record<string, { current: number; target: number; unit: string }> = {
+      explorer_10d: { current: context.totalActiveDays, target: 10, unit: "d" },
+      explorer_50d: { current: context.totalActiveDays, target: 50, unit: "d" },
+      explorer_100d: { current: context.totalActiveDays, target: 100, unit: "d" },
+      explorer_365d: { current: context.totalActiveDays, target: 365, unit: "d" },
+      model_collector_3: { current: context.uniqueModels, target: 3, unit: "" },
+      model_collector_10: { current: context.uniqueModels, target: 10, unit: "" },
+      model_collector_20: { current: context.uniqueModels, target: 20, unit: "" },
+      streak_100: { current: context.consecutiveDays, target: 100, unit: "d" },
+      thousand_cuts: { current: context.totalEntries, target: 1_000, unit: "" },
+      ten_thousand_cuts: { current: context.totalEntries, target: 10_000, unit: "" },
+      session_grinder: { current: context.maxEntriesOneDay, target: 100, unit: "" },
+      session_marathon: { current: context.maxEntriesOneDay, target: 500, unit: "" },
+    };
+    const prog = progressMap[def.id];
+    if (prog) {
+      return {
+        percent: clamp((prog.current / prog.target) * 100, 0, 100),
+        label: `${prog.current} / ${prog.target}${prog.unit ? " " + prog.unit : ""}`,
+      };
+    }
+  }
   return undefined;
 }
 
@@ -1414,6 +1437,30 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
   const maxSourcesOneDay = Math.max(0, ...[...daySources.values()].map((sources) => sources.size));
   const stageIndex = tree ? tree.stages.findIndex((stage) => stage.id === stats.stage.id) : 0;
 
+  const uniqueModels = new Set(entries.map((e) => e.model).filter(Boolean)).size;
+  const totalSourceXp = Object.values(sourceXp).reduce((a, b) => a + b, 0);
+  const dominantSourceRatio = totalSourceXp > 0 ? Math.max(...Object.values(sourceXp)) / totalSourceXp : 0;
+  const dayEntries = new Map<string, number>();
+  for (const entry of entries) {
+    const key = dateKey(new Date(entry.createdAt));
+    dayEntries.set(key, (dayEntries.get(key) ?? 0) + 1);
+  }
+  const maxEntriesOneDay = Math.max(0, ...dayEntries.values());
+
+  let longestDayGap = 0;
+  for (let i = 1; i < activeDayKeys.length; i++) {
+    const prev = Date.parse(`${activeDayKeys[i - 1]}T00:00:00`);
+    const curr = Date.parse(`${activeDayKeys[i]}T00:00:00`);
+    if (Number.isFinite(prev) && Number.isFinite(curr)) {
+      longestDayGap = Math.max(longestDayGap, Math.round((curr - prev) / 86_400_000));
+    }
+  }
+
+  const hasHolidayCoding = activeDayKeys.some((key) => {
+    const m = key.slice(5, 7), d = key.slice(8, 10);
+    return (m === "01" && d === "01") || (m === "01" && parseInt(d) >= 21 && parseInt(d) <= 31) || (m === "02" && parseInt(d) >= 1 && parseInt(d) <= 14);
+  });
+
   return {
     stats,
     entries: countedEntries,
@@ -1429,6 +1476,15 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
     touchGrassReturn: hasReturnAfterInactiveGap(activeDayKeys, 7),
     coffeeOverdose: hasConsecutiveHourActivity(hourKeys, 8),
     hasFibonacciSession,
+    totalActiveDays: activeDayKeys.length,
+    uniqueModels,
+    dominantSourceRatio,
+    hasNoonPeak: hourSet.has(12),
+    has5amTo9amStreak: [5, 6, 7, 8].every((h) => hourSet.has(h)),
+    longestDayGap,
+    totalEntries: entries.length,
+    maxEntriesOneDay,
+    hasHolidayCoding,
   };
 }
 

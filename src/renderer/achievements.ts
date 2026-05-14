@@ -38,6 +38,15 @@ export interface AchievementContext {
   touchGrassReturn: boolean;
   coffeeOverdose: boolean;
   hasFibonacciSession: boolean;
+  totalActiveDays: number;
+  uniqueModels: number;
+  dominantSourceRatio: number;
+  hasNoonPeak: boolean;
+  has5amTo9amStreak: boolean;
+  longestDayGap: number;
+  totalEntries: number;
+  maxEntriesOneDay: number;
+  hasHolidayCoding: boolean;
 }
 
 export const CATEGORY_ORDER: AchievementCategory[] = ["growth", "peak", "time", "agent", "hidden"];
@@ -475,5 +484,194 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: "某次 session Token 恰好是斐波那契数",
     flavor: "1, 1, 2, 3, 5, 8, 13... 宇宙的密码藏在 session 里。",
     condition: ({ hasFibonacciSession }) => hasFibonacciSession,
+  },
+
+  // ── WoW-inspired: Exploration & Milestones ──────────────────────
+
+  {
+    id: "explorer_10d",
+    category: "growth",
+    rarity: "common",
+    name: "初入艾泽拉斯",
+    description: "累计活跃 10 天",
+    flavor: "欢迎来到这个世界，冒险者。你的旅程才刚刚开始。",
+    condition: ({ totalActiveDays }) => totalActiveDays >= 10,
+  },
+  {
+    id: "explorer_50d",
+    category: "growth",
+    rarity: "rare",
+    name: "世界探索者",
+    description: "累计活跃 50 天",
+    flavor: "你的足迹已遍布这片大陆的每一个角落。",
+    condition: ({ totalActiveDays }) => totalActiveDays >= 50,
+  },
+  {
+    id: "explorer_100d",
+    category: "growth",
+    rarity: "epic",
+    name: "探路者",
+    description: "累计活跃 100 天",
+    flavor: "老兵不死，他们只是不再需要地图。",
+    condition: ({ totalActiveDays }) => totalActiveDays >= 100,
+  },
+  {
+    id: "explorer_365d",
+    category: "growth",
+    rarity: "legendary",
+    name: "时光行者",
+    description: "累计活跃 365 天",
+    flavor: "整整一年。艾泽拉斯的四季，你都见过了。",
+    condition: ({ totalActiveDays }) => totalActiveDays >= 365,
+  },
+
+  // ── WoW-inspired: Reputation / Mastery ──────────────────────────
+
+  {
+    id: "model_collector_3",
+    category: "agent",
+    rarity: "common",
+    name: "初级驯兽师",
+    description: "使用过 3 种不同模型",
+    flavor: "你开始学会驾驭不同的坐骑了。",
+    condition: ({ uniqueModels }) => uniqueModels >= 3,
+  },
+  {
+    id: "model_collector_10",
+    category: "agent",
+    rarity: "rare",
+    name: "稀有坐骑收集者",
+    description: "使用过 10 种不同模型",
+    flavor: "你的马厩已经比大多数NPC的都大了。",
+    condition: ({ uniqueModels }) => uniqueModels >= 10,
+  },
+  {
+    id: "model_collector_20",
+    category: "agent",
+    rarity: "epic",
+    name: "坐骑大师",
+    description: "使用过 20 种不同模型",
+    flavor: "连奥格瑞玛的驯兽师都要向你请教。",
+    condition: ({ uniqueModels }) => uniqueModels >= 20,
+  },
+  {
+    id: "faction_loyalist",
+    category: "agent",
+    rarity: "rare",
+    name: "阵营忠诚者",
+    description: "单一 Agent 占总 Token 的 80% 以上",
+    flavor: "为了部落！（或者联盟？）",
+    condition: ({ dominantSourceRatio }) => dominantSourceRatio >= 0.8,
+  },
+
+  // ── WoW-inspired: PvE Raid-style Peaks ──────────────────────────
+
+  {
+    id: "raid_boss_5m",
+    category: "peak",
+    rarity: "epic",
+    name: "团队副本：首杀",
+    description: "单日 Token 达到 5,000,000",
+    flavor: "BOSS 倒下了！DKP 分配开始。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 5_000_000,
+  },
+  {
+    id: "raid_boss_50m",
+    category: "peak",
+    rarity: "legendary",
+    name: "史诗难度：通关",
+    description: "单日 Token 达到 50,000,000",
+    flavor: "这不是普通的 raid，这是神话难度。你活下来了。",
+    condition: ({ maxDailyXp }) => maxDailyXp >= 50_000_000,
+  },
+  {
+    id: "session_grinder",
+    category: "peak",
+    rarity: "rare",
+    name: "日常刷怪达人",
+    description: "单日交互次数超过 100",
+    flavor: "你的击杀数已经让野怪瑟瑟发抖。",
+    condition: ({ maxEntriesOneDay }) => maxEntriesOneDay >= 100,
+  },
+  {
+    id: "session_marathon",
+    category: "peak",
+    rarity: "epic",
+    name: "马拉松刷本",
+    description: "单日交互次数超过 500",
+    flavor: "副本已被你刷到冒烟，装备早就毕业了。",
+    condition: ({ maxEntriesOneDay }) => maxEntriesOneDay >= 500,
+  },
+
+  // ── WoW-inspired: Time / Calendar Events ────────────────────────
+
+  {
+    id: "high_noon",
+    category: "time",
+    rarity: "common",
+    name: "正午烈日",
+    description: "12 点到 13 点有 Token 记录",
+    flavor: "别人在吃午饭，你在和 AI 对话。",
+    condition: ({ hasNoonPeak }) => hasNoonPeak,
+  },
+  {
+    id: "dawn_patrol",
+    category: "time",
+    rarity: "epic",
+    name: "黎明巡逻",
+    description: "5 点到 9 点每小时都有 Token",
+    flavor: "当整个服务器还在沉睡，你已经开始了晨间任务。",
+    condition: ({ has5amTo9amStreak }) => has5amTo9amStreak,
+  },
+  {
+    id: "holiday_hero",
+    category: "time",
+    rarity: "rare",
+    name: "节日守护者",
+    description: "在元旦或春节当天有 Token",
+    flavor: "当别人在放烟花，你在放 token。节日快乐，勇士。",
+    condition: ({ hasHolidayCoding }) => hasHolidayCoding,
+  },
+
+  // ── WoW-inspired: Feats of Strength (Hidden) ───────────────────
+
+  {
+    id: "resurrection",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "灵魂治愈者",
+    description: "中断超过 14 天后回归",
+    flavor: "你在墓地跑了很久的尸，但最终还是复活了。",
+    condition: ({ longestDayGap }) => longestDayGap >= 14,
+  },
+  {
+    id: "thousand_cuts",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "千刀万剐",
+    description: "累计 1,000 次交互记录",
+    flavor: "不是一刀暴击，是一千刀的执着。",
+    condition: ({ totalEntries }) => totalEntries >= 1_000,
+  },
+  {
+    id: "ten_thousand_cuts",
+    category: "hidden",
+    rarity: "hidden",
+    hidden: true,
+    name: "万刃归一",
+    description: "累计 10,000 次交互记录",
+    flavor: "刀刀入肉，你已经是传说中的剑圣了。",
+    condition: ({ totalEntries }) => totalEntries >= 10_000,
+  },
+  {
+    id: "streak_100",
+    category: "growth",
+    rarity: "legendary",
+    name: "百日维新",
+    description: "连续 100 天有 Token",
+    flavor: "一百天不间断。你的意志已经超越了大部分勇士。",
+    condition: ({ consecutiveDays }) => consecutiveDays >= 100,
   },
 ];
