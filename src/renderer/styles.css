@@ -1761,6 +1761,17 @@ label {
   gap: 6px;
 }
 
+.source-empty {
+  min-height: 44px;
+  padding: 12px;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .source-row {
   min-width: 0;
   padding: 10px 12px;
@@ -2854,12 +2865,38 @@ label {
   gap: 8px;
 }
 
-.path-settings label {
-  color: var(--muted);
-  font-size: 0.7rem;
+.agent-source-row {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
 }
 
-.path-settings input {
+.agent-source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.agent-source-toggle input {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  margin: 0;
+}
+
+.agent-source-toggle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-source-row > input {
   min-height: 30px;
   font-size: 0.68rem;
 }
