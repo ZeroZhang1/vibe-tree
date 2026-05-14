@@ -44,7 +44,7 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 ## Why Vibe Tree?
 
 ### 🌱 Make Coding Feel Alive
-A transparent floating window lives on your desktop. The tree grows as tokens are consumed. Total XP determines your level; recent activity drives the weather — the more you code, the more your tree flourishes.
+A transparent floating window lives on your desktop. Total counted tokens determine your level; recent activity drives the weather — the more you code, the more your tree flourishes.
 
 ### 📊 See Where Your Tokens Go
 The manager panel shows source breakdowns, model ratios, and 7-day charts. View all agents or drill into a single agent's input / output / cache details.
@@ -89,13 +89,13 @@ See [CHANGELOG.md](CHANGELOG.md).
 ---
 
 <details>
-<summary><strong>📖 XP Rules</strong></summary>
+<summary><strong>📖 Token Rules</strong></summary>
 
 ```
-XP = inputTokens + outputTokens
+Counted tokens = inputTokens + outputTokens
 ```
 
-`cacheReadTokens` / `cacheWriteTokens` are stored for source details but not counted as XP.
+`cacheReadTokens` / `cacheWriteTokens` are stored for source details but are not counted toward total tokens.
 
 By default, tracking starts from install day. Pre-install history is not imported.
 
@@ -149,7 +149,7 @@ Growth, weather, and activity windows are configured in:
 public/assets/trees/vibe-bonsai/config/game-balance.json
 ```
 
-Includes: XP level curve, weather thresholds, growth stage thresholds, activity window parameters.
+Includes: token level curve, weather thresholds, growth stage thresholds, activity window parameters.
 
 </details>
 

@@ -931,9 +931,9 @@ function refreshTrayMenu() {
       enabled: false,
     },
     {
-      label: `${formatCompact(trayStats.totalXp)} XP · ${mainText("today")} +${formatCompact(trayStats.todayXp)} · ${formatCompact(
+      label: `${formatCompact(trayStats.totalXp)} token · ${mainText("today")} +${formatCompact(trayStats.todayXp)} · ${formatCompact(
         trayStats.xpPerMinute,
-      )} XP/min`,
+      )} token/min`,
       enabled: false,
     },
     { type: "separator" },

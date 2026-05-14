@@ -349,15 +349,18 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     for (const entry of ledger().entries) {
       const createdAt = new Date(entry.createdAt);
       if (!Number.isFinite(createdAt.getTime()) || createdAt < cutoff) continue;
-      const xp = options.xpForEntry(entry);
-      if (!xp) continue;
+      const tokens = options.xpForEntry(entry);
+      if (!tokens) continue;
       const key = options.dateKey(createdAt);
-      byDate.set(key, (byDate.get(key) ?? 0) + xp);
+      byDate.set(key, (byDate.get(key) ?? 0) + tokens);
     }
 
     return [...byDate.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([date, xp]) => ({ date, xp: Math.round(xp) }));
+      .map(([date, tokens]) => {
+        const rounded = Math.round(tokens);
+        return { date, tokens: rounded, xp: rounded };
+      });
   }
 
   function apiUrl(path: string) {
@@ -501,14 +504,15 @@ function normalizeEntry(value: unknown): LeaderboardEntry | undefined {
   const rank = Math.max(1, Math.round(Number(entry?.rank)));
   const userId = typeof entry?.userId === "string" && entry.userId.trim() ? entry.userId.trim() : undefined;
   const username = typeof entry?.username === "string" && entry.username.trim() ? entry.username.trim() : undefined;
-  const xp = Math.max(0, Math.round(Number(entry?.xp)));
-  if (!Number.isFinite(rank) || !userId || !username || !Number.isFinite(xp)) return undefined;
+  const rawTokens = entry?.tokens ?? entry?.xp;
+  const tokens = Math.max(0, Math.round(Number(rawTokens)));
+  if (!Number.isFinite(rank) || !userId || !username || !Number.isFinite(tokens)) return undefined;
   const avatarUrl =
     typeof entry?.avatarUrl === "string" && entry.avatarUrl.trim() ? entry.avatarUrl.trim() : undefined;
   const daysActive = Number.isFinite(Number(entry?.daysActive))
     ? Math.max(0, Math.round(Number(entry?.daysActive)))
     : undefined;
-  return { rank, userId, username, avatarUrl, xp, daysActive };
+  return { rank, userId, username, avatarUrl, tokens, xp: tokens, daysActive };
 }
 
 function escapeHtml(value: string) {

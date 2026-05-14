@@ -38,7 +38,8 @@ export interface LeaderboardEntry {
   userId: string;
   username: string;
   avatarUrl?: string;
-  xp: number;
+  tokens: number;
+  xp?: number;
   daysActive?: number;
 }
 
