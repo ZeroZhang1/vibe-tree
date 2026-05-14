@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-14 (v0.3.5)
+
+- Added an Electron main-process smoke test to CI so releases must prove the built app can start.
+- Added the same startup verification to terminal updates before relaunching into a freshly built version.
+
 ## 2026-05-14 (v0.3.4)
 
 - Fixed Windows startup after v0.3.3 by marking compiled shared runtime files as CommonJS during the Electron build.
