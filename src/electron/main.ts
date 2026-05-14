@@ -35,6 +35,7 @@ const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
+const UPDATE_LATEST_RELEASE_URL = "https://api.github.com/repos/Olorinm/vibe-tree/releases/latest";
 const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per_page=20";
 const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
 const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
@@ -188,13 +189,38 @@ function leaderboardAuthPath() {
 }
 
 function currentAppVersion() {
-  if (app.isPackaged) return normalizeVersion(app.getVersion());
-  const pkg = readJsonFile<{ version?: string }>(join(process.cwd(), "package.json"));
-  return normalizeVersion(typeof pkg?.version === "string" ? pkg.version : app.getVersion());
+  for (const path of appPackageJsonCandidates()) {
+    const pkg = readJsonFile<{ name?: string; version?: string }>(path);
+    if (pkg?.name === "vibe-tree" && typeof pkg.version === "string") {
+      return normalizeVersion(pkg.version);
+    }
+  }
+  return normalizeVersion(app.getVersion());
+}
+
+function appPackageJsonCandidates() {
+  const candidates = [
+    join(__dirname, "package.json"),
+    join(app.getAppPath(), "package.json"),
+    join(__dirname, "../../package.json"),
+    join(process.cwd(), "package.json"),
+  ];
+  return [...new Set(candidates)];
 }
 
 function canTerminalUpdate() {
-  return existsSync(join(process.cwd(), ".git")) && existsSync(join(process.cwd(), "package.json"));
+  return Boolean(terminalUpdateRoot());
+}
+
+function terminalUpdateRoot() {
+  const candidates = [process.cwd(), join(__dirname, "../.."), app.getAppPath()];
+  for (const cwd of [...new Set(candidates)]) {
+    const pkg = readJsonFile<{ name?: string }>(join(cwd, "package.json"));
+    if (pkg?.name === "vibe-tree" && existsSync(join(cwd, ".git"))) {
+      return cwd;
+    }
+  }
+  return undefined;
 }
 
 function readLedger(): LedgerFile {
@@ -1273,6 +1299,24 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean } =
 }
 
 async function fetchLatestUpdate() {
+  try {
+    const release = await fetchJson(UPDATE_LATEST_RELEASE_URL);
+    const releaseVersion = normalizeVersion(
+      typeof (release as { tag_name?: unknown })?.tag_name === "string" ? (release as { tag_name: string }).tag_name : "",
+    );
+    if (releaseVersion && isSemver(releaseVersion)) {
+      return {
+        version: releaseVersion,
+        releaseUrl:
+          typeof (release as { html_url?: unknown })?.html_url === "string"
+            ? (release as { html_url: string }).html_url
+            : UPDATE_PAGE_URL,
+      };
+    }
+  } catch {
+    // Older repos or temporary API issues can still fall back to tags.
+  }
+
   const tags = await fetchJson(UPDATE_TAGS_URL);
   if (!Array.isArray(tags)) throw new Error(mainText("updateSourceBadShape"));
   const versions = tags
@@ -1299,6 +1343,8 @@ function fetchJson(url: string): Promise<unknown> {
       {
         headers: {
           Accept: "application/vnd.github+json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
           "User-Agent": `${APP_NAME} Update Checker`,
         },
         timeout: 8_000,
@@ -1381,8 +1427,9 @@ async function requestJsonWithElectronNet<T = unknown>(
 
 async function installUpdate(): Promise<UpdateStatus> {
   if (updateStatus.installing) return updateStatus;
+  const cwd = terminalUpdateRoot();
 
-  if (!canTerminalUpdate()) {
+  if (!cwd) {
     updateStatus = {
       ...updateStatus,
       canTerminalUpdate: false,
@@ -1404,7 +1451,6 @@ async function installUpdate(): Promise<UpdateStatus> {
   refreshTrayMenu();
 
   try {
-    const cwd = process.cwd();
     const dirty = (await runTerminalCommand("git", ["status", "--porcelain", "--untracked-files=no"], cwd)).trim();
     if (dirty) {
       throw new Error(mainText("dirtyWorkspace"));
