@@ -246,18 +246,18 @@ if (viewMode === "pet") {
             <p class="eyebrow" data-i18n="liveGrowth">Live growth</p>
             <div class="level-title-row">
               <h2 id="levelTitle">Lv.1 新芽</h2>
-              <span class="help-tip" tabindex="0" aria-label="1 token = 1 XP" data-tooltip="1 token = 1 XP" data-i18n-tooltip="xpHelp">?</span>
+              <span class="help-tip" tabindex="0" aria-label="计入 Token = input + output" data-tooltip="计入 Token = input + output" data-i18n-tooltip="tokenHelp">?</span>
             </div>
           </div>
           <div class="weather-readout">
             <span id="weatherLabel">晴朗</span>
-            <strong id="weatherRateText">0 XP/min</strong>
+            <strong id="weatherRateText">0 token/min</strong>
           </div>
         </header>
 
         <div class="metric-grid">
           <article>
-            <span data-i18n="metricTotalXp">累计 XP</span>
+            <span data-i18n="metricTotalTokens">累计 Token</span>
             <strong id="totalText">0</strong>
           </article>
           <article>
@@ -273,7 +273,7 @@ if (viewMode === "pet") {
         <section class="progress-block">
           <div class="progress-meta">
             <span id="nextLevelText">距离 Lv.2</span>
-            <span id="progressText">0 / 800 XP</span>
+            <span id="progressText">0 / 800 token</span>
           </div>
           <div class="progress-track xp-track">
             <span id="progressBar"></span>
@@ -343,7 +343,7 @@ if (viewMode === "pet") {
         <section class="chart-card">
           <div class="section-header">
             <h3 data-i18n="recentSevenDays">最近 7 天</h3>
-            <span id="peakText">5 分钟 +0 XP</span>
+            <span id="peakText">5 分钟 +0 token</span>
           </div>
         </section>
       </section>
@@ -598,7 +598,7 @@ function setupHistoryCard() {
       <span><i class="legend-cache-read"></i>cache hit</span>
       <span><i class="legend-cache-write"></i>cache write</span>
     </div>
-    <div class="history-bars" id="historyBars" aria-label="最近 7 天 XP" data-i18n-aria="recentSevenDays"></div>
+    <div class="history-bars" id="historyBars" aria-label="最近 7 天 Token" data-i18n-aria="recentSevenDays"></div>
   `;
 }
 
@@ -1196,13 +1196,13 @@ function render() {
   );
   text("#levelTitle", `Lv.${stats.level} ${stageLabel(stats.stage.id, stats.stage.label)}`);
   text("#weatherLabel", weatherLabel(stats.weather.id, stats.weather.label));
-  text("#weatherRateText", `${formatNumber(stats.weather.tokensPerMinute)} XP/min`);
+  text("#weatherRateText", `${formatNumber(stats.weather.tokensPerMinute)} token/min`);
   text("#totalText", formatNumber(stats.xp));
   text("#todayText", `+${formatNumber(stats.todayXp)}`);
   text("#activeSessionsText", stats.activeSessions ? activeSessionsText(stats.activeSessions) : "0");
-  text("#peakText", `${t("fiveMinutePeak")} +${formatNumber(stats.lastFiveMinuteXp)} XP`);
+  text("#peakText", `${t("fiveMinutePeak")} +${formatNumber(stats.lastFiveMinuteXp)} token`);
   text("#nextLevelText", `${t("nextLevel")}${stats.level + 1}`);
-  text("#progressText", `${formatNumber(stats.levelXp)} / ${formatNumber(stats.nextLevelXp)} XP`);
+  text("#progressText", `${formatNumber(stats.levelXp)} / ${formatNumber(stats.nextLevelXp)} token`);
   renderScopedSourceBreakdown();
 
   const progressBar = document.querySelector<HTMLElement>("#progressBar");
@@ -1487,13 +1487,13 @@ function achievementProgress(def: AchievementDef, stats?: Stats, context?: Achie
   };
   if (xpMatch) {
     const target = targetByKey[xpMatch[1]];
-    return { percent: clamp((stats.xp / target) * 100, 0, 100), label: `${formatCompact(stats.xp)} / ${formatCompact(target)} XP` };
+    return { percent: clamp((stats.xp / target) * 100, 0, 100), label: `${formatCompact(stats.xp)} / ${formatCompact(target)} token` };
   }
   if (dailyMatch && context) {
     const target = targetByKey[dailyMatch[1]];
     return {
       percent: clamp((context.maxDailyXp / target) * 100, 0, 100),
-      label: `${formatCompact(context.maxDailyXp)} / ${formatCompact(target)} XP`,
+      label: `${formatCompact(context.maxDailyXp)} / ${formatCompact(target)} token`,
     };
   }
   if (burstMatch) {
@@ -1501,7 +1501,7 @@ function achievementProgress(def: AchievementDef, stats?: Stats, context?: Achie
     const peak = peakStat("peakXpPerMinute", stats.weather.tokensPerMinute);
     return {
       percent: clamp((peak / target) * 100, 0, 100),
-      label: `${formatCompact(peak)} / ${formatCompact(target)} XP/min`,
+      label: `${formatCompact(peak)} / ${formatCompact(target)} token/min`,
     };
   }
   return undefined;
@@ -1690,7 +1690,10 @@ function showNextAchievementToast() {
   const copy = achievementText(def);
   achievementToastLayer.innerHTML = `
     <div class="achievement-toast rarity-${def.rarity}">
-      <span>${escapeHtml(achievementRarityLabel(def.rarity))} · ${escapeHtml(t("achievementUnlocked"))}</span>
+      <div class="achievement-toast-head">
+        <span class="achievement-toast-meta">${escapeHtml(achievementRarityLabel(def.rarity))} · ${escapeHtml(t("achievementUnlocked"))}</span>
+        <span class="achievement-toast-new">${escapeHtml(t("newBadge"))}</span>
+      </div>
       <strong>${escapeHtml(copy.name)}</strong>
       <p>${escapeHtml(copy.description)}</p>
     </div>
@@ -1942,7 +1945,7 @@ function renderLeaderboardSettings() {
         ${leaderboardAvatar(profile.avatarUrl, profile.username)}
         <div>
           <strong>${escapeHtml(profile.username)}</strong>
-          <span>${leaderboardStatus.joined ? t("leaderboardOnlyDailyXp") : t("leaderboardSignedInNotJoined")}</span>
+          <span>${leaderboardStatus.joined ? t("leaderboardOnlyDailyTokens") : t("leaderboardSignedInNotJoined")}</span>
         </div>
       `
       : `
@@ -2010,7 +2013,7 @@ function renderLeaderboard() {
             <strong>${escapeHtml(entry.username || t("unknownUser"))}${isMe ? ` <em>${t("leaderboardMe")}</em>` : ""}</strong>
             ${days}
           </div>
-          <strong class="leaderboard-xp">${formatNumber(entry.xp)} XP</strong>
+          <strong class="leaderboard-tokens">${formatNumber(entry.tokens)} token</strong>
         </article>
       `;
     })
@@ -2029,7 +2032,7 @@ function leaderboardStatusCopy() {
       title: t("leaderboardSyncing"),
       detail: leaderboardStatus.lastSyncedAt
         ? `${t("leaderboardLastSynced")} ${formatRelativeTime(leaderboardStatus.lastSyncedAt)}`
-        : t("leaderboardOnlyDailyXp"),
+        : t("leaderboardOnlyDailyTokens"),
     };
   }
   if (leaderboardStatus.error) {
@@ -2043,13 +2046,13 @@ function leaderboardStatusCopy() {
       title: t("leaderboardJoined"),
       detail: leaderboardStatus.lastSyncedAt
         ? `${t("leaderboardLastSynced")} ${formatRelativeTime(leaderboardStatus.lastSyncedAt)}`
-        : t("leaderboardOnlyDailyXp"),
+        : t("leaderboardOnlyDailyTokens"),
     };
   }
   if (leaderboardStatus.authenticated) {
     return {
       title: t("leaderboardSignedInNotJoined"),
-      detail: t("leaderboardOnlyDailyXp"),
+      detail: t("leaderboardOnlyDailyTokens"),
     };
   }
   return {
@@ -2108,7 +2111,7 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
           </div>
           <div class="source-usage">
             <div>
-              <strong>${formatCompact(row.xp)} XP</strong>
+              <strong>${formatCompact(row.xp)} token</strong>
               <span>${row.xp > 0 ? `${percent}%` : escapeHtml(t("noRecords"))}</span>
             </div>
             <div class="source-meter"><span style="width:${percent}%"></span></div>
@@ -2219,7 +2222,7 @@ function renderModelBreakdown(sourceKey: string) {
             <div class="model-row">
               <div>
                 <strong>${escapeHtml(row.label)}</strong>
-                <span>${formatCompact(row.xp)} XP · ${percent}%</span>
+                <span>${formatCompact(row.xp)} token · ${percent}%</span>
               </div>
               <div class="source-meter"><span style="width:${percent}%"></span></div>
               <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
@@ -2526,7 +2529,7 @@ function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
   const max = Math.max(1, ...rows.map((row) => row.tokens));
 
-  text("#historySummary", `${labels[filter]} · ${formatCompact(total)} XP`);
+  text("#historySummary", `${labels[filter]} · ${formatCompact(total)} token`);
   if (historyLegend) historyLegend.innerHTML = filter === "all" ? historyAgentLegendHtml() : historyTokenLegendHtml();
 
   historyTabs?.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
@@ -2611,7 +2614,7 @@ function historyTooltipHtml(row: HistoryDayRow, filter: HistoryFilter) {
     <div class="history-tooltip" role="tooltip">
       <div class="history-tooltip-head">
         <span>${escapeHtml(row.label)}</span>
-        <strong>${formatCompact(row.tokens)} XP</strong>
+        <strong>${formatCompact(row.tokens)} token</strong>
       </div>
       <div class="history-tooltip-items">
         ${items

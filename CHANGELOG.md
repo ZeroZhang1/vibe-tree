@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-14 (v0.3.1)
+
+- Renamed user-facing scoring to Token across the dashboard, achievements, charts, tray menu, README, and leaderboard copy.
+- Added a `NEW` badge directly inside achievement unlock toasts so fresh achievements are visible before opening the achievements page.
+- Updated leaderboard sync payloads and responses to use `tokens`, while keeping backward compatibility for existing backend data.
+- Refreshed README screenshots and install guidance, including `npm ci` and the Electron mirror note for slower GitHub downloads.
+- Included the README achievement-system note and the weather showcase preview before the main dashboard screenshot.
+
 ## 2026-05-14 (v0.3.0)
 
 - Added an optional global leaderboard with GitHub sign-in, join/leave controls in Settings, and a dedicated leaderboard tab in the manager window.
@@ -24,7 +32,7 @@
 - Fixed desktop tree pointer handling so it only follows the cursor while actively dragging, and restored double-click manager opening.
 - Updated the macOS tray icon to use a template-style menu bar icon that better matches system sizing.
 - Refined the compact full-number badge spacing and text sizing for large token totals.
-- Added the `1 token = 1 XP` help tip beside the tree level title.
+- Added the counted-token help tip beside the tree level title.
 
 ## 2026-05-13
 
@@ -46,14 +54,14 @@
 - Changed source contribution defaults to Today, added Today/Total switching, and applied the same scope to expanded per-agent model breakdowns.
 - Refined the 3D level badge: smoother flip motion, hover-to-flip with immediate return on pointer leave, 2.5s timed auto flips, and no badge flip during level-up.
 - Reworked the 7-day chart tooltip into an in-app hover card and avoided unnecessary chart DOM rebuilds to prevent flicker.
-- Corrected 7-day chart bar semantics so bar height follows XP (`input + output`) while cache read/write remain separately visible.
+- Corrected 7-day chart bar semantics so bar height follows counted tokens (`input + output`) while cache read/write remain separately visible.
 - Reduced misleading minimum bar heights so small daily values preserve visible proportion differences.
-- Clarified the product display model around growth XP versus cache/token traffic during OpenClaw comparison work.
+- Clarified the product display model around counted tokens versus cache traffic during OpenClaw comparison work.
 
 ## 2026-05-09
 
 - Unified the product name as Vibe Tree and connected the app icon for system surfaces.
-- Improved incremental token ingestion so historical cumulative usage is not counted as new XP on startup.
+- Improved incremental token ingestion so historical cumulative usage is not counted as new tokens on startup.
 - Slowed growth pacing by raising level and stage thresholds.
 - Added LEVEL UP feedback and a 3D level badge with hover, level-up, and timed flip behavior.
 - Added configurable badge faces for level, total token, and token/s, with k/m total unit options.

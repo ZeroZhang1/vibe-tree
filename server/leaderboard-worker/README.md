@@ -6,7 +6,7 @@ The desktop app uploads only daily token totals from the last 30 days. It does n
 
 The first release is a Community leaderboard, not strict cheat-proof scoring. The backend keeps only broad safety rails:
 
-- Daily payloads above `1,000,000,000,000,000` XP are rejected as obviously invalid dirty data.
+- Daily payloads above `1,000,000,000,000,000` tokens are rejected as obviously invalid dirty data.
 - Each GitHub user can sync at most once every 30 minutes.
 - Only the latest 30 daily rows are accepted.
 - Cloudflare Worker rate limit bindings throttle leaderboard reads, OAuth entry points, and write APIs per IP and route.
@@ -20,8 +20,8 @@ The IP limit is a coarse abuse brake, not identity. Public networks, VPNs, mobil
 - `GET /auth/github/callback` completes OAuth and returns a short-lived one-time code to the desktop app's localhost callback.
 - `POST /auth/session` exchanges the one-time code plus the app-held verifier for a session token.
 - `GET /api/me` returns the signed-in GitHub profile.
-- `DELETE /api/me` removes the user, sessions, and leaderboard XP rows.
-- `POST /api/usage/daily` upserts daily XP aggregates.
+- `DELETE /api/me` removes the user, sessions, and leaderboard token rows.
+- `POST /api/usage/daily` upserts daily token aggregates.
 - `GET /api/leaderboard?range=today|7d|30d|all` returns the top 100 users.
 
 ## Setup

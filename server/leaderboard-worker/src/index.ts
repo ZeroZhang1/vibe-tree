@@ -19,7 +19,7 @@ type SecurityEventType =
   | "invalid_payload"
   | "server_error";
 
-const MAX_DAILY_ACCEPTED_XP = 1_000_000_000_000_000;
+const MAX_DAILY_ACCEPTED_TOKENS = 1_000_000_000_000_000;
 const MAX_BACKFILL_DAYS = 30;
 const SYNC_COOLDOWN_SECONDS = 30 * 60;
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
@@ -385,7 +385,7 @@ async function syncDailyUsage(request: Request, env: Env) {
   await enforceSyncCooldown(user.userId, env);
 
   const body = await request.json().catch(() => undefined) as
-    | { days?: Array<{ date?: string; xp?: number }>; appVersion?: string }
+    | { days?: Array<{ date?: string; tokens?: number; xp?: number }>; appVersion?: string }
     | undefined;
   const days = Array.isArray(body?.days) ? body.days.slice(0, MAX_BACKFILL_DAYS) : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
@@ -415,7 +415,7 @@ async function syncDailyUsage(request: Request, env: Env) {
       ok: true,
       synced: statements.length,
       leaderboardType: "community",
-      safetyMaxDailyXp: MAX_DAILY_ACCEPTED_XP,
+      safetyMaxDailyTokens: MAX_DAILY_ACCEPTED_TOKENS,
       nextSyncAfterSeconds: SYNC_COOLDOWN_SECONDS,
     },
     env,
@@ -437,7 +437,7 @@ async function enforceSyncCooldown(userId: string, env: Env) {
   }
 }
 
-function normalizeDailyUsageRows(days: Array<{ date?: string; xp?: number }>) {
+function normalizeDailyUsageRows(days: Array<{ date?: string; tokens?: number; xp?: number }>) {
   const today = localDateKey(new Date());
   const earliest = addDays(today, -(MAX_BACKFILL_DAYS - 1));
   const latest = addDays(today, 1);
@@ -447,22 +447,23 @@ function normalizeDailyUsageRows(days: Array<{ date?: string; xp?: number }>) {
     const date = typeof day.date === "string" && isDateKey(day.date) ? day.date : "";
     if (!date || date < earliest || date > latest) continue;
 
-    const rawXp = Math.round(Number(day.xp));
-    if (!Number.isFinite(rawXp) || rawXp < 0) {
-      throw new HttpError(400, "XP must be a non-negative integer.", {}, "invalid_payload");
+    const rawTokens = Math.round(Number(day.tokens ?? day.xp));
+    if (!Number.isFinite(rawTokens) || rawTokens < 0) {
+      throw new HttpError(400, "Tokens must be a non-negative integer.", {}, "invalid_payload");
     }
-    if (rawXp > MAX_DAILY_ACCEPTED_XP) {
-      throw new HttpError(400, `Daily XP is above the accepted safety limit of ${MAX_DAILY_ACCEPTED_XP}.`, {
-        safetyMaxDailyXp: MAX_DAILY_ACCEPTED_XP,
+    if (rawTokens > MAX_DAILY_ACCEPTED_TOKENS) {
+      throw new HttpError(400, `Daily tokens are above the accepted safety limit of ${MAX_DAILY_ACCEPTED_TOKENS}.`, {
+        safetyMaxDailyTokens: MAX_DAILY_ACCEPTED_TOKENS,
       }, "invalid_payload");
     }
 
-    byDate.set(date, Math.max(byDate.get(date) ?? 0, rawXp));
+    byDate.set(date, Math.max(byDate.get(date) ?? 0, rawTokens));
   }
 
-  return [...byDate.entries()].map(([date, rawXp]) => ({
+  return [...byDate.entries()].map(([date, tokens]) => ({
     date,
-    xp: rawXp,
+    tokens,
+    xp: tokens,
   }));
 }
 
@@ -475,23 +476,23 @@ async function getLeaderboard(request: Request, env: Env) {
   const query =
     range === "all"
       ? `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
-           SUM(d.xp) AS xp,
+           SUM(d.xp) AS tokens,
            (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive
          FROM daily_usage d
          JOIN users u ON u.user_id = d.user_id
          GROUP BY u.user_id
-         HAVING xp > 0
-         ORDER BY xp DESC
+         HAVING tokens > 0
+         ORDER BY tokens DESC
          LIMIT 100`
       : `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
-           SUM(d.xp) AS xp,
+           SUM(d.xp) AS tokens,
            (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive
          FROM daily_usage d
          JOIN users u ON u.user_id = d.user_id
          WHERE d.date >= ?
          GROUP BY u.user_id
-         HAVING xp > 0
-         ORDER BY xp DESC
+         HAVING tokens > 0
+         ORDER BY tokens DESC
          LIMIT 100`;
   const result =
     range === "all" ? await env.DB.prepare(query).all() : await env.DB.prepare(query).bind(since).all();
@@ -500,7 +501,8 @@ async function getLeaderboard(request: Request, env: Env) {
     userId: String(row.userId),
     username: String(row.username),
     avatarUrl: typeof row.avatarUrl === "string" ? row.avatarUrl : undefined,
-    xp: Math.max(0, Math.round(Number(row.xp))),
+    tokens: Math.max(0, Math.round(Number(row.tokens))),
+    xp: Math.max(0, Math.round(Number(row.tokens))),
     daysActive: Math.max(0, Math.round(Number(row.daysActive))),
   }));
   return json(

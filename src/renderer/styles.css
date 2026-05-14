@@ -1129,7 +1129,7 @@ label {
 }
 
 /* ============================
-   PROGRESS - XP BAR
+   PROGRESS - TOKEN BAR
    ============================ */
 
 .progress-block {
@@ -1378,7 +1378,7 @@ label {
 
 .leaderboard-person strong,
 .leaderboard-person span,
-.leaderboard-xp {
+.leaderboard-tokens {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1404,7 +1404,7 @@ label {
   font-size: 0.66rem;
 }
 
-.leaderboard-xp {
+.leaderboard-tokens {
   color: var(--ink);
   font-size: 0.82rem;
   text-align: right;
@@ -2387,12 +2387,34 @@ label {
   overflow: hidden;
 }
 
-.achievement-toast span {
+.achievement-toast-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.achievement-toast-meta {
+  min-width: 0;
+  flex: 1;
   color: var(--leaf);
   font-size: 0.62rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.achievement-toast-new {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 2px solid var(--leaf);
+  background: var(--leaf);
+  color: var(--ink);
+  box-shadow: var(--pixel-shadow);
+  font-size: 0.54rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.04em;
 }
 
 .achievement-toast strong {
@@ -2418,9 +2440,19 @@ label {
   transform-origin: 100% 0;
 }
 
-.pet-root .achievement-toast span {
+.pet-root .achievement-toast-head {
+  gap: 5px;
+}
+
+.pet-root .achievement-toast-meta {
   font-size: 0.56rem;
   letter-spacing: 0.04em;
+}
+
+.pet-root .achievement-toast-new {
+  padding: 1px 4px;
+  border-width: 1px;
+  font-size: 0.48rem;
 }
 
 .pet-root .achievement-toast strong {
@@ -2481,7 +2513,7 @@ label {
   --toast-border: var(--rarity-common-border);
 }
 
-.toast-root .achievement-toast span,
+.toast-root .achievement-toast-meta,
 .toast-root .achievement-toast strong,
 .toast-root .achievement-toast p {
   display: block;
@@ -2519,7 +2551,7 @@ label {
   box-shadow: var(--pixel-shadow-lg), 0 0 20px var(--rarity-rare-bg);
 }
 
-.achievement-toast.rarity-rare span {
+.achievement-toast.rarity-rare .achievement-toast-meta {
   color: var(--rarity-rare);
 }
 
@@ -2529,7 +2561,7 @@ label {
   box-shadow: var(--pixel-shadow-lg), 0 0 24px var(--rarity-epic-bg);
 }
 
-.achievement-toast.rarity-epic span {
+.achievement-toast.rarity-epic .achievement-toast-meta {
   color: var(--rarity-epic);
 }
 
@@ -2540,7 +2572,7 @@ label {
   animation: achievementToastIn 0.2s steps(4) both, legendaryShimmer 2s ease infinite 0.2s;
 }
 
-.achievement-toast.rarity-legendary span {
+.achievement-toast.rarity-legendary .achievement-toast-meta {
   color: var(--rarity-legendary);
 }
 
@@ -2550,7 +2582,7 @@ label {
   box-shadow: var(--pixel-shadow-lg), 0 0 16px var(--rarity-hidden-bg);
 }
 
-.achievement-toast.rarity-hidden span {
+.achievement-toast.rarity-hidden .achievement-toast-meta {
   color: var(--rarity-hidden);
 }
 
@@ -2884,7 +2916,7 @@ label {
     grid-template-columns: 42px 34px minmax(0, 1fr);
   }
 
-  .leaderboard-xp {
+  .leaderboard-tokens {
     grid-column: 3;
     text-align: left;
   }

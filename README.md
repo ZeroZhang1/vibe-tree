@@ -44,7 +44,7 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 ## 为什么用 Vibe Tree？
 
 ### 🌱 让编程有生命感
-透明悬浮窗常驻桌面，小树随着 token 消耗实时生长。累计 XP 决定等级，最近活跃度决定天气——编码越多，树越茂盛。
+透明悬浮窗常驻桌面，小树随着 token 消耗实时生长。累计 Token 决定等级，最近活跃度决定天气——编码越多，树越茂盛。
 
 ### 📊 看见你的 token 去向
 管理面板展示来源统计、模型占比、最近 7 天图表。支持按 agent 拆分或查看单个 agent 的 input / output / cache 明细。
@@ -89,13 +89,13 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 ---
 
 <details>
-<summary><strong>📖 XP 规则</strong></summary>
+<summary><strong>📖 Token 规则</strong></summary>
 
 ```
-XP = inputTokens + outputTokens
+计入 Token = inputTokens + outputTokens
 ```
 
-`cacheReadTokens` / `cacheWriteTokens` 记录来源明细，暂不计入 XP。
+`cacheReadTokens` / `cacheWriteTokens` 记录来源明细，暂不计入累计 Token。
 
 默认从安装当天开始统计，安装日前的历史不会计入。
 
@@ -149,7 +149,7 @@ VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm start
 public/assets/trees/vibe-bonsai/config/game-balance.json
 ```
 
-包含：XP 等级曲线、天气阈值、成长阶段阈值、活跃窗口参数。
+包含：Token 等级曲线、天气阈值、成长阶段阈值、活跃窗口参数。
 
 </details>
 
