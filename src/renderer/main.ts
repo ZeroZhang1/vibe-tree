@@ -1665,6 +1665,8 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
   const baseHeight = 668;
   const scaleX = width / baseWidth;
   const scaleY = height / baseHeight;
+  const scopeClass = `share-card-${templateId}-${width}x${height}`;
+  const scope = `.share-card.${scopeClass}`;
   const themeBackground = shareTemplateBackground(templateId);
   const heatCells = report.heatLevels.map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
   const heatScale = [0, 1, 2, 3, 4].map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
@@ -1674,18 +1676,18 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
       : `这 7 天，你最常在<mark>${escapeHtml(report.favoritePeriod.label)}</mark>进入 coding 状态。`;
 
   return `
-    <div xmlns="http://www.w3.org/1999/xhtml" class="share-card" style="width:${width}px;height:${height}px">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="share-card ${scopeClass}" style="width:${width}px;height:${height}px">
       <style>
-        .share-card,
-        .share-card * { box-sizing: border-box; }
-        .share-card {
+        ${scope},
+        ${scope} * { box-sizing: border-box; }
+        ${scope} {
           position: relative;
           overflow: hidden;
           background: ${themeBackground};
           border-radius: ${Math.round(22 * scaleX)}px;
           font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
         }
-        .share-card .poster {
+        ${scope} .poster {
           --bg: #fbf7ec;
           --panel: rgba(28, 32, 25, 0.05);
           --line: rgba(28, 32, 25, 0.18);
@@ -1716,7 +1718,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           transform: scale(${scaleX}, ${scaleY});
           transform-origin: 0 0;
         }
-        .share-card .poster.glass {
+        ${scope} .poster.glass {
           --bg: #161922;
           --panel: rgba(255, 255, 255, 0.1);
           --line: rgba(255, 255, 255, 0.2);
@@ -1737,7 +1739,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
             linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 48%),
             var(--bg);
         }
-        .share-card .poster.mono {
+        ${scope} .poster.mono {
           --bg: #f8f8f5;
           --panel: rgba(20, 20, 16, 0.04);
           --line: rgba(20, 20, 16, 0.14);
@@ -1754,7 +1756,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           --heat3: #4f8f55;
           --heat4: #11120e;
         }
-        .share-card .poster::before {
+        ${scope} .poster::before {
           content: "";
           position: absolute;
           inset: 0;
@@ -1766,53 +1768,53 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           background-size: 28px 28px;
           mask-image: radial-gradient(circle at 50% 32%, black, transparent 74%);
         }
-        .share-card .top,
-        .share-card .hero,
-        .share-card .metrics,
-        .share-card .heat-card,
-        .share-card .cta {
+        ${scope} .top,
+        ${scope} .hero,
+        ${scope} .metrics,
+        ${scope} .heat-card,
+        ${scope} .cta {
           position: relative;
           z-index: 1;
         }
-        .share-card .top {
+        ${scope} .top {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
         }
-        .share-card .brand {
+        ${scope} .brand {
           display: grid;
           gap: 5px;
         }
-        .share-card .eyebrow {
+        ${scope} .eyebrow {
           color: var(--leaf);
           font-size: 12px;
           font-weight: 1000;
           letter-spacing: 1.7px;
         }
-        .share-card .brand b {
+        ${scope} .brand b {
           font-size: 21px;
         }
-        .share-card .weather {
+        ${scope} .weather {
           display: grid;
           gap: 6px;
           justify-items: end;
           color: var(--accent);
         }
-        .share-card .weather b {
+        ${scope} .weather b {
           font-size: 21px;
         }
-        .share-card .weather span {
+        ${scope} .weather span {
           color: var(--muted);
           font-size: 11px;
         }
-        .share-card .hero {
+        ${scope} .hero {
           display: grid;
           grid-template-columns: 166px 1fr;
           gap: 18px;
           align-items: center;
           margin-top: 18px;
         }
-        .share-card .tree-frame {
+        ${scope} .tree-frame {
           position: relative;
           display: grid;
           place-items: center;
@@ -1821,7 +1823,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           border-radius: 20px;
           background: var(--panel);
         }
-        .share-card .tree-frame::before {
+        ${scope} .tree-frame::before {
           content: "";
           position: absolute;
           width: 126px;
@@ -1830,7 +1832,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           background: color-mix(in srgb, var(--leaf) 20%, transparent);
           filter: blur(18px);
         }
-        .share-card .tree {
+        ${scope} .tree {
           position: relative;
           width: 134px;
           height: 134px;
@@ -1838,28 +1840,28 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           image-rendering: pixelated;
           filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.24));
         }
-        .share-card h2 {
+        ${scope} h2 {
           margin: 0;
           font-size: 32px;
           line-height: 1.04;
         }
-        .share-card h2 span {
+        ${scope} h2 span {
           color: var(--leaf);
         }
-        .share-card .level {
+        ${scope} .level {
           margin-top: 12px;
           color: var(--accent);
           font-size: 31px;
           font-weight: 1000;
           line-height: 1;
         }
-        .share-card .metrics {
+        ${scope} .metrics {
           display: grid;
           grid-template-columns: 0.92fr 1.16fr 0.92fr;
           gap: 10px;
           margin-top: 12px;
         }
-        .share-card .metric {
+        ${scope} .metric {
           display: grid;
           gap: 5px;
           min-height: 72px;
@@ -1868,50 +1870,50 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           border-radius: 16px;
           background: var(--panel);
         }
-        .share-card .metric small {
+        ${scope} .metric small {
           color: var(--muted);
           font-size: 11px;
           line-height: 1.25;
         }
-        .share-card .metric b {
+        ${scope} .metric b {
           font-size: 18px;
           white-space: nowrap;
         }
-        .share-card .metric.featured {
+        ${scope} .metric.featured {
           min-height: 82px;
           padding: 13px;
           border-color: color-mix(in srgb, var(--leaf) 36%, var(--line));
           background: color-mix(in srgb, var(--panel) 72%, var(--leaf) 10%);
         }
-        .share-card .metric.featured small {
+        ${scope} .metric.featured small {
           color: var(--leaf);
           font-weight: 900;
         }
-        .share-card .metric.featured b {
+        ${scope} .metric.featured b {
           font-size: 24px;
         }
-        .share-card .heat-card {
+        ${scope} .heat-card {
           margin-top: 12px;
           padding: 14px;
           border: 1px solid var(--line);
           border-radius: 18px;
           background: color-mix(in srgb, var(--bg) 76%, #000 24%);
         }
-        .share-card .heat-head {
+        ${scope} .heat-head {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
           margin-bottom: 8px;
         }
-        .share-card .heat-head strong {
+        ${scope} .heat-head strong {
           display: block;
           font-size: 16px;
         }
-        .share-card .heat-head mark {
+        ${scope} .heat-head mark {
           color: var(--leaf);
           background: transparent;
         }
-        .share-card .heat-meta {
+        ${scope} .heat-meta {
           display: grid;
           grid-template-columns: repeat(2, auto);
           gap: 8px;
@@ -1919,15 +1921,15 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           font-size: 9px;
           text-align: right;
         }
-        .share-card .heat-meta b {
+        ${scope} .heat-meta b {
           color: var(--ink);
           font-size: 10px;
         }
-        .share-card .heat-meta span {
+        ${scope} .heat-meta span {
           display: grid;
           gap: 2px;
         }
-        .share-card .heat-foot {
+        ${scope} .heat-foot {
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
@@ -1939,53 +1941,53 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           font-size: 9.5px;
           line-height: 1.45;
         }
-        .share-card .heat-foot b {
+        ${scope} .heat-foot b {
           color: var(--accent);
           font-size: 10px;
         }
-        .share-card .heat-foot mark {
+        ${scope} .heat-foot mark {
           color: var(--accent);
           background: transparent;
           font-weight: 900;
         }
-        .share-card .heat-story {
+        ${scope} .heat-story {
           display: grid;
           gap: 2px;
         }
-        .share-card .heat-scale {
+        ${scope} .heat-scale {
           display: flex;
           align-items: center;
           gap: 4px;
           min-width: 86px;
           text-align: right;
         }
-        .share-card .heat-scale span {
+        ${scope} .heat-scale span {
           white-space: nowrap;
         }
-        .share-card .scale-row {
+        ${scope} .scale-row {
           display: flex;
           align-items: center;
           justify-content: flex-end;
           gap: 3px;
         }
-        .share-card .scale-row i {
+        ${scope} .scale-row i {
           width: 9px;
           height: 9px;
           border-radius: 2px;
           background: var(--c);
         }
-        .share-card .heat {
+        ${scope} .heat {
           display: grid;
           grid-template-columns: repeat(24, 1fr);
           gap: 2px;
         }
-        .share-card .heat i {
+        ${scope} .heat i {
           display: block;
           aspect-ratio: 1 / 1;
           border-radius: 3px;
           background: var(--c);
         }
-        .share-card .cta {
+        ${scope} .cta {
           position: absolute;
           left: 26px;
           right: 26px;
@@ -1997,30 +1999,30 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           color: var(--muted);
           font-size: 13px;
         }
-        .share-card .pill {
+        ${scope} .pill {
           display: grid;
           gap: 10px;
           color: var(--muted);
         }
-        .share-card .pill b {
+        ${scope} .pill b {
           color: var(--muted);
           font-size: 13px;
           font-weight: 500;
           line-height: 1.4;
         }
-        .share-card .pill span {
+        ${scope} .pill span {
           display: inline-flex;
           align-items: center;
           gap: 7px;
         }
-        .share-card .pill span::before {
+        ${scope} .pill span::before {
           content: "";
           width: 10px;
           height: 10px;
           border-radius: 3px;
           background: var(--leaf);
         }
-        .share-card .qr {
+        ${scope} .qr {
           position: relative;
           width: var(--qr-size);
           height: var(--qr-size);
@@ -2031,14 +2033,14 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           border-radius: 11px;
           background: var(--qr-bg);
         }
-        .share-card .qr img {
+        ${scope} .qr img {
           display: block;
           width: 100%;
           height: 100%;
           object-fit: contain;
           image-rendering: pixelated;
         }
-        .share-card .qr-github {
+        ${scope} .qr-github {
           position: absolute;
           left: 50%;
           top: 50%;
