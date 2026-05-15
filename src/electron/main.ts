@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, net, Notification, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, net, Notification, screen, session, shell, Tray } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
@@ -79,6 +79,7 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardLastSyncedAt: undefined,
   launchOnStartup: false,
   silentStartup: false,
+  proxyUrl: undefined,
   enabledSourceIds: [...STAT_SOURCE_IDS],
   windowPosition: undefined,
 };
@@ -255,6 +256,50 @@ function terminalUpdateRoot() {
   return undefined;
 }
 
+async function configureNetworkProxy(proxyUrl?: string) {
+  const proxyRules = proxyRulesFromValue(proxyUrl) ?? proxyRulesFromEnvironment();
+  if (!proxyRules) {
+    await session.defaultSession.setProxy({ mode: "system" });
+    return;
+  }
+  await session.defaultSession.setProxy({
+    mode: "fixed_servers",
+    proxyRules,
+    proxyBypassRules: "<local>;127.0.0.1;localhost",
+  });
+}
+
+function proxyRulesFromEnvironment() {
+  const rawProxy =
+    process.env.VIBE_TREE_PROXY_URL ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.ALL_PROXY ||
+    process.env.all_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy;
+  return proxyRulesFromValue(rawProxy);
+}
+
+function proxyRulesFromValue(rawProxy: string | undefined) {
+  if (!rawProxy?.trim()) return undefined;
+  try {
+    const proxy = new URL(rawProxy.trim());
+    if (!proxy.hostname || !proxy.port) return undefined;
+    if (proxy.protocol === "http:" || proxy.protocol === "https:") {
+      const host = `${proxy.hostname}:${proxy.port}`;
+      return `http=${host};https=${host}`;
+    }
+    if (proxy.protocol === "socks:" || proxy.protocol === "socks4:" || proxy.protocol === "socks5:") {
+      return `${proxy.protocol}//${proxy.hostname}:${proxy.port}`;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
 function readLedger(): LedgerFile {
   const legacy = readLegacyLedger();
   const installedAt = readInstalledAt(legacy);
@@ -408,11 +453,13 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardLastSyncedAt,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
+    proxyUrl: cleanProxyUrl(settings.proxyUrl),
     enabledSourceIds: normalizeEnabledSourceIds(settings.enabledSourceIds),
     scale,
     badgeFrontMetric: normalizeBadgeMetric(settings.badgeFrontMetric, "level"),
     badgeBackMetric: normalizeBadgeMetric(settings.badgeBackMetric, "total"),
     totalDisplayUnit: normalizeTotalDisplayUnit(settings.totalDisplayUnit),
+    fontScale: typeof settings.fontScale === "number" && [1, 1.15, 1.3, 1.5].includes(settings.fontScale) ? settings.fontScale : undefined,
     codexSessionsDir: cleanPath(settings.codexSessionsDir),
     claudeSessionsDir: cleanPath(settings.claudeSessionsDir),
     openclawSessionsDir: cleanPath(settings.openclawSessionsDir),
@@ -445,6 +492,13 @@ function normalizeEnabledSourceIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [...STAT_SOURCE_IDS];
   const allowed = new Set<string>(STAT_SOURCE_IDS);
   return [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))];
+}
+
+function cleanProxyUrl(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return proxyRulesFromValue(trimmed) ? trimmed : undefined;
 }
 
 function normalizeLanguage(value: unknown): AppLanguage {
@@ -1276,6 +1330,9 @@ function updateSettings(partial: Partial<Settings>) {
   if (partial.launchOnStartup !== undefined || partial.silentStartup !== undefined) {
     applyLoginItemSettings();
   }
+  if (partial.proxyUrl !== undefined) {
+    void configureNetworkProxy(ledger.settings.proxyUrl);
+  }
   if (partial.updateCheckEnabled !== undefined) {
     startUpdateChecks();
   }
@@ -1534,6 +1591,8 @@ async function requestJsonWithElectronNet<T = unknown>(
 ): Promise<T> {
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
   const body = options.body === undefined ? undefined : JSON.stringify(options.body);
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), options.timeoutMs ?? 10_000);
   const headers: Record<string, string> = {
     Accept: "application/json",
     "User-Agent": `${APP_NAME}/${currentAppVersion()}`,
@@ -1543,11 +1602,20 @@ async function requestJsonWithElectronNet<T = unknown>(
   }
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
 
-  const response = await net.fetch(urlString, {
-    method,
-    headers,
-    body,
-  });
+  let response: Awaited<ReturnType<typeof net.fetch>>;
+  try {
+    response = await net.fetch(urlString, {
+      method,
+      headers,
+      body,
+      signal: abort.signal,
+    });
+  } catch (error) {
+    throw normalizeLeaderboardRequestError(error);
+  } finally {
+    clearTimeout(timeout);
+  }
+
   const raw = await response.text();
   let parsed: unknown = {};
   if (raw.trim()) {
@@ -1567,6 +1635,14 @@ async function requestJsonWithElectronNet<T = unknown>(
   }
 
   return parsed as T;
+}
+
+function normalizeLeaderboardRequestError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/abort|timeout|timed out|ERR_CONNECTION_TIMED_OUT/i.test(message)) {
+    return new Error(mainText("leaderboardRequestTimedOut"));
+  }
+  return new Error(message || mainText("leaderboardRequestFailed"));
 }
 
 async function installUpdate(): Promise<UpdateStatus> {
@@ -1843,7 +1919,7 @@ function loginItemArgs() {
   return entry ? [entry] : [];
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName(APP_NAME);
   app.setAppUserModelId(APP_ID);
   if (SMOKE_TEST) {
@@ -1852,6 +1928,7 @@ app.whenReady().then(() => {
   }
   Menu.setApplicationMenu(null);
   ledger = readLedger();
+  await configureNetworkProxy(ledger.settings.proxyUrl);
   achievementState = readAchievementState();
   leaderboardService.readAuth();
   applyLoginItemSettings();

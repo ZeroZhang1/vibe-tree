@@ -67,11 +67,13 @@ export interface Settings {
   leaderboardLastSyncedAt?: string;
   launchOnStartup: boolean;
   silentStartup: boolean;
+  proxyUrl?: string;
   enabledSourceIds: string[];
   windowPosition?: {
     x: number;
     y: number;
   };
+  fontScale?: number;
   codexSessionsDir?: string;
   claudeSessionsDir?: string;
   openclawSessionsDir?: string;

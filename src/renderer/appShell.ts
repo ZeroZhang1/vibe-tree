@@ -197,6 +197,15 @@ export function appShellHtml(viewMode: ViewMode) {
                   <option value="2">2x</option>
                 </select>
               </label>
+              <label class="scale-select">
+                <span data-i18n="fontSize">字体</span>
+                <select id="fontScaleSelect">
+                  <option value="1">1x</option>
+                  <option value="1.15">1.15x</option>
+                  <option value="1.3">1.3x</option>
+                  <option value="1.5">1.5x</option>
+                </select>
+              </label>
               <label class="toggle-row">
                 <input id="lockInput" type="checkbox" />
                 <span data-i18n="lockTree">锁定小树位置</span>
@@ -270,6 +279,10 @@ export function appShellHtml(viewMode: ViewMode) {
               <label class="toggle-row">
                 <input id="silentStartupInput" type="checkbox" />
                 <span data-i18n="silentStartup">静默启动</span>
+              </label>
+              <label class="proxy-setting">
+                <span data-i18n="proxyUrl">网络代理</span>
+                <input id="proxyUrlInput" type="url" inputmode="url" placeholder="留空使用系统设置，例如 http://127.0.0.1:7897" data-i18n-placeholder="proxyPlaceholder" />
               </label>
             </div>
           </section>

@@ -119,6 +119,31 @@ const AUTO_BADGE_FLIP_MS = 30_000;
 const BADGE_TOKEN_HOLD_MS = 2_500;
 const badgeFlipTimers = new Map<string, number>();
 let badgeAutoFlipTimer: number | undefined;
+const LUNAR_NEW_YEAR_PERIOD_DAYS = 7;
+const LUNAR_NEW_YEAR_DATES: Record<number, string> = {
+  2015: "2015-02-19",
+  2016: "2016-02-08",
+  2017: "2017-01-28",
+  2018: "2018-02-16",
+  2019: "2019-02-05",
+  2020: "2020-01-25",
+  2021: "2021-02-12",
+  2022: "2022-02-01",
+  2023: "2023-01-22",
+  2024: "2024-02-10",
+  2025: "2025-01-29",
+  2026: "2026-02-17",
+  2027: "2027-02-06",
+  2028: "2028-01-26",
+  2029: "2029-02-13",
+  2030: "2030-02-03",
+  2031: "2031-01-23",
+  2032: "2032-02-11",
+  2033: "2033-01-31",
+  2034: "2034-02-19",
+  2035: "2035-02-08",
+  2036: "2036-01-28",
+};
 let historyFilter: HistoryFilter = "all";
 let lastHistoryChartKey = "";
 let sourceScope: SourceScope = "today";
@@ -175,8 +200,10 @@ const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settings
 const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
 const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
+const fontScaleSelect = document.querySelector<HTMLSelectElement>("#fontScaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
 const silentStartupInput = document.querySelector<HTMLInputElement>("#silentStartupInput");
+const proxyUrlInput = document.querySelector<HTMLInputElement>("#proxyUrlInput");
 const updateCheckEnabledInput = document.querySelector<HTMLInputElement>("#updateCheckEnabledInput");
 const updateStatusText = document.querySelector<HTMLElement>("#updateStatusText");
 const checkUpdateButton = document.querySelector<HTMLButtonElement>("#checkUpdateButton");
@@ -279,6 +306,10 @@ function applyI18n() {
   document.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((element) => {
     const key = element.dataset.i18nTitle;
     if (key) element.setAttribute("title", t(key));
+  });
+  document.querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]").forEach((element) => {
+    const key = element.dataset.i18nPlaceholder;
+    if (key) element.setAttribute("placeholder", t(key));
   });
   document.querySelectorAll<HTMLElement>("[data-i18n-tooltip]").forEach((element) => {
     const key = element.dataset.i18nTooltip;
@@ -590,6 +621,13 @@ function bindEvents() {
     render();
   });
 
+  fontScaleSelect?.addEventListener("change", async () => {
+    if (!ledger) return;
+    const scale = Number(fontScaleSelect.value);
+    document.documentElement.style.setProperty("--font-scale", String(scale));
+    ledger = await window.bonsai.updateSettings({ fontScale: scale });
+  });
+
   languageSelect?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ language: normalizeLanguage(languageSelect.value) });
@@ -619,6 +657,12 @@ function bindEvents() {
   silentStartupInput?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ silentStartup: silentStartupInput.checked });
+    render();
+  });
+
+  proxyUrlInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({ proxyUrl: proxyUrlInput.value.trim() || undefined });
     render();
   });
 
@@ -988,10 +1032,16 @@ function render() {
     if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
     if (lockInput) lockInput.checked = ledger.settings.locked;
     if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
+    if (fontScaleSelect) {
+      const fs = ledger.settings.fontScale ?? 1;
+      fontScaleSelect.value = String(fs);
+      document.documentElement.style.setProperty("--font-scale", String(fs));
+    }
     if (languageSelect) languageSelect.value = ledger.settings.language;
     syncStatsSourceInputs();
     if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
+    syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
     if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
     if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;
@@ -1306,6 +1356,29 @@ function achievementProgress(def: AchievementDef, stats?: Stats, context?: Achie
       label: `${formatCompact(peak)} / ${formatCompact(target)} token/min`,
     };
   }
+  if (context) {
+    const progressMap: Record<string, { current: number; target: number; unit: string }> = {
+      explorer_10d: { current: context.totalActiveDays, target: 10, unit: "d" },
+      explorer_50d: { current: context.totalActiveDays, target: 50, unit: "d" },
+      explorer_100d: { current: context.totalActiveDays, target: 100, unit: "d" },
+      explorer_365d: { current: context.totalActiveDays, target: 365, unit: "d" },
+      model_collector_3: { current: context.uniqueModels, target: 3, unit: "" },
+      model_collector_10: { current: context.uniqueModels, target: 10, unit: "" },
+      model_collector_20: { current: context.uniqueModels, target: 20, unit: "" },
+      streak_100: { current: context.consecutiveDays, target: 100, unit: "d" },
+      thousand_cuts: { current: context.totalEntries, target: 1_000, unit: "" },
+      ten_thousand_cuts: { current: context.totalEntries, target: 10_000, unit: "" },
+      session_grinder: { current: context.maxEntriesOneDay, target: 100, unit: "" },
+      session_marathon: { current: context.maxEntriesOneDay, target: 500, unit: "" },
+    };
+    const prog = progressMap[def.id];
+    if (prog) {
+      return {
+        percent: clamp((prog.current / prog.target) * 100, 0, 100),
+        label: `${prog.current} / ${prog.target}${prog.unit ? " " + prog.unit : ""}`,
+      };
+    }
+  }
   return undefined;
 }
 
@@ -1412,16 +1485,24 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
   const hourSet = new Set<number>();
   const weekendDays = new Map<string, Set<number>>();
   const hourKeys = new Set<number>();
+  const dayEntries = new Map<string, number>();
+  const dayHours = new Map<string, Set<number>>();
   let hasFibonacciSession = false;
 
   for (const entry of entries) {
     const xp = xpForEntry(entry, enabledSources);
     if (xp <= 0) continue;
-    countedEntries.push(entry);
     const createdAt = new Date(entry.createdAt);
+    if (!Number.isFinite(createdAt.getTime())) continue;
+    countedEntries.push(entry);
     const key = dateKey(createdAt);
+    const hour = createdAt.getHours();
     dayXp.set(key, (dayXp.get(key) ?? 0) + xp);
-    hourSet.add(createdAt.getHours());
+    dayEntries.set(key, (dayEntries.get(key) ?? 0) + 1);
+    const hours = dayHours.get(key) ?? new Set<number>();
+    hours.add(hour);
+    dayHours.set(key, hours);
+    hourSet.add(hour);
     hourKeys.add(Math.floor(createdAt.getTime() / 3_600_000));
     if (isFibonacci(xp)) hasFibonacciSession = true;
 
@@ -1450,6 +1531,28 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
   const maxSourcesOneDay = Math.max(0, ...[...daySources.values()].map((sources) => sources.size));
   const stageIndex = tree ? tree.stages.findIndex((stage) => stage.id === stats.stage.id) : 0;
 
+  const uniqueModels = new Set(
+    countedEntries
+      .map((entry) => entry.model?.trim())
+      .filter((model): model is string => typeof model === "string" && model.length > 0),
+  ).size;
+  const totalSourceXp = Object.values(sourceXp).reduce((a, b) => a + b, 0);
+  const dominantSourceRatio = totalSourceXp > 0 ? Math.max(...Object.values(sourceXp)) / totalSourceXp : 0;
+  const maxEntriesOneDay = Math.max(0, ...dayEntries.values());
+
+  let longestInactiveDays = 0;
+  for (let i = 1; i < activeDayKeys.length; i++) {
+    const prev = Date.parse(`${activeDayKeys[i - 1]}T00:00:00`);
+    const curr = Date.parse(`${activeDayKeys[i]}T00:00:00`);
+    if (Number.isFinite(prev) && Number.isFinite(curr)) {
+      const dayGap = Math.round((curr - prev) / 86_400_000);
+      longestInactiveDays = Math.max(longestInactiveDays, Math.max(0, dayGap - 1));
+    }
+  }
+
+  const hasHolidayCoding = activeDayKeys.some(isNewYearOrLunarNewYearPeriod);
+  const has5amTo9amStreak = [...dayHours.values()].some((hours) => [5, 6, 7, 8].every((hour) => hours.has(hour)));
+
   return {
     stats,
     entries: countedEntries,
@@ -1465,6 +1568,15 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
     touchGrassReturn: hasReturnAfterInactiveGap(activeDayKeys, 7),
     coffeeOverdose: hasConsecutiveHourActivity(hourKeys, 8),
     hasFibonacciSession,
+    totalActiveDays: activeDayKeys.length,
+    uniqueModels,
+    dominantSourceRatio,
+    hasNoonPeak: hourSet.has(12),
+    has5amTo9amStreak,
+    longestInactiveDays,
+    totalEntries: countedEntries.length,
+    maxEntriesOneDay,
+    hasHolidayCoding,
   };
 }
 
@@ -1562,6 +1674,20 @@ function hasReturnAfterInactiveGap(keys: string[], gapDays: number) {
     }
   }
   return false;
+}
+
+function isNewYearOrLunarNewYearPeriod(key: string) {
+  if (key.slice(5) === "01-01") return true;
+
+  const year = Number(key.slice(0, 4));
+  const lunarNewYear = LUNAR_NEW_YEAR_DATES[year];
+  if (!lunarNewYear) return false;
+
+  const current = Date.parse(`${key}T00:00:00`);
+  const start = Date.parse(`${lunarNewYear}T00:00:00`);
+  if (!Number.isFinite(current) || !Number.isFinite(start)) return false;
+
+  return current >= start && current < start + LUNAR_NEW_YEAR_PERIOD_DAYS * 86_400_000;
 }
 
 function hasConsecutiveHourActivity(hourKeys: Set<number>, target: number) {
@@ -2268,6 +2394,15 @@ function achievementsRenderSignature(stats?: Stats, context?: AchievementContext
           touchGrassReturn: context.touchGrassReturn,
           coffeeOverdose: context.coffeeOverdose,
           hasFibonacciSession: context.hasFibonacciSession,
+          totalActiveDays: context.totalActiveDays,
+          uniqueModels: context.uniqueModels,
+          dominantSourceRatio: context.dominantSourceRatio,
+          hasNoonPeak: context.hasNoonPeak,
+          has5amTo9amStreak: context.has5amTo9amStreak,
+          longestInactiveDays: context.longestInactiveDays,
+          totalEntries: context.totalEntries,
+          maxEntriesOneDay: context.maxEntriesOneDay,
+          hasHolidayCoding: context.hasHolidayCoding,
         }
       : undefined,
     unlocked: achievementState.unlocked.map((item) => [item.id, item.unlockedAt]),

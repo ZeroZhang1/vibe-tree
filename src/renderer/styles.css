@@ -51,7 +51,7 @@
   --radius-lg: 6px;
 
   font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
 }
 
 * {
@@ -735,6 +735,17 @@ h4 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.proxy-setting {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 5px;
+}
+
+.proxy-setting input {
+  min-height: 30px;
+  font-size: 0.68rem;
 }
 
 .pet-settings {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-15 (v0.4.0)
+
+- Added 21 new achievements across active days, model variety, agent loyalty, daily peaks, time windows, holidays, long returns, and interaction milestones.
+- Added achievement progress for the new numeric milestones and tightened the new criteria so disabled sources and zero-token entries do not unlock rewards.
+- Added a global font-size setting for the manager UI, persisted in device settings.
+- Added a configurable network proxy setting for leaderboard requests, with environment proxy fallback and clearer timeout copy.
+- Kept leaderboard network requests bounded with request timeouts so failed proxy/network paths return cleanly.
+
 ## 2026-05-14 (v0.3.7)
 
 - Reduced automatic update checks to once per day and persisted the last check time so restarts do not repeatedly hit GitHub.
