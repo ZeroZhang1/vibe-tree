@@ -7,12 +7,20 @@ The desktop app sends a rolling 30-day snapshot of daily token totals plus the l
 The first release is a Community leaderboard, not strict cheat-proof scoring. The backend keeps only broad safety rails:
 
 - Daily payloads above `1,000,000,000,000,000` tokens are rejected as obviously invalid dirty data.
-- Each GitHub user can sync at most once every 30 minutes.
+- Each GitHub user can sync at most once every 30 seconds.
 - Each sync accepts only the latest 30 daily rows, while the database retains older rows that were synced in previous windows for the all-time leaderboard.
 - Cloudflare Worker rate limit bindings throttle leaderboard reads, OAuth entry points, and write APIs per IP and route.
-- Suspicious events are written as structured Workers Logs. High-signal non-rate-limit events are also stored in D1 `security_events` with hashed IP values; rate-limit hits stay in Workers Logs to avoid turning an attack into D1 write load.
+- Suspicious events are written as structured Workers Logs. High-signal non-rate-limit events are also stored in D1 `security_events` with hashed IP values; rate-limit and normal sync-cooldown hits stay out of D1 to avoid turning button mashing into write load.
 
-The IP limit is a coarse abuse brake, not identity. Public networks, VPNs, mobile carriers, and corporate NATs may share an IP, so the app also keeps the per-GitHub-user sync cooldown.
+The IP limit is a coarse abuse brake, not identity. Public networks, VPNs, mobile carriers, and corporate NATs may share an IP, so the Worker also keeps the per-GitHub-user sync cooldown.
+
+Current rate limits are intentionally generous while usage is small:
+
+- Public leaderboard reads: `600/min/IP`.
+- Write APIs, including usage sync and account deletion: `300/min/IP`.
+- Auth routes: `20/min/IP`.
+
+The Worker rate-limit binding only supports 10-second or 60-second windows, so hour-level limits are deferred until real traffic justifies adding a Durable Object counter.
 
 ## Routes
 
@@ -23,6 +31,7 @@ The IP limit is a coarse abuse brake, not identity. Public networks, VPNs, mobil
 - `DELETE /api/me` removes the user, sessions, leaderboard token rows, public preference rows, sync state, auth codes, and user-linked security log rows.
 - `POST /api/usage/daily` upserts daily token aggregates and, when opted in, range-scoped aggregate usage preferences.
 - `GET /api/leaderboard?range=today|7d|30d|all` returns the top 100 users plus public preference details when the user opted in.
+- `GET /api/leaderboards` returns all four leaderboard ranges in one response.
 
 ## Setup
 

@@ -155,7 +155,7 @@ export function appShellHtml(viewMode: ViewMode) {
               <h3 data-i18n="globalLeaderboard">全球排行榜</h3>
             </div>
             <div class="leaderboard-header-actions">
-              <button class="secondary-button leaderboard-refresh-button" id="leaderboardPageRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新</button>
+              <button class="secondary-button leaderboard-refresh-button" id="leaderboardPageRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新并同步</button>
               <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
             </div>
           </div>
@@ -296,14 +296,18 @@ export function appShellHtml(viewMode: ViewMode) {
             <div class="leaderboard-settings" aria-label="全球排行榜设置" data-i18n-aria="leaderboardAria">
               <div class="leaderboard-user-card" id="leaderboardUserCard"></div>
               <div class="leaderboard-status" id="leaderboardStatusText"></div>
-              <p class="leaderboard-help" data-i18n="leaderboardPrivacyNote">用户说明：默认只同步每日 Token 总量和本地首次使用日期。开启公开使用偏好后，会额外同步聚合后的 Agent、模型、偏爱时段和峰值；不会包含提示词、文件、路径、会话记录或完整热力图。</p>
               <label class="toggle-row leaderboard-preference-public-row">
                 <input id="leaderboardPreferencesPublicInput" type="checkbox" />
                 <span>
                   <strong data-i18n="leaderboardPreferencePublic">公开使用偏好</strong>
-                  <small data-i18n="leaderboardPreferencePublicHint">只公开聚合后的 Agent、模型、偏爱时段和峰值，不上传原始记录。</small>
                 </span>
               </label>
+              <div class="leaderboard-help" aria-label="数据安全说明" data-i18n-aria="leaderboardPrivacyTitle">
+                <strong data-i18n="leaderboardPrivacyTitle">数据安全说明</strong>
+                <p data-i18n="leaderboardPrivacyDefault">默认只同步每日 Token 总量和本地首次使用日期。</p>
+                <p data-i18n="leaderboardPrivacyPreference">开启公开使用偏好后，会额外上传使用的 Agent、模型、时段和峰值 Token，不会包含任何提示词、会话记录、文件、路径或其他敏感信息。</p>
+                <p data-i18n="leaderboardPrivacyExit">您可以随时选择退出，退出后，您的信息将被完全删除。</p>
+              </div>
               <div class="leaderboard-actions">
                 <button class="secondary-button" id="leaderboardMembershipButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
                 <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncNow">立即同步</button>

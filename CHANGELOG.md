@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-05-15 (v0.5.1)
+
+- Hardened terminal updates with git/npm timeouts so stalled fetches or dependency installs fail cleanly instead of leaving the UI stuck.
+- Added terminal-update npm recovery for interrupted installs by cleaning leftover `.node_modules-*` and nested `node_modules/node_modules` artifacts before retrying dependency sync.
+- Passed configured proxy settings and a default Electron download mirror into terminal-update child processes so Electron binary downloads are less likely to fail on slow GitHub paths.
+- Cached leaderboard results locally for one hour and switched leaderboard refresh to one bundled read request with API-level sync throttling.
+
 ## 2026-05-15 (v0.5.0)
 
 - Added the share-image export flow with a carousel picker, three polished templates, and image saving from real user growth data.

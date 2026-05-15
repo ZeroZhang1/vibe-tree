@@ -116,6 +116,9 @@ const viewParam = new URLSearchParams(location.search).get("view");
 const uiThemeParam = new URLSearchParams(location.search).get("uiTheme");
 const viewMode: ViewMode = viewParam === "manager" ? "manager" : viewParam === "toast" ? "toast" : "pet";
 const UI_THEME_STORAGE_KEY = "vibe-tree:ui-theme";
+const LEADERBOARD_CACHE_STORAGE_KEY = "vibe-tree:leaderboard-cache";
+const LEADERBOARD_CACHE_TTL_MS = 60 * 60 * 1000;
+const LEADERBOARD_CACHE_DISPLAY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const initialUiTheme = viewMode === "toast" ? "night" : readCachedUiTheme();
 const platformName = rendererPlatform();
 document.documentElement.dataset.platform = platformName;
@@ -149,6 +152,7 @@ let leaderboardData: LeaderboardData = {
 let leaderboardLoadedRange: LeaderboardRange | null = null;
 const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
 const leaderboardDataCache = new Map<LeaderboardRange, LeaderboardData>();
+let leaderboardDataCacheSavedAt: number | null = null;
 let leaderboardLoading = false;
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
@@ -371,6 +375,102 @@ function cacheUiTheme(theme: UiTheme) {
   }
 }
 
+function hydrateLeaderboardCache() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LEADERBOARD_CACHE_STORAGE_KEY) || "{}") as {
+      cachedAt?: unknown;
+      ranges?: unknown;
+    };
+    const cachedAt = typeof parsed.cachedAt === "string" ? Date.parse(parsed.cachedAt) : Number(parsed.cachedAt);
+    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > LEADERBOARD_CACHE_DISPLAY_MAX_AGE_MS) return;
+    if (!parsed.ranges || typeof parsed.ranges !== "object") return;
+
+    leaderboardDataCache.clear();
+    for (const range of LEADERBOARD_RANGES) {
+      const data = (parsed.ranges as Partial<Record<LeaderboardRange, unknown>>)[range];
+      if (isCacheableLeaderboardData(data, range)) leaderboardDataCache.set(range, data);
+    }
+    leaderboardDataCacheSavedAt = cachedAt;
+    applyCachedLeaderboardRange();
+  } catch {
+    // Local cache is only a convenience. Bad or unavailable storage should not block the app.
+  }
+}
+
+function persistLeaderboardCache() {
+  const ranges: Partial<Record<LeaderboardRange, LeaderboardData>> = {};
+  for (const range of LEADERBOARD_RANGES) {
+    const data = leaderboardDataCache.get(range);
+    if (isCacheableLeaderboardData(data, range)) ranges[range] = data;
+  }
+  if (!Object.keys(ranges).length) return;
+
+  const cachedAt = new Date().toISOString();
+  try {
+    localStorage.setItem(
+      LEADERBOARD_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        cachedAt,
+        ranges,
+      }),
+    );
+    leaderboardDataCacheSavedAt = Date.parse(cachedAt);
+  } catch {
+    // Ignore storage quota and permission failures; the in-memory cache still works for this window.
+  }
+}
+
+function clearLeaderboardCache() {
+  leaderboardDataCache.clear();
+  leaderboardDataCacheSavedAt = null;
+  try {
+    localStorage.removeItem(LEADERBOARD_CACHE_STORAGE_KEY);
+  } catch {
+    // Ignore storage permission failures.
+  }
+}
+
+function applyCachedLeaderboardRange() {
+  const cached = leaderboardDataCache.get(leaderboardRange);
+  if (!cached) return false;
+  leaderboardData = cached;
+  leaderboardLoadedRange = leaderboardRange;
+  leaderboardRenderKey = "";
+  return true;
+}
+
+function isLeaderboardCacheFresh() {
+  return Boolean(
+    leaderboardDataCacheSavedAt &&
+      Date.now() - leaderboardDataCacheSavedAt <= LEADERBOARD_CACHE_TTL_MS &&
+      leaderboardDataCache.has(leaderboardRange),
+  );
+}
+
+function isCacheableLeaderboardData(data: unknown, range: LeaderboardRange): data is LeaderboardData {
+  if (!data || typeof data !== "object") return false;
+  const candidate = data as LeaderboardData;
+  return (
+    candidate.range === range &&
+    !candidate.error &&
+    Array.isArray(candidate.entries) &&
+    candidate.entries.every(isCacheableLeaderboardEntry) &&
+    (!candidate.updatedAt || Number.isFinite(Date.parse(candidate.updatedAt)))
+  );
+}
+
+function isCacheableLeaderboardEntry(entry: unknown): entry is LeaderboardEntry {
+  if (!entry || typeof entry !== "object") return false;
+  const candidate = entry as LeaderboardEntry;
+  return (
+    Number.isFinite(candidate.rank) &&
+    typeof candidate.userId === "string" &&
+    typeof candidate.username === "string" &&
+    Number.isFinite(candidate.tokens)
+  );
+}
+
 function applyUiTheme(theme: UiTheme) {
   if (viewMode === "pet") {
     delete root.dataset.uiTheme;
@@ -550,6 +650,7 @@ async function boot() {
   leaderboardStatus = nextLeaderboardStatus;
   achievementState = nextAchievementState;
   initializeSeenAchievements();
+  hydrateLeaderboardCache();
 
   bindEvents();
   if (viewMode === "manager") {
@@ -833,7 +934,7 @@ function bindEvents() {
   });
 
   leaderboardPageRefreshButton?.addEventListener("click", () => {
-    void refreshLeaderboard({ syncFirst: leaderboardStatus.joined, forceSync: true });
+    void refreshLeaderboard({ syncFirst: leaderboardStatus.joined, forceSync: true, forceFetch: true });
   });
 
   leaderboardPageSyncButton?.addEventListener("click", async () => {
@@ -921,21 +1022,27 @@ function bindEvents() {
     if (!nextTab || nextTab === dashboardTab) return;
     dashboardTab = nextTab;
     renderDashboardTabs();
+    if (dashboardTab === "leaderboard") {
+      ensureLeaderboardLoaded();
+      return;
+    }
     renderLeaderboard();
   });
 
   leaderboardRangeTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-leaderboard-range]");
     if (!button) return;
-  const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
-  if (nextRange === leaderboardRange) return;
-  leaderboardRange = nextRange;
-  const cached = leaderboardDataCache.get(leaderboardRange);
-  leaderboardData = cached ?? { range: leaderboardRange, entries: [] };
-  leaderboardLoadedRange = cached ? leaderboardRange : null;
-  leaderboardRenderKey = "";
-  renderLeaderboard();
-});
+    const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
+    if (nextRange === leaderboardRange) return;
+    leaderboardRange = nextRange;
+    if (!applyCachedLeaderboardRange()) {
+      leaderboardData = { range: leaderboardRange, entries: [] };
+      leaderboardLoadedRange = null;
+      leaderboardRenderKey = "";
+    }
+    renderLeaderboard();
+    if (!isLeaderboardCacheFresh()) void refreshLeaderboard({ forceFetch: true });
+  });
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-achievement-category]");
@@ -1041,30 +1148,37 @@ async function updatePathSetting(
   render();
 }
 
-async function refreshLeaderboard(options: { syncFirst?: boolean; forceSync?: boolean } = {}) {
+async function refreshLeaderboard(options: { syncFirst?: boolean; forceSync?: boolean; forceFetch?: boolean } = {}) {
   if (leaderboardLoading) return;
+  if (!options.forceFetch && !options.syncFirst && isLeaderboardCacheFresh()) {
+    applyCachedLeaderboardRange();
+    renderLeaderboardSettings();
+    renderLeaderboard();
+    return;
+  }
   leaderboardLoading = true;
   renderLeaderboardSettings();
   renderLeaderboard();
   try {
     leaderboardStatus = await window.bonsai.getLeaderboardStatus();
     if (options.syncFirst && leaderboardStatus.joined) {
-      leaderboardStatus = await window.bonsai.syncLeaderboard({ force: options.forceSync === true });
+      await runLeaderboardSync({ force: options.forceSync === true });
     }
-    const results = await Promise.all(
-      LEADERBOARD_RANGES.map(async (range) => {
-        try {
-          return await window.bonsai.getLeaderboard(range);
-        } catch (error) {
-          return {
-            range,
-            entries: [],
-            error: error instanceof Error ? error.message : t("leaderboardLoadFailed"),
-          } satisfies LeaderboardData;
-        }
-      }),
+    const collection = await window.bonsai.getLeaderboards();
+    const results = LEADERBOARD_RANGES.map(
+      (range) =>
+        collection.ranges[range] ?? {
+          range,
+          entries: [],
+          error: t("leaderboardLoadFailed"),
+        },
     );
-    results.forEach((data) => leaderboardDataCache.set(data.range, data));
+    let hasFreshResult = false;
+    results.forEach((data) => {
+      if (!data.error) hasFreshResult = true;
+      if (!data.error || !leaderboardDataCache.has(data.range)) leaderboardDataCache.set(data.range, data);
+    });
+    if (hasFreshResult) persistLeaderboardCache();
     const cached = leaderboardDataCache.get(leaderboardRange);
     leaderboardData = cached ?? { range: leaderboardRange, entries: [], error: t("leaderboardLoadFailed") };
     leaderboardLoadedRange = cached ? leaderboardRange : null;
@@ -1085,11 +1199,30 @@ async function refreshLeaderboard(options: { syncFirst?: boolean; forceSync?: bo
 
 async function refreshLeaderboardIfVisible() {
   if (dashboardTab === "leaderboard") {
-    await refreshLeaderboard();
+    await refreshLeaderboard({ forceFetch: true });
     return;
   }
   renderLeaderboardSettings();
   renderLeaderboard();
+}
+
+async function runLeaderboardSync(options: { force?: boolean } = {}) {
+  if (!leaderboardStatus.configured || !leaderboardStatus.joined) {
+    renderLeaderboardSettings();
+    return false;
+  }
+  renderLeaderboardSettings();
+  leaderboardStatus = await window.bonsai.syncLeaderboard({ force: options.force === true });
+  if (!leaderboardStatus.error) clearLeaderboardCache();
+  return !leaderboardStatus.error;
+}
+
+function ensureLeaderboardLoaded() {
+  applyCachedLeaderboardRange();
+  renderLeaderboardSettings();
+  renderLeaderboard();
+  if (!leaderboardStatus.configured || isLeaderboardCacheFresh()) return;
+  void refreshLeaderboard({ forceFetch: true });
 }
 
 async function toggleLeaderboardMembership() {
@@ -1108,7 +1241,7 @@ async function leaveLeaderboard() {
   if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
   leaderboardStatus = await window.bonsai.logoutLeaderboard();
   leaderboardData = { range: leaderboardRange, entries: [] };
-  leaderboardDataCache.clear();
+  clearLeaderboardCache();
   leaderboardLoadedRange = null;
   leaderboardRenderKey = "";
   renderLeaderboardSettings();
@@ -1116,9 +1249,8 @@ async function leaveLeaderboard() {
 }
 
 async function syncLeaderboard(options: { force?: boolean } = {}) {
-  leaderboardStatus = await window.bonsai.syncLeaderboard({ force: options.force === true });
-  leaderboardDataCache.clear();
-  leaderboardLoadedRange = null;
+  const synced = await runLeaderboardSync(options);
+  if (synced) leaderboardLoadedRange = null;
   await refreshLeaderboardIfVisible();
 }
 
@@ -3068,22 +3200,29 @@ function leaderboardPreferenceHtml(entry: LeaderboardEntry) {
   if (!preference) {
     return `<div class="leaderboard-preferences is-private">${escapeHtml(t("leaderboardPreferencePrivate"))}</div>`;
   }
+  const labels = leaderboardPreferenceCompactLabels();
   const rows = [
     preference.favoriteAgent
-      ? `${t("leaderboardFavoriteAgent")}: <b>${escapeHtml(preference.favoriteAgent.label)} ${preference.favoriteAgent.percent}%</b>`
+      ? `${labels.agent}: <b>${escapeHtml(preference.favoriteAgent.label)} ${preference.favoriteAgent.percent}%</b>`
       : "",
-    preference.favoriteModel ? `${t("leaderboardFavoriteModel")}: <b>${escapeHtml(preference.favoriteModel)}</b>` : "",
+    preference.favoriteModel ? `${labels.model}: <b>${escapeHtml(preference.favoriteModel)}</b>` : "",
     preference.favoritePeriod
-      ? `${t("leaderboardFavoritePeriod")}: <b>${escapeHtml(leaderboardPeriodText(preference.favoritePeriod))}</b>`
+      ? `${labels.period}: <b>${escapeHtml(leaderboardPeriodText(preference.favoritePeriod))}</b>`
       : "",
     preference.peakTokensPerMinute !== undefined
-      ? `${t("leaderboardPeakRate")}: <b>${formatNumber(preference.peakTokensPerMinute)} token/min</b>`
+      ? `${labels.peak}: <b>${formatCompact(preference.peakTokensPerMinute)}/min</b>`
       : "",
   ].filter(Boolean);
   if (!rows.length) {
     return `<div class="leaderboard-preferences is-private">${escapeHtml(t("leaderboardPreferencePrivate"))}</div>`;
   }
   return `<div class="leaderboard-preferences">${rows.map((row) => `<span>${row}</span>`).join("")}</div>`;
+}
+
+function leaderboardPreferenceCompactLabels() {
+  return currentLanguage() === "zh-CN"
+    ? { agent: "Agent", model: "模型", period: "时段", peak: "峰值" }
+    : { agent: "Agent", model: "Model", period: "Time", peak: "Peak" };
 }
 
 function leaderboardPeriodText(period: NonNullable<LeaderboardEntry["usagePreference"]>["favoritePeriod"]) {

@@ -3,6 +3,7 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   LedgerFile,
+  LeaderboardCollection,
   LeaderboardData,
   LeaderboardRange,
   LeaderboardStatus,
@@ -33,6 +34,7 @@ declare global {
       setLeaderboardEnabled: (enabled: boolean) => Promise<LeaderboardStatus>;
       syncLeaderboard: (options?: { force?: boolean }) => Promise<LeaderboardStatus>;
       getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
+      getLeaderboards: () => Promise<LeaderboardCollection>;
       getAchievements: () => Promise<AchievementState>;
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;
       previewAchievementToast: (id: string) => Promise<boolean>;

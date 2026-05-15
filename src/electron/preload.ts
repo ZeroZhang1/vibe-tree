@@ -4,6 +4,7 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   LedgerFile,
+  LeaderboardCollection,
   LeaderboardData,
   LeaderboardRange,
   LeaderboardStatus,
@@ -37,6 +38,7 @@ const api = {
   syncLeaderboard: (options?: { force?: boolean }) =>
     ipcRenderer.invoke("leaderboard:sync", options) as Promise<LeaderboardStatus>,
   getLeaderboard: (range: LeaderboardRange) => ipcRenderer.invoke("leaderboard:get", range) as Promise<LeaderboardData>,
+  getLeaderboards: () => ipcRenderer.invoke("leaderboard:get-all") as Promise<LeaderboardCollection>,
   getAchievements: () => ipcRenderer.invoke("achievements:get") as Promise<AchievementState>,
   unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
     ipcRenderer.invoke("achievements:unlock", items) as Promise<AchievementUnlockResult>,
