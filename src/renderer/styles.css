@@ -3301,6 +3301,10 @@ label {
   left: auto;
 }
 
+.manager-root .achievement-toast-layer {
+  top: 50px;
+}
+
 .achievement-toast {
   width: min(260px, calc(100vw - 24px));
   padding: 12px 14px;

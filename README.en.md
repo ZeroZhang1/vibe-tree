@@ -2,19 +2,44 @@
 
 [简体中文](README.md) | English
 
-**Every token your coding agent spends grows a little tree on your desktop.**
+**Every token your coding agent spends makes the tiny tree on your desktop grow.**
 
-Vibe Tree is a desktop-resident token weather tree — it turns the cost, rhythm, and activity of vibe coding into a pixel bonsai you can nurture.
+Vibe Tree is a desktop token weather tree for AI coding. It reads local usage records from your coding agents and turns token spend, active rhythm, model preference, and streaks into a pixel bonsai you can keep on your desktop.
 
-<p align="center">
-  <img src="previews/weather-showcase.png" width="900" alt="Vibe Tree weather modes" />
-</p>
+It is not just a token dashboard. It is a small companion that makes your coding pace visible, collectible, and shareable.
 
-<p align="center">
-  <img src="previews/manager-window.png" width="900" alt="Vibe Tree home dashboard" />
-</p>
+## Screenshots
 
----
+### Live Growth Dashboard
+
+Track total tokens, today's growth, level progress, agent sources, and the recent 7-day trend.
+
+![Vibe Tree dashboard](docs/images/vibe-tree-dashboard.png)
+
+### Shareable Growth Report
+
+Export one of three visual templates with level, total tokens, favorite agent, a 7 × 24 hour heatmap, and a GitHub QR code.
+
+![Vibe Tree share export](docs/images/vibe-tree-share-export.png)
+
+### Global Leaderboard
+
+Opt into the leaderboard with GitHub. By default, only aggregated token ranking data is public. Usage preferences are shown only when the user explicitly enables them.
+
+![Vibe Tree leaderboard](docs/images/vibe-tree-leaderboard.png)
+
+## Highlights
+
+- **Desktop pixel tree**: always-on-top, draggable, scalable, lockable, and quiet on startup.
+- **Live token weather**: total tokens drive level growth; current token/min drives weather.
+- **Multi-agent sources**: Codex, Claude Code, OpenClaw, OpenCode, Gemini, and Hermes.
+- **Source and model breakdowns**: inspect input, output, cache, and model distribution by agent.
+- **Recent 7-day chart**: filter token trends by source.
+- **Achievements**: unlock milestones for totals, peaks, streaks, time habits, and agent usage.
+- **Share image export**: choose from three templates and export a high-resolution PNG.
+- **Three UI themes**: day, night, and soft, aligned with the share-card visual system.
+- **Leaderboard privacy controls**: joining is optional; public usage preferences are opt-in.
+- **Chinese and English UI**: switch language in settings.
 
 ## Quick Start
 
@@ -23,9 +48,20 @@ npm ci
 npm start
 ```
 
-> Works on macOS / Windows / Linux. Dev mode: `npm run dev`
+Development:
 
-If the Electron binary download from GitHub is slow, you can temporarily use a mirror:
+```bash
+npm run dev
+```
+
+Checks:
+
+```bash
+npm run typecheck
+npm run build
+```
+
+If Electron downloads slowly from GitHub, temporarily use a mirror:
 
 ```bash
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
@@ -33,78 +69,50 @@ npm_config_electron_mirror=https://npmmirror.com/mirrors/electron/ \
 npm ci
 ```
 
-You can also put this in your local `.npmrc` so you do not need to type it each time:
+Or save it in `.npmrc`:
 
 ```ini
 electron_mirror=https://npmmirror.com/mirrors/electron/
 ```
 
----
-
-## Why Vibe Tree?
-
-### 🌱 Make Coding Feel Alive
-A transparent floating window lives on your desktop. Total counted tokens determine your level; recent activity drives the weather — the more you code, the more your tree flourishes.
-
-### 📊 See Where Your Tokens Go
-The manager panel shows source breakdowns, model ratios, and 7-day charts. View all agents or drill into a single agent's input / output / cache details.
-
-### 🏅 Unlock Legendary Achievements
-The built-in achievement system tracks streaks, total usage, and coding rhythm, then celebrates key moments with a small pixel toast.
-
-### 🏆 Compete with Global Vibe Coders
-An optional global leaderboard — sign in with GitHub to join. By default, only daily token totals are uploaded; no code or session content ever leaves your machine. Users can opt in to share aggregated usage preferences.
-
----
-
 ## Supported Agents
 
-| Agent | Status | Data Source |
-|-------|--------|-------------|
-| Claude Code | ✅ | `~/.claude/projects/**/*.jsonl` |
+| Agent | Status | Default source |
+| --- | --- | --- |
 | Codex | ✅ | `~/.codex/sessions/**/*.jsonl` |
+| Claude Code | ✅ | `~/.claude/projects/**/*.jsonl` |
 | OpenClaw | ✅ | `~/.openclaw/agents/**/sessions/*.jsonl` |
 | OpenCode | ✅ | `~/.local/share/opencode/storage/message/**/*.json` |
+| Gemini | ✅ | local Gemini session directory |
+| Hermes | ✅ | local Hermes session directory |
 
-Auto-detected on install. Zero configuration required. Source paths can be customized in Settings.
+Vibe Tree auto-detects the default paths after installation. You can customize source paths or disable sources in settings.
 
----
+## Data And Privacy
 
-## Features
+Vibe Tree is local-first. By default, it does not upload code, prompts, filenames, paths, conversation logs, or complete hourly heatmaps.
 
-- **Desktop Pet Window** — transparent, always-on-top, draggable, lockable
-- **Manager Panel** — level, weather, active sessions, source stats, 7-day charts
-- **Level Badge** — 3D flip animation, configurable to show level / total tokens / token/s
-- **Global Leaderboard** — GitHub sign-in, join or leave anytime
-- **Auto Updates** — checks GitHub for new versions on launch, supports one-click terminal update
-- **Bilingual** — switch between Chinese and English in Settings
-- **Launch at Startup & Silent Mode** — quietly accompanies your coding sessions
+When joining the leaderboard, it syncs daily token totals and the local first-use date so the service can compute today, 7-day, 30-day, and all-time rankings. If "Public usage preferences" is enabled, it additionally syncs four aggregated fields:
 
----
+- Favorite agent
+- Favorite model
+- Favorite coding period
+- Peak token rate
 
-## Changelog
+These fields are used only for leaderboard display.
 
-See [CHANGELOG.md](CHANGELOG.md).
+## Token Accounting
 
----
-
-<details>
-<summary><strong>📖 Token Rules</strong></summary>
-
-```
-Counted tokens = inputTokens + outputTokens, plus cacheWriteTokens for Anthropic sources where cache creation is reported separately.
+```text
+Counted Token = inputTokens + outputTokens
+Anthropic / Claude Code also counts cacheWriteTokens
 ```
 
-Some providers include cached input in `inputTokens`; Anthropic reports cache reads/writes separately. Vibe Tree counts Claude Code cache writes as newly-created input, while cache reads are shown as reused context and are not counted toward growth totals.
+Some providers include cached input in `inputTokens`; Anthropic reports cache read / write separately. Vibe Tree counts `cacheWriteTokens` as newly created input and shows `cacheReadTokens` as reused context without adding it to growth.
 
-By default, tracking starts from install day. Pre-install history is not imported.
+By default, statistics start from the installation day. Older history is ignored unless explicitly imported with environment variables.
 
-</details>
-
-<details>
-<summary><strong>🔧 Advanced Configuration</strong></summary>
-
-### Import History
+## Import History
 
 macOS / Linux:
 
@@ -126,52 +134,33 @@ $env:VIBE_OPENCODE_IMPORT_HISTORY="today"
 npm start
 ```
 
-### Leaderboard Service
+## Leaderboard Service
 
-The leaderboard is off by default. Production builds use the deployed Worker. For local testing:
+The hosted app uses the configured Cloudflare Worker by default. For local testing or self-hosting:
 
 ```bash
 VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm start
 ```
 
-Backend template: `server/leaderboard-worker/`
+Worker template:
 
-Privacy: by default, each sync sends a rolling 30-day snapshot of daily token totals plus the local first-use date used to clean stale leaderboard rows. The service keeps older previously synced daily totals for the all-time range. If "Share usage preferences" is enabled, sync also uploads range-scoped aggregates for top agent, top model, preferred coding period, and peak token/min. Prompts, files, paths, session records, and the full heatmap are never uploaded.
+```text
+server/leaderboard-worker/
+```
 
-</details>
-
-<details>
-<summary><strong>🎮 Game Balance</strong></summary>
+## Game Balance
 
 Growth, weather, and activity windows are configured in:
 
-```
+```text
 public/assets/trees/vibe-bonsai/config/game-balance.json
 ```
 
-Includes: token level curve, weather thresholds, growth stage thresholds, activity window parameters.
+It contains token level curves, weather thresholds, growth-stage thresholds, and activity-window parameters.
 
-</details>
+## Changelog
 
-<details>
-<summary><strong>💾 Persistence</strong></summary>
-
-Electron stores local data:
-
-- `usage-events.jsonl` — append-only event store
-- `usage-meta.json` — install date and metadata
-- `device-settings.json` — machine-local settings
-- `*-session-watcher.json` — watcher state for each agent
-
-</details>
-
----
-
-## Product Direction
-
-Vibe Tree is not just a token dashboard. The goal is to make vibe coding's cost and rhythm perceivable through a desktop companion. The first version prioritizes reliable multi-agent local ingestion; future work refines pet behavior, weather feedback, and game balance.
-
----
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
