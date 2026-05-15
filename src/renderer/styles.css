@@ -1342,11 +1342,25 @@ h4 {
 
 .leaderboard-help {
   margin: 0;
+  display: grid;
+  gap: 5px;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.leaderboard-help strong {
+  color: var(--ink);
+  font-size: 0.8rem;
+  line-height: 1.25;
+}
+
+.leaderboard-help p {
+  margin: 0;
 }
 
 .leaderboard-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
 
@@ -2102,10 +2116,10 @@ label {
 .leaderboard-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 48px 36px minmax(0, 1fr) minmax(120px, auto);
-  gap: 10px;
+  grid-template-columns: 44px 36px minmax(0, 1fr) max-content;
+  gap: 8px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--bg-light);
@@ -2122,6 +2136,7 @@ label {
   color: var(--leaf);
   font-size: 0.86rem;
   font-weight: 900;
+  line-height: 1.2;
 }
 
 .leaderboard-avatar {
@@ -2141,12 +2156,15 @@ label {
 
 .leaderboard-person {
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   display: grid;
-  gap: 3px;
+  align-content: center;
+  gap: 2px;
 }
 
 .leaderboard-person strong,
-.leaderboard-person span,
+.leaderboard-person > span,
 .leaderboard-tokens {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2156,6 +2174,7 @@ label {
 .leaderboard-person strong {
   color: var(--ink);
   font-size: 0.78rem;
+  line-height: 1.2;
 }
 
 .leaderboard-person em {
@@ -2171,24 +2190,30 @@ label {
 .leaderboard-person span {
   color: var(--muted);
   font-size: 0.66rem;
+  line-height: 1.2;
 }
 
 .leaderboard-preferences {
-  display: flex;
-  gap: 5px 8px;
-  flex-wrap: wrap;
   min-width: 0;
+  max-width: 100%;
+  display: block;
+  overflow: hidden;
   color: var(--muted);
   font-size: 0.62rem;
-  line-height: 1.35;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .leaderboard-preferences span {
-  max-width: 100%;
-  padding: 2px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: inline;
+  padding: 0;
+}
+
+.leaderboard-preferences span + span::before {
+  content: "·";
+  margin: 0 7px;
+  color: var(--muted);
 }
 
 .leaderboard-preferences b {
@@ -2199,11 +2224,13 @@ label {
 .leaderboard-preferences.is-private {
   color: var(--muted);
   font-size: 0.64rem;
+  line-height: 1.2;
 }
 
 .leaderboard-tokens {
   color: var(--ink);
   font-size: 0.82rem;
+  line-height: 1.2;
   text-align: right;
 }
 
@@ -4158,4 +4185,3 @@ label {
     opacity: 0.3;
   }
 }
-

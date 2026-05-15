@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type {
   LedgerEntry,
   LedgerFile,
+  LeaderboardCollection,
   LeaderboardData,
   LeaderboardEntry,
   LeaderboardPreferencePeriod,
@@ -256,6 +257,30 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         error: error instanceof Error ? error.message : text("leaderboardLoadFailed"),
       };
     }
+  }
+
+  async function getLeaderboards(): Promise<LeaderboardCollection> {
+    if (!configured) {
+      return collectionWithError(text("leaderboardServiceNotConfigured"));
+    }
+
+    try {
+      const data = await requestJson<unknown>(apiUrl("/api/leaderboards"), { token: auth.token });
+      return normalizeCollection(data);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : text("leaderboardLoadFailed");
+      if (message === "Not found" || message.includes("(404)")) return getLeaderboardsByRange();
+      return collectionWithError(message);
+    }
+  }
+
+  async function getLeaderboardsByRange(): Promise<LeaderboardCollection> {
+    const results = await Promise.all(LEADERBOARD_PREFERENCE_RANGES.map((range) => getLeaderboard(range)));
+    const ranges = Object.fromEntries(results.map((data) => [data.range, data])) as Record<
+      LeaderboardRange,
+      LeaderboardData
+    >;
+    return { ranges };
   }
 
   function waitForToken(): Promise<string> {
@@ -527,6 +552,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     setEnabled,
     syncUsage,
     getLeaderboard,
+    getLeaderboards,
   };
 }
 
@@ -658,6 +684,27 @@ function normalizeData(value: unknown, fallbackRange: LeaderboardRange): Leaderb
     typeof data?.updatedAt === "string" && Number.isFinite(Date.parse(data.updatedAt)) ? data.updatedAt : undefined;
   const error = typeof data?.error === "string" ? data.error : undefined;
   return { range, entries, updatedAt, me, error };
+}
+
+function normalizeCollection(value: unknown): LeaderboardCollection {
+  const collection = value as Partial<LeaderboardCollection> | undefined;
+  const rawRanges = collection?.ranges as Partial<Record<LeaderboardRange, unknown>> | undefined;
+  const ranges = Object.fromEntries(
+    LEADERBOARD_PREFERENCE_RANGES.map((range) => [range, normalizeData(rawRanges?.[range], range)]),
+  ) as Record<LeaderboardRange, LeaderboardData>;
+  const updatedAt =
+    typeof collection?.updatedAt === "string" && Number.isFinite(Date.parse(collection.updatedAt))
+      ? collection.updatedAt
+      : undefined;
+  return { ranges, updatedAt };
+}
+
+function collectionWithError(error: string): LeaderboardCollection {
+  const ranges = {} as Record<LeaderboardRange, LeaderboardData>;
+  for (const range of LEADERBOARD_PREFERENCE_RANGES) {
+    ranges[range] = { range, entries: [], error };
+  }
+  return { ranges };
 }
 
 function normalizeEntry(value: unknown): LeaderboardEntry | undefined {

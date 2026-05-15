@@ -70,6 +70,11 @@ export interface LeaderboardData {
   error?: string;
 }
 
+export interface LeaderboardCollection {
+  ranges: Record<LeaderboardRange, LeaderboardData>;
+  updatedAt?: string;
+}
+
 export interface Settings {
   locked: boolean;
   alwaysOnTop: boolean;

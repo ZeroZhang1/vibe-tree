@@ -22,8 +22,9 @@ type SecurityEventType =
 
 const MAX_DAILY_ACCEPTED_TOKENS = 1_000_000_000_000_000;
 const MAX_BACKFILL_DAYS = 30;
-const SYNC_COOLDOWN_SECONDS = 30 * 60;
+const SYNC_COOLDOWN_SECONDS = 30;
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
+const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
 
 interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -97,6 +98,7 @@ export default {
       if (url.pathname === "/api/me" && request.method === "GET") return await getMe(request, env);
       if (url.pathname === "/api/me" && request.method === "DELETE") return await deleteMe(request, env);
       if (url.pathname === "/api/usage/daily" && request.method === "POST") return await syncDailyUsage(request, env);
+      if (url.pathname === "/api/leaderboards" && request.method === "GET") return await getLeaderboards(request, env);
       if (url.pathname === "/api/leaderboard" && request.method === "GET") return await getLeaderboard(request, env);
       return json({ error: "Not found" }, env, 404);
     } catch (error) {
@@ -161,7 +163,7 @@ function rateLimitPolicy(request: Request): { name: RateLimitName; keyPrefix: st
   const url = new URL(request.url);
   const route = `${request.method} ${url.pathname}`;
 
-  if (route === "GET /api/leaderboard") {
+  if (route === "GET /api/leaderboard" || route === "GET /api/leaderboards") {
     return { name: "PUBLIC_READ_RATE_LIMITER", keyPrefix: "leaderboard:read" };
   }
   if (route === "GET /auth/github/start" || route === "GET /auth/github/callback") {
@@ -184,6 +186,7 @@ function clientIp(request: Request) {
 
 function shouldLogHttpError(error: HttpError) {
   if (error.logType === "rate_limited") return false;
+  if (error.logType === "sync_cooldown") return false;
   return Boolean(error.logType) || error.status === 401 || error.status === 429 || error.status >= 500;
 }
 
@@ -408,7 +411,7 @@ async function syncDailyUsage(request: Request, env: Env) {
         usagePreferences?: unknown[];
       }
     | undefined;
-  if (body?.forceSync !== true) await enforceSyncCooldown(user.userId, env);
+  await enforceSyncCooldown(user.userId, env);
   const days = Array.isArray(body?.days) ? body.days.slice(0, MAX_BACKFILL_DAYS) : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
   const usageStartDate = normalizeUsageStartDate(body?.usageStartDate);
@@ -497,9 +500,15 @@ async function enforceSyncCooldown(userId: string, env: Env) {
   const elapsedSeconds = Math.floor((Date.now() - Date.parse(row.lastSyncedAt)) / 1000);
   const retryAfterSeconds = SYNC_COOLDOWN_SECONDS - elapsedSeconds;
   if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
-    throw new HttpError(429, `Sync is limited to once every 30 minutes. Try again in ${Math.ceil(retryAfterSeconds / 60)} minutes.`, {
-      retryAfterSeconds,
-    }, "sync_cooldown", { actorId: userId });
+    throw new HttpError(
+      429,
+      `Sync is limited to once every ${SYNC_COOLDOWN_SECONDS} seconds. Try again in ${Math.ceil(retryAfterSeconds)} seconds.`,
+      {
+        retryAfterSeconds,
+      },
+      "sync_cooldown",
+      { actorId: userId },
+    );
   }
 }
 
@@ -603,9 +612,39 @@ async function getLeaderboard(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
   const url = new URL(request.url);
   const range = normalizeRange(url.searchParams.get("range"));
+  const requestUser = await optionalAuth(request, env);
+  return json(await leaderboardDataForRange(range, requestUser, env, new Date().toISOString()), env);
+}
+
+async function getLeaderboards(request: Request, env: Env) {
+  await ensureUsagePreferencesTable(env);
+  const requestUser = await optionalAuth(request, env);
+  const updatedAt = new Date().toISOString();
+  const pairs = await Promise.all(
+    LEADERBOARD_RANGES.map(
+      async (range) => [range, await leaderboardDataForRange(range, requestUser, env, updatedAt)] as const,
+    ),
+  );
+  return json(
+    {
+      ranges: Object.fromEntries(pairs) as Record<
+        LeaderboardRange,
+        Awaited<ReturnType<typeof leaderboardDataForRange>>
+      >,
+      updatedAt,
+    },
+    env,
+  );
+}
+
+async function leaderboardDataForRange(
+  range: LeaderboardRange,
+  requestUser: SessionUser | undefined,
+  env: Env,
+  updatedAt: string,
+) {
   const today = localDateKey(new Date());
   const since = rangeStart(range, today);
-  const requestUser = await optionalAuth(request, env);
   const query =
     range === "all"
       ? `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
@@ -657,15 +696,12 @@ async function getLeaderboard(request: Request, env: Env) {
     daysActive: Math.max(0, Math.round(Number(row.daysActive))),
     usagePreference: rowToUsagePreference(row),
   }));
-  return json(
-    {
-      range,
-      entries,
-      updatedAt: new Date().toISOString(),
-      me: requestUser ? entries.find((entry) => entry.userId === requestUser.userId) : undefined,
-    },
-    env,
-  );
+  return {
+    range,
+    entries,
+    updatedAt,
+    me: requestUser ? entries.find((entry) => entry.userId === requestUser.userId) : undefined,
+  };
 }
 
 function rowToUsagePreference(row: Record<string, unknown>) {
@@ -885,16 +921,19 @@ function cleanShortText(value: unknown, maxLength: number) {
 }
 
 function normalizePercent(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
   const percent = Math.round(Number(value));
   return Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : undefined;
 }
 
 function normalizeHour(value: unknown, min: number, max: number) {
+  if (value === null || value === undefined || value === "") return undefined;
   const hour = Math.round(Number(value));
   return Number.isFinite(hour) ? Math.max(min, Math.min(max, hour)) : undefined;
 }
 
 function normalizePreferenceCount(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
   const count = Math.round(Number(value));
   return Number.isFinite(count) ? Math.max(0, Math.min(MAX_DAILY_ACCEPTED_TOKENS, count)) : undefined;
 }

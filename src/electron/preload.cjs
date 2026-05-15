@@ -19,6 +19,7 @@ const api = {
   setLeaderboardEnabled: (enabled) => ipcRenderer.invoke("leaderboard:set-enabled", enabled),
   syncLeaderboard: (options) => ipcRenderer.invoke("leaderboard:sync", options),
   getLeaderboard: (range) => ipcRenderer.invoke("leaderboard:get", range),
+  getLeaderboards: () => ipcRenderer.invoke("leaderboard:get-all"),
   getAchievements: () => ipcRenderer.invoke("achievements:get"),
   unlockAchievements: (items) => ipcRenderer.invoke("achievements:unlock", items),
   previewAchievementToast: (id) => ipcRenderer.invoke("achievements:preview-toast", id),

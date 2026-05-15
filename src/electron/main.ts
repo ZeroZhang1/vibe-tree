@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notification, screen, session, shell, Tray } from "electron";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
 import { dirname, join } from "node:path";
@@ -42,9 +42,14 @@ const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
+const UPDATE_GIT_TIMEOUT_MS = 2 * 60 * 1000;
+const UPDATE_NPM_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
+const UPDATE_BUILD_TIMEOUT_MS = 3 * 60 * 1000;
+const UPDATE_SMOKE_TIMEOUT_MS = 45_000;
 const UPDATE_LATEST_RELEASE_URL = "https://api.github.com/repos/Olorinm/vibe-tree/releases/latest";
 const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per_page=20";
 const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
+const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
 const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
 const LEADERBOARD_API_URL = (process.env.VIBE_TREE_LEADERBOARD_API_URL ?? DEFAULT_LEADERBOARD_API_URL).replace(/\/+$/, "");
 const LEADERBOARD_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -1711,16 +1716,16 @@ async function installUpdate(): Promise<UpdateStatus> {
   refreshTrayMenu();
 
   try {
-    const dirty = (await runTerminalCommand("git", ["status", "--porcelain", "--untracked-files=no"], cwd)).trim();
+    const dirty = (await runTerminalCommand("git", ["status", "--porcelain", "--untracked-files=no"], cwd, { timeoutMs: 15_000 })).trim();
     if (dirty) {
       throw new Error(mainText("dirtyWorkspace"));
     }
 
-    await runUpdateStep(mainText("fetchUpdates"), "git", ["fetch", "--tags", "--prune", "origin"], cwd);
-    await runUpdateStep(mainText("pullMain"), "git", ["pull", "--ff-only", "origin", "main"], cwd);
-    await runUpdateStep(mainText("syncDependencies"), npmCommand(), ["install"], cwd);
-    await runUpdateStep(mainText("buildApp"), npmCommand(), ["run", "build"], cwd);
-    await runUpdateStep(mainText("verifyUpdate"), npmCommand(), ["run", "smoke:electron"], cwd);
+    await runUpdateStep(mainText("fetchUpdates"), "git", ["fetch", "--tags", "--prune", "origin"], cwd, UPDATE_GIT_TIMEOUT_MS);
+    await runUpdateStep(mainText("pullMain"), "git", ["pull", "--ff-only", "origin", "main"], cwd, UPDATE_GIT_TIMEOUT_MS);
+    await syncUpdateDependencies(cwd);
+    await runUpdateStep(mainText("buildApp"), npmCommand(), ["run", "build"], cwd, UPDATE_BUILD_TIMEOUT_MS);
+    await runUpdateStep(mainText("verifyUpdate"), npmCommand(), ["run", "smoke:electron"], cwd, UPDATE_SMOKE_TIMEOUT_MS);
 
     updateStatus = {
       ...updateStatus,
@@ -1755,27 +1760,81 @@ function scheduleUpdateRelaunch() {
   }, UPDATE_RELAUNCH_DELAY_MS);
 }
 
-async function runUpdateStep(label: string, command: string, args: string[], cwd: string) {
+async function syncUpdateDependencies(cwd: string) {
+  cleanupNpmInstallArtifacts(cwd);
+  try {
+    await runUpdateStep(mainText("syncDependencies"), npmCommand(), ["install"], cwd, UPDATE_NPM_INSTALL_TIMEOUT_MS);
+  } catch (error) {
+    if (!isRecoverableNpmInstallError(error)) throw error;
+    cleanupNpmInstallArtifacts(cwd);
+    await runUpdateStep(mainText("syncDependenciesRetry"), npmCommand(), ["install"], cwd, UPDATE_NPM_INSTALL_TIMEOUT_MS);
+  }
+}
+
+function cleanupNpmInstallArtifacts(cwd: string) {
+  const nodeModulesDir = join(cwd, "node_modules");
+  if (!existsSync(nodeModulesDir)) return;
+
+  for (const entry of readdirSync(nodeModulesDir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".node_modules-")) {
+      rmSync(join(nodeModulesDir, entry.name), { recursive: true, force: true });
+    }
+  }
+
+  rmSync(join(nodeModulesDir, "node_modules"), { recursive: true, force: true });
+}
+
+function isRecoverableNpmInstallError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ENOTEMPTY|EEXIST|node_modules[\\/]\.node_modules-|node_modules[\\/]node_modules/i.test(message);
+}
+
+async function runUpdateStep(label: string, command: string, args: string[], cwd: string, timeoutMs?: number) {
   updateStatus = {
     ...updateStatus,
     installLog: label,
   };
   broadcastUpdateStatus();
-  await runTerminalCommand(command, args, cwd);
+  await runTerminalCommand(command, args, cwd, { timeoutMs });
 }
 
-function runTerminalCommand(command: string, args: string[], cwd: string): Promise<string> {
+function runTerminalCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  options: { timeoutMs?: number } = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawnCommand(command, args, cwd);
     let output = "";
+    let timedOut = false;
+    const timer =
+      options.timeoutMs && options.timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            terminateChildProcess(child);
+          }, options.timeoutMs)
+        : undefined;
     const collect = (chunk: Buffer) => {
       output = `${output}${chunk.toString("utf8")}`.slice(-12_000);
     };
 
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
-    child.on("error", reject);
+    child.on("error", (error) => {
+      if (timer) clearTimeout(timer);
+      reject(error);
+    });
     child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      if (timedOut) {
+        reject(
+          new Error(
+            `${command} ${args.join(" ")} ${mainText("commandTimedOut")}${output ? `\n${output.trim()}` : ""}`,
+          ),
+        );
+        return;
+      }
       if (code === 0) {
         resolve(output.trim());
         return;
@@ -1786,14 +1845,68 @@ function runTerminalCommand(command: string, args: string[], cwd: string): Promi
 }
 
 function spawnCommand(command: string, args: string[], cwd: string) {
+  const env = terminalCommandEnv();
   if (process.platform === "win32" && /\.(cmd|bat)$/i.test(command)) {
     return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", [command, ...args].map(quoteWindowsCmdArg).join(" ")], {
       cwd,
+      env,
       shell: false,
       windowsHide: true,
     });
   }
-  return spawn(command, args, { cwd, shell: false, windowsHide: true });
+  return spawn(command, args, {
+    cwd,
+    env,
+    shell: false,
+    windowsHide: true,
+    detached: process.platform !== "win32",
+  });
+}
+
+function terminalCommandEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  const proxyUrl = ledger.settings.proxyUrl?.trim();
+  if (proxyUrl) {
+    env.HTTP_PROXY = proxyUrl;
+    env.HTTPS_PROXY = proxyUrl;
+    env.ALL_PROXY = proxyUrl;
+    env.http_proxy = proxyUrl;
+    env.https_proxy = proxyUrl;
+    env.all_proxy = proxyUrl;
+  }
+
+  env.NO_PROXY ??= "localhost,127.0.0.1,::1";
+  env.no_proxy ??= env.NO_PROXY;
+  env.ELECTRON_MIRROR ??= DEFAULT_ELECTRON_MIRROR;
+  env.npm_config_electron_mirror ??= env.ELECTRON_MIRROR;
+  return env;
+}
+
+function terminateChildProcess(child: ReturnType<typeof spawn>) {
+  if (child.killed) return;
+  if (process.platform === "win32" && child.pid) {
+    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+    return;
+  }
+
+  if (child.pid) {
+    const pid = child.pid;
+    try {
+      process.kill(-pid, "SIGTERM");
+      setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // The process group already exited.
+        }
+      }, 2_000).unref();
+      return;
+    } catch {
+      // Fall back to killing the direct child below.
+    }
+  }
+
+  child.kill("SIGTERM");
 }
 
 function quoteWindowsCmdArg(value: string) {
@@ -2011,6 +2124,7 @@ ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
   leaderboardService.syncUsage({ force: options?.force === true }),
 );
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
+ipcMain.handle("leaderboard:get-all", () => leaderboardService.getLeaderboards());
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
   unlockAchievements(Array.isArray(items) ? items : []),
