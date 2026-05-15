@@ -274,6 +274,101 @@ export const ACHIEVEMENT_TEXT_EN: Record<string, AchievementCopy> = {
     description: "A session's token total is exactly a Fibonacci number",
     flavor: "1, 1, 2, 3, 5, 8, 13... the universe hid a clue in your session.",
   },
+  explorer_10d: {
+    name: "Welcome to Azeroth",
+    description: "10 days active",
+    flavor: "Welcome, adventurer. Your journey has just begun.",
+  },
+  explorer_50d: {
+    name: "World Explorer",
+    description: "50 days active",
+    flavor: "Your footprints cover every corner of the continent.",
+  },
+  explorer_100d: {
+    name: "Pathfinder",
+    description: "100 days active",
+    flavor: "Veterans don't die. They just stop needing the map.",
+  },
+  explorer_365d: {
+    name: "Timewalker",
+    description: "365 days active",
+    flavor: "A full year. You have seen every season of Azeroth.",
+  },
+  model_collector_3: {
+    name: "Apprentice Beastmaster",
+    description: "Use 3 different models",
+    flavor: "You are learning to ride different mounts.",
+  },
+  model_collector_10: {
+    name: "Rare Mount Collector",
+    description: "Use 10 different models",
+    flavor: "Your stable is bigger than most NPCs'.",
+  },
+  model_collector_20: {
+    name: "Mount Master",
+    description: "Use 20 different models",
+    flavor: "Even Orgrimmar's beastmaster asks you for tips.",
+  },
+  faction_loyalist: {
+    name: "Faction Loyalist",
+    description: "One agent accounts for over 80% of total tokens",
+    flavor: "For the Horde! (Or the Alliance?)",
+  },
+  raid_boss_5m: {
+    name: "Raid Boss: First Kill",
+    description: "Reach 5,000,000 tokens in one day",
+    flavor: "The boss is down! DKP distribution begins.",
+  },
+  raid_boss_50m: {
+    name: "Mythic: Cleared",
+    description: "Reach 50,000,000 tokens in one day",
+    flavor: "This was not a normal raid. This was mythic. You survived.",
+  },
+  session_grinder: {
+    name: "Daily Grinder",
+    description: "Over 100 interactions in one day",
+    flavor: "Your kill count already makes the mobs tremble.",
+  },
+  session_marathon: {
+    name: "Marathon Dungeon Run",
+    description: "Over 500 interactions in one day",
+    flavor: "The dungeon is smoking from your runs. Gear long graduated.",
+  },
+  high_noon: {
+    name: "High Noon",
+    description: "Tokens recorded between 12 PM and 1 PM",
+    flavor: "Others are at lunch. You are talking to AI.",
+  },
+  dawn_patrol: {
+    name: "Dawn Patrol",
+    description: "Tokens every hour from 5 AM to 9 AM",
+    flavor: "While the whole server sleeps, you have started your morning quests.",
+  },
+  holiday_hero: {
+    name: "Holiday Guardian",
+    description: "Tokens on New Year's Day or during Lunar New Year",
+    flavor: "While others light fireworks, you light up tokens. Happy holidays, champion.",
+  },
+  resurrection: {
+    name: "Spirit Healer",
+    description: "Return after 14+ days of inactivity",
+    flavor: "You ran a long corpse walk, but you resurrected in the end.",
+  },
+  thousand_cuts: {
+    name: "Death by a Thousand Cuts",
+    description: "1,000 total interactions",
+    flavor: "Not one big crit. A thousand cuts of persistence.",
+  },
+  ten_thousand_cuts: {
+    name: "Ten Thousand Blades as One",
+    description: "10,000 total interactions",
+    flavor: "Every blade counts. You are the Blademaster of legend.",
+  },
+  streak_100: {
+    name: "Hundred Days Reform",
+    description: "100 consecutive days with tokens",
+    flavor: "A hundred days unbroken. Your will surpasses most champions.",
+  },
 };
 
 export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
@@ -447,6 +542,7 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     secondsAgo: "秒前",
     minutesAgo: "分钟前",
     hoursAgo: "小时前",
+    fontSize: "字体大小",
     manualFeed: "手动喂养",
   },
   "en-US": {
@@ -619,6 +715,7 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     secondsAgo: "s ago",
     minutesAgo: "min ago",
     hoursAgo: "h ago",
+    fontSize: "Font Size",
     manualFeed: "Manual Feed",
   },
 };
