@@ -73,6 +73,7 @@ import type {
 } from "./types";
 import { weatherBackHtml, weatherFrontHtml } from "./weatherArt";
 import { toBlob } from "html-to-image";
+import * as QRCode from "qrcode";
 import "./styles.css";
 
 type ShareTemplateId = "receipt" | "glass" | "mono";
@@ -89,6 +90,7 @@ interface ShareReportData {
   activeDays: number;
   currentStreak: number;
   heatLevels: number[];
+  qrCodeImage: string;
   favoritePeriod: {
     label: string;
     range: string;
@@ -101,6 +103,8 @@ const SHARE_TEMPLATES: Array<{ id: ShareTemplateId; titleKey: string; noteKey: s
   { id: "mono", titleKey: "shareTemplateMonoTitle", noteKey: "shareTemplateMonoNote" },
 ];
 const SHARE_PREVIEW_SIZE = { width: 284, height: 442 };
+const SHARE_EXPORT_SIZE = { width: 2160, height: 3360 };
+const SHARE_QR_TARGET_URL = "https://github.com/Olorinm/vibe-tree";
 
 function shareTemplateForUiTheme(theme: UiTheme | undefined): ShareTemplateId {
   if (theme === "day") return "mono";
@@ -1419,8 +1423,7 @@ async function exportSelectedShareImage(
   button.textContent = t("generating");
 
   try {
-    const width = 1080;
-    const height = 1680;
+    const { width, height } = SHARE_EXPORT_SIZE;
     const pngBase64 = await renderShareReportPng(report, width, height, templateId);
     const result = await window.bonsai.saveShareImage({
       filename: `vibe-tree-share-${templateId}-${dateKey(report.generatedAt)}.png`,
@@ -1457,6 +1460,10 @@ async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promi
     Math.round(hourly.maxHourTokens / 60),
     Math.round(peakStat("peakXpPerMinute", stats.weather.tokensPerMinute)),
   );
+  const [treeImage, qrCodeImage] = await Promise.all([
+    imageToDataUrl(stats.stage.image),
+    qrCodeDataUrl(SHARE_QR_TARGET_URL),
+  ]);
 
   return {
     generatedAt,
@@ -1465,11 +1472,12 @@ async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promi
     peakTokensPerMinute,
     level: stats.level,
     stageLabel: stageLabel(stats.stage.id, stats.stage.label),
-    treeImage: await imageToDataUrl(stats.stage.image),
+    treeImage,
     mostUsedAgent: mostUsedAgentLabel(entries, enabledSources),
     activeDays: hourly.activeDays,
     currentStreak: currentActiveDayStreak(entries, generatedAt, enabledSources),
     heatLevels: hourly.heatLevels,
+    qrCodeImage,
     favoritePeriod: hourly.favoritePeriod,
   };
 }
@@ -1569,6 +1577,20 @@ async function imageToDataUrl(path: string) {
   if (!response.ok) throw new Error(`Failed to load share image asset: ${response.status}`);
   const blob = await response.blob();
   return blobToDataUrl(blob);
+}
+
+async function qrCodeDataUrl(value: string) {
+  const svg = await QRCode.toString(value, {
+    type: "svg",
+    margin: 1,
+    width: 512,
+    errorCorrectionLevel: "H",
+    color: {
+      dark: "#11120eff",
+      light: "#ffffff00",
+    },
+  });
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 async function renderShareReportPng(report: ShareReportData, width: number, height: number, templateId: ShareTemplateId) {
@@ -1671,6 +1693,9 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           --muted: rgba(45, 52, 42, 0.6);
           --leaf: #2c9c52;
           --accent: #c58a24;
+          --qr-bg: #fbf7ec;
+          --qr-size: 52px;
+          --qr-padding: 5px;
           --heat0: #ebe5d8;
           --heat1: #d2dfbd;
           --heat2: #9bd27f;
@@ -1699,6 +1724,9 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           --muted: rgba(244, 241, 233, 0.56);
           --leaf: #c7f66c;
           --accent: #ffcf7a;
+          --qr-bg: #f4f1e9;
+          --qr-size: 48px;
+          --qr-padding: 3px;
           --heat0: #2b2d32;
           --heat1: #4a5832;
           --heat2: #7a9d44;
@@ -1717,6 +1745,9 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           --muted: rgba(17, 18, 14, 0.56);
           --leaf: #11120e;
           --accent: #4f8f55;
+          --qr-bg: #ffffff;
+          --qr-size: 52px;
+          --qr-padding: 5px;
           --heat0: #e3e3dd;
           --heat1: #b8c5b4;
           --heat2: #8aaa84;
@@ -1990,14 +2021,35 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           background: var(--leaf);
         }
         .share-card .qr {
-          width: 48px;
-          height: 48px;
+          position: relative;
+          width: var(--qr-size);
+          height: var(--qr-size);
           display: grid;
           place-items: center;
+          padding: var(--qr-padding);
           border: 2px dashed currentColor;
           border-radius: 11px;
-          font-size: 11px;
-          font-weight: 900;
+          background: var(--qr-bg);
+        }
+        .share-card .qr img {
+          display: block;
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          image-rendering: pixelated;
+        }
+        .share-card .qr-github {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 15px;
+          height: 15px;
+          padding: 2px;
+          border-radius: 50%;
+          color: #11120e;
+          background: var(--qr-bg);
+          box-shadow: 0 0 0 1px var(--qr-bg);
+          transform: translate(-50%, -50%);
         }
       </style>
       <section class="poster ${templateId}">
@@ -2053,7 +2105,12 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
             <b>这一周，我把 AI coding 养成了一棵树。</b>
             <span>扫码领取桌面小树</span>
           </div>
-          <div class="qr">QR</div>
+          <div class="qr">
+            <img src="${escapeHtml(report.qrCodeImage)}" alt="GitHub QR" />
+            <svg class="qr-github" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M12 0.7C5.8 0.7 0.8 5.7 0.8 11.9c0 4.9 3.2 9.1 7.6 10.6 0.6 0.1 0.8-0.2 0.8-0.5v-2c-3.1 0.7-3.8-1.3-3.8-1.3-0.5-1.3-1.2-1.6-1.2-1.6-1-0.7 0.1-0.7 0.1-0.7 1.1 0.1 1.7 1.2 1.7 1.2 1 1.7 2.6 1.2 3.2 0.9 0.1-0.7 0.4-1.2 0.7-1.5-2.5-0.3-5.1-1.2-5.1-5.5 0-1.2 0.4-2.2 1.1-3-0.1-0.3-0.5-1.4 0.1-3 0 0 0.9-0.3 3.1 1.1 0.9-0.2 1.8-0.4 2.8-0.4s1.9 0.1 2.8 0.4c2.1-1.4 3.1-1.1 3.1-1.1 0.6 1.5 0.2 2.7 0.1 3 0.7 0.8 1.1 1.8 1.1 3 0 4.3-2.6 5.2-5.1 5.5 0.4 0.3 0.8 1 0.8 2.1V22c0 0.3 0.2 0.6 0.8 0.5 4.4-1.5 7.6-5.7 7.6-10.6C23.2 5.7 18.2 0.7 12 0.7Z"/>
+            </svg>
+          </div>
         </div>
       </section>
     </div>
