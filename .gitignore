@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .wrangler/
+.claude/
+previews/share-*
 
 *.log
 npm-debug.log*
