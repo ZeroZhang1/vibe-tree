@@ -1,6 +1,6 @@
 {
   "name": "vibe-tree",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "productName": "Vibe Tree",
   "private": true,
   "type": "module",
@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "tsc -p tsconfig.electron.json && node scripts/copy-preload.mjs && vite build",
+    "smoke:electron": "node scripts/smoke-electron.mjs",
     "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.json --noEmit",
     "start": "npm run build && electron dist/electron/main.js"
   },

@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-05-15 (v0.4.0)
+
+- Added 21 new achievements across active days, model variety, agent loyalty, daily peaks, time windows, holidays, long returns, and interaction milestones.
+- Added achievement progress for the new numeric milestones and tightened the new criteria so disabled sources and zero-token entries do not unlock rewards.
+- Added a global font-size setting for the manager UI, persisted in device settings.
+- Added a configurable network proxy setting for leaderboard requests, with environment proxy fallback and clearer timeout copy.
+- Kept leaderboard network requests bounded with request timeouts so failed proxy/network paths return cleanly.
+
+## 2026-05-14 (v0.3.7)
+
+- Reduced automatic update checks to once per day and persisted the last check time so restarts do not repeatedly hit GitHub.
+- Reduced automatic leaderboard sync to once per day and removed the startup-time forced sync.
+- Stopped loading the public leaderboard when the manager window opens or when ranges change; the leaderboard now loads only after pressing Refresh.
+- Added a leaderboard Refresh button and loading/empty copy for manual leaderboard fetches.
+- Combined leaderboard join and leave controls into one membership button.
+- Added a confirmation prompt before leaving the leaderboard, clearly warning that remote daily token data will be fully deleted.
+
+## 2026-05-14 (v0.3.6)
+
+- Added source visibility settings so installed agents can be included or excluded from token statistics.
+- Hid uninstalled agents from source breakdowns and history charts while keeping detected agents expanded.
+- Added a tray action to recover the floating tree and clarified startup behavior as hiding only the manager window.
+- Improved renderer startup responsiveness by caching derived stats and avoiding unnecessary history chart rebuilds.
+- Split the large renderer entrypoint into focused modules for app shell, stats, sources, history chart, tree assets, weather art, formatting, and shared renderer types.
+
+## 2026-05-14 (v0.3.5)
+
+- Added an Electron main-process smoke test to CI so releases must prove the built app can start.
+- Added the same startup verification to terminal updates before relaunching into a freshly built version.
+
 ## 2026-05-14 (v0.3.4)
 
 - Fixed Windows startup after v0.3.3 by marking compiled shared runtime files as CommonJS during the Electron build.

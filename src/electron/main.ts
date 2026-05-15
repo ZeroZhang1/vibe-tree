@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notification, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notification, screen, session, shell, Tray } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
@@ -39,7 +39,7 @@ const ACHIEVEMENT_TOAST_OVERLAP_PER_SCALE = 48;
 const ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE = 18;
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
-const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
 const UPDATE_LATEST_RELEASE_URL = "https://api.github.com/repos/Olorinm/vibe-tree/releases/latest";
@@ -47,7 +47,7 @@ const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per
 const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
 const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
 const LEADERBOARD_API_URL = (process.env.VIBE_TREE_LEADERBOARD_API_URL ?? DEFAULT_LEADERBOARD_API_URL).replace(/\/+$/, "");
-const LEADERBOARD_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+const LEADERBOARD_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const LEADERBOARD_AUTH_TIMEOUT_MS = 2 * 60 * 1000;
 const LEADERBOARD_CALLBACK_PATH = "/leaderboard/auth/callback";
 const MAC_TRAY_ICON_SIZE = 18;
@@ -55,6 +55,8 @@ const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
 const APP_ID = "com.vibetree.app";
+const SMOKE_TEST = process.env.VIBE_TREE_SMOKE_TEST === "1";
+const STAT_SOURCE_IDS = ["codex", "openclaw", "opencode", "claude", "gemini", "hermes"] as const;
 const APP_ICON_PATHS = [
   join(__dirname, "../renderer/assets/app-icon.png"),
   join(__dirname, "../renderer/assets/app-icon.ico"),
@@ -72,11 +74,14 @@ const DEFAULT_SETTINGS: Settings = {
   badgeBackMetric: "total",
   totalDisplayUnit: "m",
   updateCheckEnabled: true,
+  lastUpdateCheckedAt: undefined,
   leaderboardEnabled: false,
   leaderboardProfile: undefined,
   leaderboardLastSyncedAt: undefined,
   launchOnStartup: false,
   silentStartup: false,
+  proxyUrl: undefined,
+  enabledSourceIds: [...STAT_SOURCE_IDS],
   windowPosition: undefined,
 };
 
@@ -103,7 +108,7 @@ let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let achievementToastFallbackHideAt = 0;
 let achievementToastRendererReady = false;
 let achievementToastPendingIds: string[] = [];
-let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
+let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateStatus: UpdateStatus = {
   checking: false,
   installing: false,
@@ -260,6 +265,50 @@ function terminalUpdateRoot() {
   return undefined;
 }
 
+async function configureNetworkProxy(proxyUrl?: string) {
+  const proxyRules = proxyRulesFromValue(proxyUrl) ?? proxyRulesFromEnvironment();
+  if (!proxyRules) {
+    await session.defaultSession.setProxy({ mode: "system" });
+    return;
+  }
+  await session.defaultSession.setProxy({
+    mode: "fixed_servers",
+    proxyRules,
+    proxyBypassRules: "<local>;127.0.0.1;localhost",
+  });
+}
+
+function proxyRulesFromEnvironment() {
+  const rawProxy =
+    process.env.VIBE_TREE_PROXY_URL ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.ALL_PROXY ||
+    process.env.all_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy;
+  return proxyRulesFromValue(rawProxy);
+}
+
+function proxyRulesFromValue(rawProxy: string | undefined) {
+  if (!rawProxy?.trim()) return undefined;
+  try {
+    const proxy = new URL(rawProxy.trim());
+    if (!proxy.hostname || !proxy.port) return undefined;
+    if (proxy.protocol === "http:" || proxy.protocol === "https:") {
+      const host = `${proxy.hostname}:${proxy.port}`;
+      return `http=${host};https=${host}`;
+    }
+    if (proxy.protocol === "socks:" || proxy.protocol === "socks4:" || proxy.protocol === "socks5:") {
+      return `${proxy.protocol}//${proxy.hostname}:${proxy.port}`;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
 function readLedger(): LedgerFile {
   const legacy = readLegacyLedger();
   const installedAt = readInstalledAt(legacy);
@@ -325,7 +374,7 @@ function readDeviceSettings(legacySettings: Partial<Settings> | undefined): Sett
     ...(legacySettings ?? {}),
     ...(stored ?? {}),
   });
-  if (!stored || stored.language === undefined) {
+  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined) {
     writeDeviceSettings(settings);
   }
   return settings;
@@ -403,6 +452,10 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     language: normalizeLanguage(settings.language),
     uiTheme: normalizeUiTheme(settings.uiTheme),
     updateCheckEnabled: settings.updateCheckEnabled !== false,
+    lastUpdateCheckedAt:
+      typeof settings.lastUpdateCheckedAt === "string" && Number.isFinite(Date.parse(settings.lastUpdateCheckedAt))
+        ? settings.lastUpdateCheckedAt
+        : undefined,
     lastUpdateReminderVersion:
       typeof settings.lastUpdateReminderVersion === "string" ? settings.lastUpdateReminderVersion : undefined,
     leaderboardEnabled: Boolean(settings.leaderboardEnabled && leaderboardProfile),
@@ -410,10 +463,13 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardLastSyncedAt,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
+    proxyUrl: cleanProxyUrl(settings.proxyUrl),
+    enabledSourceIds: normalizeEnabledSourceIds(settings.enabledSourceIds),
     scale,
     badgeFrontMetric: normalizeBadgeMetric(settings.badgeFrontMetric, "level"),
     badgeBackMetric: normalizeBadgeMetric(settings.badgeBackMetric, "total"),
     totalDisplayUnit: normalizeTotalDisplayUnit(settings.totalDisplayUnit),
+    fontScale: typeof settings.fontScale === "number" && [1, 1.15, 1.3, 1.5].includes(settings.fontScale) ? settings.fontScale : undefined,
     codexSessionsDir: cleanPath(settings.codexSessionsDir),
     claudeSessionsDir: cleanPath(settings.claudeSessionsDir),
     openclawSessionsDir: cleanPath(settings.openclawSessionsDir),
@@ -444,6 +500,19 @@ function normalizeBadgeMetric(value: unknown, fallback: Settings["badgeFrontMetr
 
 function normalizeTotalDisplayUnit(value: unknown): Settings["totalDisplayUnit"] {
   return value === "raw" || value === "k" || value === "m" || value === "wan" || value === "yi" ? value : "m";
+}
+
+function normalizeEnabledSourceIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...STAT_SOURCE_IDS];
+  const allowed = new Set<string>(STAT_SOURCE_IDS);
+  return [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))];
+}
+
+function cleanProxyUrl(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return proxyRulesFromValue(trimmed) ? trimmed : undefined;
 }
 
 function normalizeLanguage(value: unknown): AppLanguage {
@@ -869,6 +938,16 @@ function resizePetWindow() {
   persistPetPosition();
 }
 
+function recoverPetWindow() {
+  const size = petSize();
+  const position = defaultPetPosition(size.width, size.height);
+  if (!petWindow) createPetWindow();
+  petWindow?.show();
+  petWindow?.setBounds({ ...position, width: size.width, height: size.height }, false);
+  persistPetPosition();
+  refreshTrayMenu();
+}
+
 function createTray() {
   tray = new Tray(createTrayIcon());
   tray.setToolTip(APP_NAME);
@@ -1030,6 +1109,10 @@ function refreshTrayMenu() {
       click: openManagerSettings,
     },
     {
+      label: mainText("recoverPet"),
+      click: recoverPetWindow,
+    },
+    {
       label: updateTrayMenuLabel(),
       enabled: !updateStatus.checking,
       click: () => {
@@ -1186,7 +1269,21 @@ function sourceStatusLabel(label: string, status: UsageStatus["codexSession"], s
 }
 
 function xpForEntry(entry: LedgerEntry) {
+  const sourceId = statSourceIdForEntry(entry);
+  if (sourceId && !ledger.settings.enabledSourceIds.includes(sourceId)) return 0;
   return countedTokensForEntry(entry);
+}
+
+function statSourceIdForEntry(entry: LedgerEntry): string | undefined {
+  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
+  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
+  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+    return "opencode";
+  }
+  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
+  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
+  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
+  return undefined;
 }
 
 function safeTokens(value: number) {
@@ -1247,9 +1344,11 @@ function updateSettings(partial: Partial<Settings>) {
   if (partial.launchOnStartup !== undefined || partial.silentStartup !== undefined) {
     applyLoginItemSettings();
   }
+  if (partial.proxyUrl !== undefined) {
+    void configureNetworkProxy(ledger.settings.proxyUrl);
+  }
   if (partial.updateCheckEnabled !== undefined) {
     startUpdateChecks();
-    if (ledger.settings.updateCheckEnabled) void checkForUpdates({ remind: true });
   }
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
@@ -1320,7 +1419,7 @@ function getUsageStatus(): UsageStatus {
 
 function startUpdateChecks() {
   if (updateCheckTimer) {
-    clearInterval(updateCheckTimer);
+    clearTimeout(updateCheckTimer);
     updateCheckTimer = null;
   }
   if (!ledger.settings.updateCheckEnabled) {
@@ -1335,12 +1434,19 @@ function startUpdateChecks() {
     return;
   }
 
-  setTimeout(() => {
-    void checkForUpdates({ remind: true });
-  }, UPDATE_REMINDER_DELAY_MS);
-  updateCheckTimer = setInterval(() => {
-    void checkForUpdates({ remind: true });
-  }, UPDATE_CHECK_INTERVAL_MS);
+  scheduleNextUpdateCheck();
+}
+
+function scheduleNextUpdateCheck() {
+  if (updateCheckTimer) {
+    clearTimeout(updateCheckTimer);
+    updateCheckTimer = null;
+  }
+  if (!ledger.settings.updateCheckEnabled) return;
+
+  updateCheckTimer = setTimeout(() => {
+    void checkForUpdates({ remind: true }).finally(scheduleNextUpdateCheck);
+  }, nextDailyDelay(ledger.settings.lastUpdateCheckedAt, UPDATE_CHECK_INTERVAL_MS, UPDATE_REMINDER_DELAY_MS));
 }
 
 async function checkForUpdates(options: { manual?: boolean; remind?: boolean; reopenTrayMenu?: boolean } = {}): Promise<UpdateStatus> {
@@ -1362,6 +1468,7 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean; re
     const latest = await fetchLatestUpdate();
     const currentVersion = currentAppVersion();
     const available = compareVersions(latest.version, currentVersion) > 0;
+    const checkedAt = new Date().toISOString();
     updateStatus = {
       ...updateStatus,
       checking: false,
@@ -1371,27 +1478,39 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean; re
       currentVersion,
       latestVersion: latest.version,
       releaseUrl: latest.releaseUrl,
-      checkedAt: new Date().toISOString(),
+      checkedAt,
       error: undefined,
     };
+    updateSettings({ lastUpdateCheckedAt: checkedAt });
     if (available && options.remind) {
       remindUpdateAvailable(updateStatus);
     }
   } catch (error) {
+    const checkedAt = new Date().toISOString();
     updateStatus = {
       ...updateStatus,
       checking: false,
       available: false,
       canTerminalUpdate: canTerminalUpdate(),
-      checkedAt: new Date().toISOString(),
+      checkedAt,
       error: error instanceof Error ? error.message : mainText("updateCheckFailed"),
     };
+    updateSettings({ lastUpdateCheckedAt: checkedAt });
   }
 
   broadcastUpdateStatus();
   refreshTrayMenu();
+  if (options.manual) scheduleNextUpdateCheck();
   if (options.reopenTrayMenu) reopenTrayMenuSoon(80);
   return updateStatus;
+}
+
+function nextDailyDelay(lastRunAt: string | undefined, intervalMs: number, dueDelayMs: number) {
+  if (!lastRunAt) return dueDelayMs;
+  const lastRunTime = Date.parse(lastRunAt);
+  if (!Number.isFinite(lastRunTime)) return dueDelayMs;
+  const nextRunTime = lastRunTime + intervalMs;
+  return Math.max(dueDelayMs, nextRunTime - Date.now());
 }
 
 async function fetchLatestUpdate() {
@@ -1486,6 +1605,8 @@ async function requestJsonWithElectronNet<T = unknown>(
 ): Promise<T> {
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
   const body = options.body === undefined ? undefined : JSON.stringify(options.body);
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), options.timeoutMs ?? 10_000);
   const headers: Record<string, string> = {
     Accept: "application/json",
     "User-Agent": `${APP_NAME}/${currentAppVersion()}`,
@@ -1495,11 +1616,20 @@ async function requestJsonWithElectronNet<T = unknown>(
   }
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
 
-  const response = await net.fetch(urlString, {
-    method,
-    headers,
-    body,
-  });
+  let response: Awaited<ReturnType<typeof net.fetch>>;
+  try {
+    response = await net.fetch(urlString, {
+      method,
+      headers,
+      body,
+      signal: abort.signal,
+    });
+  } catch (error) {
+    throw normalizeLeaderboardRequestError(error);
+  } finally {
+    clearTimeout(timeout);
+  }
+
   const raw = await response.text();
   let parsed: unknown = {};
   if (raw.trim()) {
@@ -1519,6 +1649,14 @@ async function requestJsonWithElectronNet<T = unknown>(
   }
 
   return parsed as T;
+}
+
+function normalizeLeaderboardRequestError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/abort|timeout|timed out|ERR_CONNECTION_TIMED_OUT/i.test(message)) {
+    return new Error(mainText("leaderboardRequestTimedOut"));
+  }
+  return new Error(message || mainText("leaderboardRequestFailed"));
 }
 
 async function installUpdate(): Promise<UpdateStatus> {
@@ -1556,6 +1694,7 @@ async function installUpdate(): Promise<UpdateStatus> {
     await runUpdateStep(mainText("pullMain"), "git", ["pull", "--ff-only", "origin", "main"], cwd);
     await runUpdateStep(mainText("syncDependencies"), npmCommand(), ["install"], cwd);
     await runUpdateStep(mainText("buildApp"), npmCommand(), ["run", "build"], cwd);
+    await runUpdateStep(mainText("verifyUpdate"), npmCommand(), ["run", "smoke:electron"], cwd);
 
     updateStatus = {
       ...updateStatus,
@@ -1782,7 +1921,7 @@ function applyLoginItemSettings() {
   }
   app.setLoginItemSettings({
     openAtLogin: true,
-    openAsHidden: ledger.settings.silentStartup,
+    openAsHidden: false,
     path: process.execPath,
     args: loginItemArgs(),
   });
@@ -1794,11 +1933,16 @@ function loginItemArgs() {
   return entry ? [entry] : [];
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName(APP_NAME);
   app.setAppUserModelId(APP_ID);
+  if (SMOKE_TEST) {
+    app.quit();
+    return;
+  }
   Menu.setApplicationMenu(null);
   ledger = readLedger();
+  await configureNetworkProxy(ledger.settings.proxyUrl);
   achievementState = readAchievementState();
   leaderboardService.readAuth();
   applyLoginItemSettings();
@@ -1810,7 +1954,6 @@ app.whenReady().then(() => {
   setTimeout(startUsageWatchers, 500);
   startUpdateChecks();
   leaderboardService.startSync();
-  void leaderboardService.syncUsage();
 
   app.on("activate", () => {
     createPetWindow();
@@ -1824,7 +1967,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   stopUsageWatchers();
-  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  if (updateCheckTimer) clearTimeout(updateCheckTimer);
   leaderboardService.stop();
 });
 

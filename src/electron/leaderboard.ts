@@ -56,9 +56,10 @@ interface LeaderboardServiceOptions {
 
 export function createLeaderboardService(options: LeaderboardServiceOptions) {
   let auth: LeaderboardAuthFile = {};
-  let syncTimer: ReturnType<typeof setInterval> | null = null;
+  let syncTimer: ReturnType<typeof setTimeout> | null = null;
   let syncing = false;
   let authServer: http.Server | null = null;
+  let lastSyncAttemptAt: string | undefined;
 
   const configured = Boolean(options.apiUrl);
   const ledger = () => options.getLedger();
@@ -100,27 +101,37 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   }
 
   function startSync() {
-    if (syncTimer) {
-      clearInterval(syncTimer);
-      syncTimer = null;
-    }
-
-    if (!configured || !auth.token || !ledger().settings.leaderboardEnabled) {
-      broadcast();
-      return;
-    }
-
-    syncTimer = setInterval(() => {
-      void syncUsage();
-    }, options.syncIntervalMs);
+    scheduleNextSync();
     broadcast();
   }
 
   function stop() {
-    if (syncTimer) clearInterval(syncTimer);
+    if (syncTimer) clearTimeout(syncTimer);
     syncTimer = null;
     authServer?.close();
     authServer = null;
+  }
+
+  function scheduleNextSync() {
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+
+    if (!configured || !auth.token || !ledger().settings.leaderboardEnabled) return;
+
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      void syncUsage();
+    }, nextSyncDelay());
+  }
+
+  function nextSyncDelay() {
+    const lastSyncedAt = ledger().settings.leaderboardLastSyncedAt ?? lastSyncAttemptAt;
+    if (!lastSyncedAt) return Math.min(3_000, options.syncIntervalMs);
+    const lastSyncedTime = Date.parse(lastSyncedAt);
+    if (!Number.isFinite(lastSyncedTime)) return Math.min(3_000, options.syncIntervalMs);
+    return Math.max(3_000, lastSyncedTime + options.syncIntervalMs - Date.now());
   }
 
   async function login(): Promise<LeaderboardStatus> {
@@ -182,6 +193,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     if (syncing) return status();
 
     syncing = true;
+    lastSyncAttemptAt = new Date().toISOString();
     broadcast();
 
     try {
@@ -200,10 +212,12 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         leaderboardProfile: auth.profile,
         leaderboardLastSyncedAt: new Date().toISOString(),
       });
+      scheduleNextSync();
       broadcast();
       return status();
     } catch (error) {
       syncing = false;
+      scheduleNextSync();
       const message = error instanceof Error ? error.message : text("leaderboardSyncFailed");
       broadcast(message);
       return status(message);

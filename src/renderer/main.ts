@@ -8,15 +8,22 @@ import type {
   LeaderboardRange,
   LeaderboardStatus,
   TreeAsset,
-  TreeStage,
   UiTheme,
   UpdateStatus,
   UsageStatus,
   WindowBounds,
 } from "../shared/types";
-import { countedTokensForEntry } from "../shared/tokenAccounting";
 import { ACHIEVEMENTS, CATEGORY_ORDER, rarityOrder } from "./achievements";
 import type { AchievementContext, AchievementDef } from "./achievements";
+import { appShellHtml } from "./appShell";
+import {
+  clamp,
+  dateKey,
+  formatByUnit as formatValueByUnit,
+  formatCompact,
+  formatIntegerWithCommas,
+  formatNumber as formatLocaleNumber,
+} from "./format";
 import {
   ACHIEVEMENT_CATEGORY_LABELS,
   ACHIEVEMENT_RARITY_LABELS,
@@ -26,66 +33,48 @@ import {
   normalizeLanguage,
 } from "./i18n";
 import type { AchievementCategory, AchievementRarity } from "./i18n";
+import { renderHistoryChart } from "./historyChart";
+import {
+  AGENT_SOURCES,
+  combineSourceRows,
+  defaultSourceLabel,
+  emptySourceTotals,
+  enabledStatsSourceIds as normalizeEnabledStatsSourceIds,
+  enabledStatsSourceSet as normalizedEnabledStatsSourceSet,
+  entryMatchesSourceKey,
+  getSourceBreakdown,
+  historySourceId,
+  isHistorySourceId,
+  safeTokens,
+  sourceMatchesBreakdownRow,
+  sourceMonitorStatus as monitorStatusForSource,
+  sourceVisibility as buildSourceVisibility,
+  xpForEntry,
+} from "./sources";
+import { StatsCache } from "./stats";
+import { DEFAULT_GAME_BALANCE, DEFAULT_PURE_SVG_MANIFEST, buildTreeAsset } from "./treeAssets";
+import type {
+  AchievementCategoryFilter,
+  AchievementStatusFilter,
+  BadgeMetric,
+  DashboardTab,
+  GameBalance,
+  HistoryFilter,
+  HistorySourceId,
+  PureSvgManifest,
+  SourceBreakdown,
+  SourceScope,
+  SourceVisibility,
+  Stats,
+  TotalDisplayUnit,
+  ViewMode,
+  WeatherId,
+} from "./types";
+import { weatherBackHtml, weatherFrontHtml } from "./weatherArt";
 import { toBlob } from "html-to-image";
 import "./styles.css";
 
-type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
-type ViewMode = "pet" | "manager" | "toast";
-type HistoryFilter = "all" | HistorySourceId;
-type SourceScope = "today" | "total";
-type BadgeMetric = "level" | "total" | "rate";
-type TotalDisplayUnit = "raw" | "k" | "m" | "wan" | "yi";
-type DashboardTab = "home" | "achievements" | "leaderboard";
-type AchievementCategoryFilter = AchievementCategory;
-type AchievementStatusFilter = "all" | "unlocked" | "locked" | "hidden";
 type ShareTemplateId = "receipt" | "glass" | "mono";
-
-interface WeatherState {
-  id: WeatherId;
-  label: string;
-  tokensPerMinute: number;
-  activity: number;
-}
-
-interface Stats {
-  xp: number;
-  todayXp: number;
-  level: number;
-  levelXp: number;
-  nextLevelXp: number;
-  levelProgress: number;
-  stage: TreeStage;
-  nextStageLabel?: string;
-  stageProgress: number;
-  weather: WeatherState;
-  lastFiveMinuteXp: number;
-  recentXp: number;
-  activeSessions: number;
-  sevenDays: HistoryDayRow[];
-  sourceBreakdown: SourceBreakdown[];
-}
-
-interface HistoryDayRow {
-  label: string;
-  tokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  sources: Record<HistorySourceId, number>;
-}
-
-type HistorySourceId = "codex" | "openclaw" | "opencode" | "claude" | "gemini" | "hermes";
-
-interface SourceBreakdown {
-  id: string;
-  label: string;
-  xp: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-}
 
 interface ShareReportData {
   generatedAt: Date;
@@ -123,31 +112,6 @@ function shareTemplateForUiTheme(theme: UiTheme | undefined): ShareTemplateId {
   return "glass";
 }
 
-interface PureSvgManifest {
-  stages: Array<{
-    id: string;
-    label: string;
-    asset: string;
-  }>;
-}
-
-interface GameBalance {
-  xp: {
-    levelBase: number;
-    levelExponent: number;
-    maxLevel: number;
-  };
-  weather: {
-    rateWindowSeconds: number;
-    thresholds: Array<{ id: WeatherId; label: string; minXpPerMinute: number }>;
-  };
-  activity: {
-    activeWindowSeconds: number;
-    peakWindowSeconds: number;
-  };
-  stages: Array<{ minLevel: number; id: string; label: string }>;
-}
-
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app");
 document.title = "Vibe Tree";
@@ -176,6 +140,8 @@ let leaderboardData: LeaderboardData = {
   range: "7d",
   entries: [],
 };
+let leaderboardLoadedRange: LeaderboardRange | null = null;
+let leaderboardLoading = false;
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
@@ -186,12 +152,38 @@ let lockedAchievementHintTimer: number | undefined;
 const achievementToastQueue: AchievementDef[] = [];
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const TOAST_PREVIEW_IDS = ["sprout", "deep_night", "xp_1m", "xp_100m", "fibonacci"];
+const RENDER_INTERVAL_MS = viewMode === "pet" ? 2_500 : 1_000;
 let toastPreviewIndex = 0;
 let pendingLevelUp: { from: number; to: number } | null = null;
 const AUTO_BADGE_FLIP_MS = 30_000;
 const BADGE_TOKEN_HOLD_MS = 2_500;
 const badgeFlipTimers = new Map<string, number>();
 let badgeAutoFlipTimer: number | undefined;
+const LUNAR_NEW_YEAR_PERIOD_DAYS = 7;
+const LUNAR_NEW_YEAR_DATES: Record<number, string> = {
+  2015: "2015-02-19",
+  2016: "2016-02-08",
+  2017: "2017-01-28",
+  2018: "2018-02-16",
+  2019: "2019-02-05",
+  2020: "2020-01-25",
+  2021: "2021-02-12",
+  2022: "2022-02-01",
+  2023: "2023-01-22",
+  2024: "2024-02-10",
+  2025: "2025-01-29",
+  2026: "2026-02-17",
+  2027: "2027-02-06",
+  2028: "2028-01-26",
+  2029: "2029-02-13",
+  2030: "2030-02-03",
+  2031: "2031-01-23",
+  2032: "2032-02-11",
+  2033: "2033-01-31",
+  2034: "2034-02-19",
+  2035: "2035-02-08",
+  2036: "2036-01-28",
+};
 let historyFilter: HistoryFilter = "all";
 let lastHistoryChartKey = "";
 let sourceScope: SourceScope = "today";
@@ -200,6 +192,14 @@ let achievementCategoryFilter: AchievementCategoryFilter = "growth";
 let achievementStatusFilter: AchievementStatusFilter = "all";
 let seenAchievementIds = new Set<string>();
 let expandedSourceKey: string | null = null;
+let sourceBreakdownCacheKey = "";
+let achievementContextCacheKey = "";
+let cachedAchievementContext: AchievementContext | undefined;
+let achievementRenderKey = "";
+let achievementSyncKey = "";
+let updateStatusRenderKey = "";
+let leaderboardSettingsRenderKey = "";
+let leaderboardRenderKey = "";
 let dragState: null | {
   startMouse: { x: number; y: number };
   startBounds: WindowBounds;
@@ -218,367 +218,10 @@ let lastPetTap: null | {
   y: number;
 } = null;
 let appLanguage: AppLanguage = browserLanguage();
+const statsCache = new StatsCache();
 
 
-if (viewMode === "pet") {
-  app.innerHTML = `
-    <main class="pet-root" data-locked="false" data-weather="clear" data-active="false">
-      <section class="pet-stage" id="petStage" aria-label="Vibe Tree">
-        <div class="weather-layer weather-back" id="weatherBack"></div>
-        <div class="pet-aura"></div>
-        <img class="tree-image" id="treeImage" alt="Vibe Tree" draggable="false" />
-        <div class="weather-layer weather-front" id="weatherFront"></div>
-        <div class="level-up-toast" aria-hidden="true">
-          <strong>LEVEL UP!</strong>
-          <span id="petLevelUpText">Lv.1 -> Lv.2</span>
-        </div>
-        <div class="level-badge" id="petLevelBadge">
-          <span class="badge-card">
-            <span class="badge-face badge-front">Lv.1</span>
-            <span class="badge-face badge-back">0</span>
-          </span>
-        </div>
-        <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开 Vibe Tree"></button>
-      </section>
-    </main>
-  `;
-} else if (viewMode === "manager") {
-  app.innerHTML = `
-    <main class="manager-root" data-weather="clear" data-active="false">
-      <aside class="pet-preview-panel">
-        <header class="app-title">
-          <p>Vibe Tree</p>
-          <h1 data-i18n="productTitle">Token 天气树</h1>
-        </header>
-
-        <section class="preview-stage" aria-label="桌面小树预览" data-i18n-aria="petPreviewAria">
-          <div class="weather-layer weather-back" id="previewWeatherBack"></div>
-          <div class="pet-aura"></div>
-          <img class="tree-image" id="previewTreeImage" alt="Vibe Tree preview" draggable="false" />
-          <div class="weather-layer weather-front" id="previewWeatherFront"></div>
-          <div class="level-up-toast" aria-hidden="true">
-            <strong>LEVEL UP!</strong>
-            <span id="previewLevelUpText">Lv.1 -> Lv.2</span>
-          </div>
-          <div class="level-badge preview-level" id="previewLevelBadge">
-            <span class="badge-card">
-              <span class="badge-face badge-front">Lv.1</span>
-              <span class="badge-face badge-back">0</span>
-            </span>
-          </div>
-        </section>
-
-        <nav class="side-tabs" id="sideTabs" aria-label="页面切换" data-i18n-aria="pageSwitchAria">
-          <button type="button" data-dashboard-tab="home" data-i18n="home">主页</button>
-          <button type="button" data-dashboard-tab="achievements" data-i18n="achievements">成就</button>
-          <button type="button" data-dashboard-tab="leaderboard" data-i18n="leaderboard">排行榜</button>
-        </nav>
-
-      </aside>
-      <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置" data-i18n-aria="openSettings" data-i18n-title="settings">
-        <span aria-hidden="true">⚙</span>
-        <span class="settings-update-badge" aria-hidden="true">NEW</span>
-      </button>
-      <button class="share-export-button share-fab" id="shareExportButton" type="button" aria-label="导出分享图" title="导出分享图">
-        <span aria-hidden="true">↗</span>
-      </button>
-
-      <section class="dashboard">
-        <header class="dashboard-header">
-          <div>
-            <p class="eyebrow" data-i18n="liveGrowth">Live growth</p>
-            <div class="level-title-row">
-              <h2 id="levelTitle">Lv.1 新芽</h2>
-              <span class="help-tip" tabindex="0" aria-label="计入 Token = input + output；Claude 会加上 cache write" data-tooltip="计入 Token = input + output；Claude 会加上 cache write" data-i18n-tooltip="tokenHelp">?</span>
-            </div>
-          </div>
-          <div class="dashboard-header-actions">
-            <div class="weather-readout">
-              <span id="weatherLabel">晴朗</span>
-              <strong id="weatherRateText">0 token/min</strong>
-            </div>
-          </div>
-        </header>
-
-        <div class="metric-grid">
-          <article>
-            <span data-i18n="metricTotalTokens">累计 Token</span>
-            <strong id="totalText">0</strong>
-          </article>
-          <article>
-            <span data-i18n="metricToday">今日成长</span>
-            <strong id="todayText">0</strong>
-          </article>
-          <article>
-            <span data-i18n="metricSessions">活跃会话</span>
-            <strong id="activeSessionsText">0</strong>
-          </article>
-        </div>
-
-        <section class="progress-block">
-          <div class="progress-meta">
-            <span id="nextLevelText">距离 Lv.2</span>
-            <span id="progressText">0 / 800 token</span>
-          </div>
-          <div class="progress-track xp-track">
-            <span id="progressBar"></span>
-          </div>
-        </section>
-
-        <section class="achievement-card" aria-label="Achievements">
-          <div class="section-header">
-            <div>
-              <h3 data-i18n="memorialAchievements">纪念 / 成就</h3>
-            </div>
-            <div class="achievement-header-tools">
-              <button class="achievement-preview-button" id="achievementToastPreviewButton" type="button" data-i18n="previewToast">预览弹窗</button>
-              <span id="achievementSummary">0 / 0</span>
-            </div>
-          </div>
-          <div class="achievement-overview" id="achievementOverview"></div>
-          <div class="achievement-filter-panel">
-            <div class="achievement-category-tabs" id="achievementCategoryTabs" role="tablist" aria-label="成就分类" data-i18n-aria="achievementCategoryAria">
-              <button type="button" data-achievement-category="growth" data-i18n-achievement-category="growth">成长之路</button>
-              <button type="button" data-achievement-category="peak" data-i18n-achievement-category="peak">巅峰时刻</button>
-              <button type="button" data-achievement-category="time" data-i18n-achievement-category="time">时间档案</button>
-              <button type="button" data-achievement-category="agent" data-i18n-achievement-category="agent">Agent</button>
-              <button type="button" data-achievement-category="hidden" data-i18n-achievement-category="hidden">未解之谜</button>
-            </div>
-            <div class="achievement-status-tabs" id="achievementStatusTabs" role="tablist" aria-label="成就状态" data-i18n-aria="achievementStatusAria">
-              <button type="button" data-achievement-status="all" data-i18n="all">全部</button>
-              <button type="button" data-achievement-status="unlocked" data-i18n="unlocked">已点亮</button>
-              <button type="button" data-achievement-status="locked" data-i18n="locked">未点亮</button>
-            </div>
-          </div>
-          <div class="achievement-recent" id="achievementRecent"></div>
-          <div class="achievement-grid" id="achievementGrid"></div>
-        </section>
-
-        <section class="leaderboard-card" aria-label="全球排行榜" data-i18n-aria="leaderboardAria">
-          <div class="section-header">
-            <div>
-              <p class="eyebrow" data-i18n="leaderboardEyebrow">Global rank</p>
-              <h3 data-i18n="globalLeaderboard">全球排行榜</h3>
-            </div>
-            <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
-          </div>
-          <div class="leaderboard-range-tabs" id="leaderboardRangeTabs" role="tablist" aria-label="全球排行榜范围" data-i18n-aria="leaderboardAria">
-            <button type="button" data-leaderboard-range="today" data-i18n="leaderboardToday">今日</button>
-            <button type="button" data-leaderboard-range="7d" data-i18n="leaderboard7d">7 天</button>
-            <button type="button" data-leaderboard-range="30d" data-i18n="leaderboard30d">30 天</button>
-            <button type="button" data-leaderboard-range="all" data-i18n="leaderboardAllTime">全部</button>
-          </div>
-          <div class="leaderboard-summary" id="leaderboardSummary"></div>
-          <div class="leaderboard-rows" id="leaderboardRows"></div>
-        </section>
-
-        <section class="source-card" aria-label="Token 来源" data-i18n-aria="sourceAria">
-          <div class="section-header">
-            <h3 data-i18n="sourceTitle">数据来源</h3>
-            <div class="source-header-tools">
-              <div class="source-scope-tabs" id="sourceScopeTabs" role="tablist" aria-label="数据来源范围" data-i18n-aria="sourceScopeAria">
-                <button type="button" data-source-scope="today" data-i18n="today">今日</button>
-                <button type="button" data-source-scope="total" data-i18n="total">总计</button>
-              </div>
-            </div>
-          </div>
-          <div class="source-rows" id="sourceBreakdown"></div>
-        </section>
-
-        <section class="chart-card">
-          <div class="section-header">
-            <h3 data-i18n="recentSevenDays">最近 7 天</h3>
-            <span id="peakText">5 分钟 +0 token</span>
-          </div>
-        </section>
-      </section>
-      <div class="achievement-toast-layer" id="achievementToastLayer" aria-live="polite"></div>
-
-      <section class="settings-modal" id="settingsModal" aria-hidden="true">
-        <div class="settings-backdrop" id="settingsBackdrop"></div>
-        <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-          <header class="settings-panel-header">
-            <div>
-              <p class="eyebrow" data-i18n="preferences">偏好设置</p>
-              <h3 id="settingsTitle" data-i18n="settings">设置</h3>
-            </div>
-            <button class="icon-button" id="settingsCloseButton" type="button" aria-label="关闭设置" data-i18n-aria="closeSettings">×</button>
-          </header>
-
-          <section class="settings-section">
-            <h4 data-i18n="desktopTree">桌面小树</h4>
-            <div class="pet-settings" aria-label="桌面小树设置" data-i18n-aria="desktopTreeAria">
-              <label class="scale-select">
-                <span data-i18n="size">大小</span>
-                <select id="scaleSelect">
-                  <option value="0.5">0.5x</option>
-                  <option value="1">1x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="2">2x</option>
-                </select>
-              </label>
-              <label class="toggle-row">
-                <input id="lockInput" type="checkbox" />
-                <span data-i18n="lockTree">锁定小树位置</span>
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h4 data-i18n="badgeDisplay">牌子显示</h4>
-            <div class="badge-settings" aria-label="牌子显示" data-i18n-aria="badgeDisplay">
-              <label>
-                <span data-i18n="badgeFront">正面</span>
-                <select id="badgeFrontMetricSelect">
-                  <option value="level" data-i18n="metricLevel">等级</option>
-                  <option value="total" data-i18n="metricTotalToken">累计 token</option>
-                  <option value="rate" data-i18n="metricRate">token/s</option>
-                </select>
-              </label>
-              <label>
-                <span data-i18n="badgeBack">背面</span>
-                <select id="badgeBackMetricSelect">
-                  <option value="level" data-i18n="metricLevel">等级</option>
-                  <option value="total" data-i18n="metricTotalToken">累计 token</option>
-                  <option value="rate" data-i18n="metricRate">token/s</option>
-                </select>
-              </label>
-              <label>
-                <span data-i18n="totalUnit">总量单位</span>
-                <select id="totalDisplayUnitSelect">
-                  <option value="raw" data-i18n="unitRaw">完整数字</option>
-                  <option value="k">k</option>
-                  <option value="m">m</option>
-                  <option value="wan" data-i18n="unitWan">万</option>
-                  <option value="yi" data-i18n="unitYi">亿</option>
-                </select>
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h4>视觉风格</h4>
-            <div class="theme-switcher" id="themeSwitcher" aria-label="视觉风格">
-              ${UI_THEMES.map(
-                (theme) => `
-                  <button type="button" data-ui-theme="${theme.id}">
-                    <span>${theme.label}</span>
-                    <small>${theme.note}</small>
-                  </button>
-                `,
-              ).join("")}
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h4 data-i18n="languageTitle">语言</h4>
-            <label class="scale-select">
-              <span data-i18n="languageLabel">界面语言</span>
-              <select id="languageSelect">
-                <option value="zh-CN" data-i18n="languageChinese">简体中文</option>
-                <option value="en-US" data-i18n="languageEnglish">English</option>
-              </select>
-            </label>
-          </section>
-
-          <section class="settings-section">
-            <h4 data-i18n="globalLeaderboard">全球排行榜</h4>
-            <div class="leaderboard-settings" aria-label="全球排行榜设置" data-i18n-aria="leaderboardAria">
-              <div class="leaderboard-user-card" id="leaderboardUserCard"></div>
-              <div class="leaderboard-status" id="leaderboardStatusText"></div>
-              <label class="toggle-row">
-                <input id="leaderboardJoinInput" type="checkbox" />
-                <span data-i18n="joinGlobalLeaderboard">加入全球排行榜</span>
-              </label>
-              <p class="leaderboard-help" data-i18n="leaderboardPrivacyNote">用户说明：加入后仅上传近 30 日每日消耗的 Token，不会包含任何提示词、文件、会话记录、使用模型等其他信息。</p>
-              <div class="leaderboard-actions">
-                <button class="secondary-button" id="leaderboardLoginButton" type="button" data-i18n="loginGithub">登录 GitHub</button>
-                <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncNow">立即同步</button>
-                <button class="secondary-button danger-button" id="leaderboardLogoutButton" type="button" data-i18n="leaveLeaderboard">退出排行榜</button>
-              </div>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h4 data-i18n="device">设备</h4>
-            <div class="device-controls" aria-label="设备设置" data-i18n-aria="deviceAria">
-              <label class="toggle-row">
-                <input id="launchOnStartupInput" type="checkbox" />
-                <span data-i18n="launchOnStartup">开机启动</span>
-              </label>
-              <label class="toggle-row">
-                <input id="silentStartupInput" type="checkbox" />
-                <span data-i18n="silentStartup">静默启动</span>
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h4 data-i18n="updateTitle">更新</h4>
-            <div class="update-settings" aria-label="更新设置" data-i18n-aria="updateAria">
-              <div class="update-status" id="updateStatusText">
-                <strong data-i18n="currentVersion">当前版本</strong>
-                <span data-i18n="waitingCheck">等待检查</span>
-              </div>
-              <label class="toggle-row">
-                <input id="updateCheckEnabledInput" type="checkbox" />
-                <span data-i18n="autoUpdateCheck">自动检测更新</span>
-              </label>
-              <div class="update-actions">
-                <button class="secondary-button" id="checkUpdateButton" type="button" data-i18n="checkUpdate">检查更新</button>
-                <button class="primary-button" id="installUpdateButton" type="button" data-i18n="terminalUpdate">终端更新</button>
-              </div>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h4 data-i18n="agentPaths">Agent 路径</h4>
-            <div class="path-settings">
-              <label>
-                <span data-i18n="codexPath">Codex 路径</span>
-                <input id="codexSessionsDirInput" type="text" placeholder="~/.codex/sessions" />
-              </label>
-              <label>
-                <span data-i18n="claudePath">Claude 路径</span>
-                <input id="claudeSessionsDirInput" type="text" placeholder="~/.claude/projects" />
-              </label>
-              <label>
-                <span data-i18n="openclawPath">OpenClaw 路径</span>
-                <input id="openclawSessionsDirInput" type="text" placeholder="~/.openclaw/agents" />
-              </label>
-              <label>
-                <span data-i18n="opencodePath">OpenCode 路径</span>
-                <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/storage/message" />
-              </label>
-              <label>
-                <span data-i18n="geminiPath">Gemini 路径</span>
-                <input id="geminiSessionsDirInput" type="text" placeholder="~/.gemini/tmp" />
-              </label>
-              <label>
-                <span data-i18n="hermesPath">Hermes 路径</span>
-                <input id="hermesSessionsDirInput" type="text" placeholder="~/.hermes/state.db" />
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section release-section">
-            <h4 data-i18n="releasePage">发布页</h4>
-            <div class="release-settings">
-              <span data-i18n="releaseDescription">查看版本记录和发布说明</span>
-              <button class="secondary-button" id="releasePageButton" type="button" data-i18n="openReleasePage">打开发布页</button>
-            </div>
-          </section>
-        </div>
-      </section>
-    </main>
-  `;
-} else {
-  app.innerHTML = `
-    <main class="toast-root" data-placement="right">
-      <div class="achievement-toast-layer" id="achievementToastLayer" aria-live="polite"></div>
-    </main>
-  `;
-}
+app.innerHTML = appShellHtml(viewMode);
 
 const root = document.querySelector<HTMLElement>(
   viewMode === "pet" ? ".pet-root" : viewMode === "manager" ? ".manager-root" : ".toast-root",
@@ -597,8 +240,10 @@ const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settings
 const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
 const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
+const fontScaleSelect = document.querySelector<HTMLSelectElement>("#fontScaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
 const silentStartupInput = document.querySelector<HTMLInputElement>("#silentStartupInput");
+const proxyUrlInput = document.querySelector<HTMLInputElement>("#proxyUrlInput");
 const updateCheckEnabledInput = document.querySelector<HTMLInputElement>("#updateCheckEnabledInput");
 const updateStatusText = document.querySelector<HTMLElement>("#updateStatusText");
 const checkUpdateButton = document.querySelector<HTMLButtonElement>("#checkUpdateButton");
@@ -606,6 +251,7 @@ const installUpdateButton = document.querySelector<HTMLButtonElement>("#installU
 const releasePageButton = document.querySelector<HTMLButtonElement>("#releasePageButton");
 const languageSelect = document.querySelector<HTMLSelectElement>("#languageSelect");
 const themeSwitcher = document.querySelector<HTMLElement>("#themeSwitcher");
+const sourceSettings = document.querySelector<HTMLElement>("#sourceSettings");
 const badgeFrontMetricSelect = document.querySelector<HTMLSelectElement>("#badgeFrontMetricSelect");
 const badgeBackMetricSelect = document.querySelector<HTMLSelectElement>("#badgeBackMetricSelect");
 const totalDisplayUnitSelect = document.querySelector<HTMLSelectElement>("#totalDisplayUnitSelect");
@@ -615,12 +261,11 @@ const openclawSessionsDirInput = document.querySelector<HTMLInputElement>("#open
 const opencodeSessionsDirInput = document.querySelector<HTMLInputElement>("#opencodeSessionsDirInput");
 const geminiSessionsDirInput = document.querySelector<HTMLInputElement>("#geminiSessionsDirInput");
 const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermesSessionsDirInput");
-const leaderboardJoinInput = document.querySelector<HTMLInputElement>("#leaderboardJoinInput");
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
-const leaderboardLoginButton = document.querySelector<HTMLButtonElement>("#leaderboardLoginButton");
-const leaderboardLogoutButton = document.querySelector<HTMLButtonElement>("#leaderboardLogoutButton");
+const leaderboardMembershipButton = document.querySelector<HTMLButtonElement>("#leaderboardMembershipButton");
 const leaderboardSettingsSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardSettingsSyncButton");
+const leaderboardPageRefreshButton = document.querySelector<HTMLButtonElement>("#leaderboardPageRefreshButton");
 const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardPageSyncButton");
 const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
@@ -634,6 +279,7 @@ if (viewMode === "manager") {
 const historyBars = document.querySelector<HTMLElement>("#historyBars");
 const historyTabs = document.querySelector<HTMLElement>("#historyTabs");
 const historyLegend = document.querySelector<HTMLElement>("#historyLegend");
+const historySummary = document.querySelector<HTMLElement>("#historySummary");
 const sourceScopeTabs = document.querySelector<HTMLElement>("#sourceScopeTabs");
 const sourceBreakdownElement = document.querySelector<HTMLElement>("#sourceBreakdown");
 const sideTabs = document.querySelector<HTMLElement>("#sideTabs");
@@ -712,6 +358,10 @@ function applyI18n() {
     const key = element.dataset.i18nTitle;
     if (key) element.setAttribute("title", t(key));
   });
+  document.querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]").forEach((element) => {
+    const key = element.dataset.i18nPlaceholder;
+    if (key) element.setAttribute("placeholder", t(key));
+  });
   document.querySelectorAll<HTMLElement>("[data-i18n-tooltip]").forEach((element) => {
     const key = element.dataset.i18nTooltip;
     if (key) {
@@ -775,6 +425,22 @@ function sourceActiveText(count: number) {
   return `${count} ${sourceScope === "today" ? t("sourceTodayActive") : t("sourceTotalActive")}`;
 }
 
+function enabledStatsSourceIds(): HistorySourceId[] {
+  return normalizeEnabledStatsSourceIds(ledger?.settings.enabledSourceIds);
+}
+
+function enabledStatsSourceSet() {
+  return normalizedEnabledStatsSourceSet(ledger?.settings.enabledSourceIds);
+}
+
+function sourceMonitorStatus(sourceId: HistorySourceId) {
+  return monitorStatusForSource(usageStatus, sourceId);
+}
+
+function sourceVisibility(): SourceVisibility {
+  return buildSourceVisibility(usageStatus, ledger?.settings.enabledSourceIds);
+}
+
 function achievementText(def: AchievementDef): Pick<AchievementDef, "name" | "description" | "flavor"> {
   if (currentLanguage() === "en-US") return ACHIEVEMENT_TEXT_EN[def.id] ?? def;
   return def;
@@ -798,23 +464,23 @@ async function boot() {
     return;
   }
 
-  const [manifest, balance] = await Promise.all([
-    fetch(assetUrl("/assets/trees/vibe-bonsai/config/pure-svg-manifest.json")).then(
-      (res) => res.json() as Promise<PureSvgManifest>,
-    ),
-    fetch(assetUrl("/assets/trees/vibe-bonsai/config/game-balance.json")).then(
-      (res) => res.json() as Promise<GameBalance>,
-    ),
+  tree = buildTreeAsset(DEFAULT_PURE_SVG_MANIFEST);
+  gameBalance = DEFAULT_GAME_BALANCE;
+  renderInitialTreePreview();
+
+  const [nextLedger, nextUsageStatus, nextUpdateStatus, nextLeaderboardStatus, nextAchievementState] = await Promise.all([
+    window.bonsai.getLedger(),
+    window.bonsai.getUsageStatus(),
+    window.bonsai.getUpdateStatus(),
+    window.bonsai.getLeaderboardStatus(),
+    window.bonsai.getAchievements(),
   ]);
-  tree = buildTreeAsset(manifest);
-  gameBalance = balance;
-  ledger = await window.bonsai.getLedger();
+  ledger = nextLedger;
   appLanguage = normalizeLanguage(ledger.settings.language);
-  usageStatus = await window.bonsai.getUsageStatus();
-  updateStatus = await window.bonsai.getUpdateStatus();
-  leaderboardStatus = await window.bonsai.getLeaderboardStatus();
-  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
-  achievementState = await window.bonsai.getAchievements();
+  usageStatus = nextUsageStatus;
+  updateStatus = nextUpdateStatus;
+  leaderboardStatus = nextLeaderboardStatus;
+  achievementState = nextAchievementState;
   initializeSeenAchievements();
 
   bindEvents();
@@ -826,7 +492,8 @@ async function boot() {
   if (viewMode === "manager") {
     window.bonsai.notifyManagerReady();
   }
-  setInterval(render, 1_000);
+  void refreshTreeConfig();
+  setInterval(render, RENDER_INTERVAL_MS);
   startAutoBadgeFlipLoop();
 
   window.bonsai.onLedger((nextLedger) => {
@@ -852,6 +519,38 @@ async function boot() {
     achievementState = nextState;
     renderAchievements();
   });
+}
+
+function renderInitialTreePreview() {
+  if (!tree) return;
+  const stage = tree.stages[0];
+  if (!stage) return;
+  if (treeImage) {
+    treeImage.src = assetUrl(stage.image);
+    treeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
+  }
+  if (previewTreeImage) {
+    previewTreeImage.src = assetUrl(stage.image);
+    previewTreeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
+  }
+}
+
+async function refreshTreeConfig() {
+  try {
+    const [manifest, balance] = await Promise.all([
+      fetch(assetUrl("/assets/trees/vibe-bonsai/config/pure-svg-manifest.json")).then(
+        (res) => res.json() as Promise<PureSvgManifest>,
+      ),
+      fetch(assetUrl("/assets/trees/vibe-bonsai/config/game-balance.json")).then(
+        (res) => res.json() as Promise<GameBalance>,
+      ),
+    ]);
+    tree = buildTreeAsset(manifest);
+    gameBalance = balance;
+    render();
+  } catch (error) {
+    console.warn("Failed to refresh tree config", error);
+  }
 }
 
 function bindToastOverlayEvents() {
@@ -973,6 +672,13 @@ function bindEvents() {
     render();
   });
 
+  fontScaleSelect?.addEventListener("change", async () => {
+    if (!ledger) return;
+    const scale = Number(fontScaleSelect.value);
+    document.documentElement.style.setProperty("--font-scale", String(scale));
+    ledger = await window.bonsai.updateSettings({ fontScale: scale });
+  });
+
   languageSelect?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ language: normalizeLanguage(languageSelect.value) });
@@ -992,6 +698,17 @@ function bindEvents() {
     render();
   });
 
+  sourceSettings?.addEventListener("change", async (event) => {
+    const input = (event.target as HTMLElement).closest<HTMLInputElement>("[data-stats-source]");
+    if (!ledger || !input) return;
+    const enabledSourceIds = selectedStatsSourceIds();
+    ledger = await window.bonsai.updateSettings({ enabledSourceIds });
+    if (historyFilter !== "all" && !sourceVisibility().visibleSet.has(historyFilter)) historyFilter = "all";
+    expandedSourceKey = null;
+    lastHistoryChartKey = "";
+    render();
+  });
+
   launchOnStartupInput?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ launchOnStartup: launchOnStartupInput.checked });
@@ -1001,6 +718,12 @@ function bindEvents() {
   silentStartupInput?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ silentStartup: silentStartupInput.checked });
+    render();
+  });
+
+  proxyUrlInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({ proxyUrl: proxyUrlInput.value.trim() || undefined });
     render();
   });
 
@@ -1024,33 +747,21 @@ function bindEvents() {
     void window.bonsai.openUpdatePage();
   });
 
-  leaderboardLoginButton?.addEventListener("click", async () => {
-    leaderboardStatus = await window.bonsai.loginLeaderboard();
-    await refreshLeaderboard();
-  });
-
-  leaderboardJoinInput?.addEventListener("change", async () => {
-    if (leaderboardJoinInput.checked && !leaderboardStatus.authenticated) {
-      leaderboardStatus = await window.bonsai.loginLeaderboard();
-    } else {
-      leaderboardStatus = await window.bonsai.setLeaderboardEnabled(leaderboardJoinInput.checked);
-    }
-    await refreshLeaderboard();
-  });
-
-  leaderboardLogoutButton?.addEventListener("click", async () => {
-    leaderboardStatus = await window.bonsai.logoutLeaderboard();
-    await refreshLeaderboard();
+  leaderboardMembershipButton?.addEventListener("click", async () => {
+    await toggleLeaderboardMembership();
   });
 
   leaderboardSettingsSyncButton?.addEventListener("click", () => {
-    void syncAndRefreshLeaderboard();
+    void syncLeaderboard();
+  });
+
+  leaderboardPageRefreshButton?.addEventListener("click", () => {
+    void refreshLeaderboard();
   });
 
   leaderboardPageSyncButton?.addEventListener("click", async () => {
     if (leaderboardStatus.joined) {
-      leaderboardStatus = await window.bonsai.logoutLeaderboard();
-      await refreshLeaderboard();
+      await leaveLeaderboard();
       return;
     }
     openLeaderboardSettings();
@@ -1133,7 +844,7 @@ function bindEvents() {
     if (!nextTab || nextTab === dashboardTab) return;
     dashboardTab = nextTab;
     renderDashboardTabs();
-    if (dashboardTab === "leaderboard") void refreshLeaderboard();
+    renderLeaderboard();
   });
 
   leaderboardRangeTabs?.addEventListener("click", (event) => {
@@ -1142,7 +853,10 @@ function bindEvents() {
     const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
     if (nextRange === leaderboardRange) return;
     leaderboardRange = nextRange;
-    void refreshLeaderboard();
+    leaderboardData = { range: leaderboardRange, entries: [] };
+    leaderboardLoadedRange = null;
+    leaderboardRenderKey = "";
+    renderLeaderboard();
   });
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
@@ -1248,17 +962,62 @@ async function updatePathSetting(
 }
 
 async function refreshLeaderboard() {
-  leaderboardStatus = await window.bonsai.getLeaderboardStatus();
-  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+  if (leaderboardLoading) return;
+  leaderboardLoading = true;
+  renderLeaderboardSettings();
+  renderLeaderboard();
+  try {
+    leaderboardStatus = await window.bonsai.getLeaderboardStatus();
+    leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+    leaderboardLoadedRange = leaderboardRange;
+  } catch (error) {
+    leaderboardData = {
+      range: leaderboardRange,
+      entries: [],
+      error: error instanceof Error ? error.message : t("leaderboardLoadFailed"),
+    };
+    leaderboardLoadedRange = leaderboardRange;
+  } finally {
+    leaderboardLoading = false;
+    renderLeaderboardSettings();
+    renderLeaderboard();
+  }
+}
+
+async function refreshLeaderboardIfVisible() {
+  if (dashboardTab === "leaderboard") {
+    await refreshLeaderboard();
+    return;
+  }
   renderLeaderboardSettings();
   renderLeaderboard();
 }
 
-async function syncAndRefreshLeaderboard() {
-  leaderboardStatus = await window.bonsai.syncLeaderboard();
-  leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
+async function toggleLeaderboardMembership() {
+  if (leaderboardStatus.joined) {
+    await leaveLeaderboard();
+    return;
+  } else if (leaderboardStatus.authenticated) {
+    leaderboardStatus = await window.bonsai.setLeaderboardEnabled(true);
+  } else {
+    leaderboardStatus = await window.bonsai.loginLeaderboard();
+  }
+  await refreshLeaderboardIfVisible();
+}
+
+async function leaveLeaderboard() {
+  if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
+  leaderboardStatus = await window.bonsai.logoutLeaderboard();
+  leaderboardData = { range: leaderboardRange, entries: [] };
+  leaderboardLoadedRange = null;
+  leaderboardRenderKey = "";
   renderLeaderboardSettings();
   renderLeaderboard();
+}
+
+async function syncLeaderboard() {
+  leaderboardStatus = await window.bonsai.syncLeaderboard();
+  await refreshLeaderboardIfVisible();
 }
 
 function setSettingsOpen(open: boolean) {
@@ -1270,8 +1029,8 @@ function setSettingsOpen(open: boolean) {
 function openLeaderboardSettings() {
   setSettingsOpen(true);
   window.requestAnimationFrame(() => {
-    leaderboardJoinInput?.scrollIntoView({ block: "center", behavior: "smooth" });
-    leaderboardJoinInput?.focus({ preventScroll: true });
+    leaderboardMembershipButton?.scrollIntoView({ block: "center", behavior: "smooth" });
+    leaderboardMembershipButton?.focus({ preventScroll: true });
   });
 }
 
@@ -1284,7 +1043,8 @@ async function exportShareImage() {
   shareExportButton.title = "生成预览";
 
   try {
-    const stats = calculateStats(ledger.entries, tree, gameBalance);
+    const visibility = sourceVisibility();
+    const stats = statsCache.calculateStats(ledger.entries, tree, gameBalance, visibility.enabled, ledgerEntriesSignature());
     const report = await buildShareReportData(ledger.entries, stats);
     openShareExportPreview(report);
     shareExportButton.title = defaultTitle;
@@ -1457,7 +1217,8 @@ async function exportSelectedShareImage(
 
 async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promise<ShareReportData> {
   const generatedAt = new Date();
-  const hourly = buildShareHourlyProfile(entries, generatedAt);
+  const enabledSources = sourceVisibility().enabled;
+  const hourly = buildShareHourlyProfile(entries, generatedAt, enabledSources);
   const peakTokensPerMinute = Math.max(
     Math.round(hourly.maxHourTokens / 60),
     Math.round(peakStat("peakXpPerMinute", stats.weather.tokensPerMinute)),
@@ -1471,15 +1232,15 @@ async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promi
     level: stats.level,
     stageLabel: stageLabel(stats.stage.id, stats.stage.label),
     treeImage: await imageToDataUrl(stats.stage.image),
-    mostUsedAgent: mostUsedAgentLabel(entries),
+    mostUsedAgent: mostUsedAgentLabel(entries, enabledSources),
     activeDays: hourly.activeDays,
-    currentStreak: currentActiveDayStreak(entries, generatedAt),
+    currentStreak: currentActiveDayStreak(entries, generatedAt, enabledSources),
     heatLevels: hourly.heatLevels,
     favoritePeriod: hourly.favoritePeriod,
   };
 }
 
-function buildShareHourlyProfile(entries: LedgerEntry[], now: Date) {
+function buildShareHourlyProfile(entries: LedgerEntry[], now: Date, enabledSources: Set<HistorySourceId>) {
   const start = startOfLocalDay(now);
   start.setDate(start.getDate() - 6);
   const end = startOfLocalDay(now);
@@ -1489,7 +1250,7 @@ function buildShareHourlyProfile(entries: LedgerEntry[], now: Date) {
   const activeDays = new Set<string>();
 
   for (const entry of entries) {
-    const xp = xpForEntry(entry);
+    const xp = xpForEntry(entry, enabledSources);
     if (xp <= 0) continue;
     const createdAt = new Date(entry.createdAt);
     const timestamp = createdAt.getTime();
@@ -1543,10 +1304,10 @@ function favoriteCodingPeriod(hourTotals: number[]): ShareReportData["favoritePe
   return { label: best.label, range: best.range };
 }
 
-function currentActiveDayStreak(entries: LedgerEntry[], now: Date) {
+function currentActiveDayStreak(entries: LedgerEntry[], now: Date, enabledSources: Set<HistorySourceId>) {
   const activeDayKeys = new Set<string>();
   for (const entry of entries) {
-    if (xpForEntry(entry) <= 0) continue;
+    if (xpForEntry(entry, enabledSources) <= 0) continue;
     const createdAt = new Date(entry.createdAt);
     if (Number.isFinite(createdAt.getTime())) activeDayKeys.add(dateKey(createdAt));
   }
@@ -1564,8 +1325,8 @@ function startOfLocalDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function mostUsedAgentLabel(entries: LedgerEntry[]) {
-  const top = getSourceBreakdown(entries).find((row) => row.xp > 0);
+function mostUsedAgentLabel(entries: LedgerEntry[], enabledSources: Set<HistorySourceId>) {
+  const top = getSourceBreakdown(entries, enabledSources, sourceLabel).find((row) => row.xp > 0);
   return top?.label ?? "待解锁";
 }
 
@@ -2084,7 +1845,8 @@ function formatShareNumber(value: number) {
 
 function render() {
   if (!ledger || !tree || !gameBalance) return;
-  const stats = calculateStats(ledger.entries, tree, gameBalance);
+  const visibility = sourceVisibility();
+  const stats = statsCache.calculateStats(ledger.entries, tree, gameBalance, visibility.enabled, ledgerEntriesSignature());
   const leveledUp = lastRenderedLevel !== null && stats.level > lastRenderedLevel;
   if (leveledUp && lastRenderedLevel !== null) {
     pendingLevelUp = { from: lastRenderedLevel, to: stats.level };
@@ -2132,45 +1894,70 @@ function render() {
   text("#peakText", `${t("fiveMinutePeak")} +${formatNumber(stats.lastFiveMinuteXp)} token`);
   text("#nextLevelText", `${t("nextLevel")}${stats.level + 1}`);
   text("#progressText", `${formatNumber(stats.levelXp)} / ${formatNumber(stats.nextLevelXp)} token`);
-  renderScopedSourceBreakdown();
-
-  const progressBar = document.querySelector<HTMLElement>("#progressBar");
-  if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
-  if (lockInput) lockInput.checked = ledger.settings.locked;
-  if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
-  if (languageSelect) languageSelect.value = ledger.settings.language;
-  themeSwitcher?.querySelectorAll<HTMLButtonElement>("[data-ui-theme]").forEach((button) => {
-    const active = button.dataset.uiTheme === ledger?.settings.uiTheme;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
-  if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
-  if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
-  if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
-  if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
-  if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;
-  if (totalDisplayUnitSelect) totalDisplayUnitSelect.value = ledger.settings.totalDisplayUnit;
-  syncInputValue(codexSessionsDirInput, ledger.settings.codexSessionsDir ?? "");
-  syncInputValue(claudeSessionsDirInput, ledger.settings.claudeSessionsDir ?? "");
-  syncInputValue(openclawSessionsDirInput, ledger.settings.openclawSessionsDir ?? "");
-  syncInputValue(opencodeSessionsDirInput, ledger.settings.opencodeSessionsDir ?? "");
-  syncInputValue(geminiSessionsDirInput, ledger.settings.geminiSessionsDir ?? "");
-  syncInputValue(hermesSessionsDirInput, ledger.settings.hermesSessionsDir ?? "");
 
   if (lastWeatherId !== stats.weather.id) {
     lastWeatherId = stats.weather.id;
     renderWeatherLayers(stats.weather.id);
   }
   if (pendingLevelUp) triggerLevelUpAnimation(pendingLevelUp);
-  renderUsageStatus();
-  renderUpdateStatus();
-  renderLeaderboardSettings();
-  renderLeaderboard();
-  renderHistoryChart(getSevenDayRows(ledger.entries, historyFilter), historyFilter);
-  const achievementContext = buildAchievementContext(stats);
-  renderAchievements(stats, achievementContext);
-  renderDashboardTabs();
-  syncAchievements(stats, achievementContext);
+
+  if (viewMode === "manager") {
+    renderScopedSourceBreakdown(visibility);
+
+    const progressBar = document.querySelector<HTMLElement>("#progressBar");
+    if (progressBar) progressBar.style.width = `${stats.levelProgress * 100}%`;
+    if (lockInput) lockInput.checked = ledger.settings.locked;
+    if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
+    if (fontScaleSelect) {
+      const fs = ledger.settings.fontScale ?? 1;
+      fontScaleSelect.value = String(fs);
+      document.documentElement.style.setProperty("--font-scale", String(fs));
+    }
+    if (languageSelect) languageSelect.value = ledger.settings.language;
+    themeSwitcher?.querySelectorAll<HTMLButtonElement>("[data-ui-theme]").forEach((button) => {
+      const active = button.dataset.uiTheme === ledger?.settings.uiTheme;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    syncStatsSourceInputs();
+    if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
+    if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
+    syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
+    if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
+    if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
+    if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;
+    if (totalDisplayUnitSelect) totalDisplayUnitSelect.value = ledger.settings.totalDisplayUnit;
+    syncInputValue(codexSessionsDirInput, ledger.settings.codexSessionsDir ?? "");
+    syncInputValue(claudeSessionsDirInput, ledger.settings.claudeSessionsDir ?? "");
+    syncInputValue(openclawSessionsDirInput, ledger.settings.openclawSessionsDir ?? "");
+    syncInputValue(opencodeSessionsDirInput, ledger.settings.opencodeSessionsDir ?? "");
+    syncInputValue(geminiSessionsDirInput, ledger.settings.geminiSessionsDir ?? "");
+    syncInputValue(hermesSessionsDirInput, ledger.settings.hermesSessionsDir ?? "");
+
+    renderUpdateStatus();
+    renderLeaderboardSettings();
+    renderLeaderboard();
+    if (historyFilter !== "all" && !visibility.visibleSet.has(historyFilter)) {
+      historyFilter = "all";
+      lastHistoryChartKey = "";
+    }
+    lastHistoryChartKey = renderHistoryChart({
+      rows: statsCache.getSevenDayRows(ledger.entries, historyFilter, visibility, ledgerEntriesSignature()),
+      filter: historyFilter,
+      visibility,
+      lastHistoryChartKey,
+      historySummary,
+      historyLegend,
+      historyTabs,
+      historyBars,
+      t,
+      escapeHtml,
+    });
+    const achievementContext = getAchievementContext(stats, visibility.enabled);
+    renderAchievements(stats, achievementContext);
+    renderDashboardTabs();
+    syncAchievementsIfNeeded(stats, achievementContext);
+  }
 }
 
 function renderDashboardTabs() {
@@ -2198,8 +1985,14 @@ function triggerLevelUpAnimation(levels: { from: number; to: number }) {
 
 function renderAchievements(stats?: Stats, context?: AchievementContext) {
   if (!achievementSummaryElement || !achievementGridElement) return;
-  if (!stats && ledger && tree && gameBalance) stats = calculateStats(ledger.entries, tree, gameBalance);
-  if (!context && stats) context = buildAchievementContext(stats);
+  const visibility = sourceVisibility();
+  if (!stats && ledger && tree && gameBalance) {
+    stats = statsCache.calculateStats(ledger.entries, tree, gameBalance, visibility.enabled, ledgerEntriesSignature());
+  }
+  if (!context && stats) context = getAchievementContext(stats, visibility.enabled);
+  const key = achievementsRenderSignature(stats, context);
+  if (key === achievementRenderKey) return;
+  achievementRenderKey = key;
   const unlockedIds = achievementUnlockedIds();
   const unseenIds = new Set([...unlockedIds].filter((id) => !seenAchievementIds.has(id)));
   const visibleDefs = ACHIEVEMENTS.filter((def) => !def.planned || unlockedIds.has(def.id));
@@ -2344,8 +2137,12 @@ function showAchievementDetail(def: AchievementDef) {
   const markIcon = unlocked ? "✦" : def.hidden && !unlocked ? "?" : "·";
   const copy = achievementText(def);
 
-  const stats = ledger && tree && gameBalance ? calculateStats(ledger.entries, tree, gameBalance) : undefined;
-  const context = stats ? buildAchievementContext(stats) : undefined;
+  const visibility = sourceVisibility();
+  const stats =
+    ledger && tree && gameBalance
+      ? statsCache.calculateStats(ledger.entries, tree, gameBalance, visibility.enabled, ledgerEntriesSignature())
+      : undefined;
+  const context = stats ? getAchievementContext(stats, visibility.enabled) : undefined;
   const progress = achievementProgress(def, stats, context);
 
   const existing = document.querySelector(".achievement-detail-overlay");
@@ -2440,6 +2237,29 @@ function achievementProgress(def: AchievementDef, stats?: Stats, context?: Achie
       label: `${formatCompact(peak)} / ${formatCompact(target)} token/min`,
     };
   }
+  if (context) {
+    const progressMap: Record<string, { current: number; target: number; unit: string }> = {
+      explorer_10d: { current: context.totalActiveDays, target: 10, unit: "d" },
+      explorer_50d: { current: context.totalActiveDays, target: 50, unit: "d" },
+      explorer_100d: { current: context.totalActiveDays, target: 100, unit: "d" },
+      explorer_365d: { current: context.totalActiveDays, target: 365, unit: "d" },
+      model_collector_3: { current: context.uniqueModels, target: 3, unit: "" },
+      model_collector_10: { current: context.uniqueModels, target: 10, unit: "" },
+      model_collector_20: { current: context.uniqueModels, target: 20, unit: "" },
+      streak_100: { current: context.consecutiveDays, target: 100, unit: "d" },
+      thousand_cuts: { current: context.totalEntries, target: 1_000, unit: "" },
+      ten_thousand_cuts: { current: context.totalEntries, target: 10_000, unit: "" },
+      session_grinder: { current: context.maxEntriesOneDay, target: 100, unit: "" },
+      session_marathon: { current: context.maxEntriesOneDay, target: 500, unit: "" },
+    };
+    const prog = progressMap[def.id];
+    if (prog) {
+      return {
+        percent: clamp((prog.current / prog.target) * 100, 0, 100),
+        label: `${prog.current} / ${prog.target}${prog.unit ? " " + prog.unit : ""}`,
+      };
+    }
+  }
   return undefined;
 }
 
@@ -2506,8 +2326,39 @@ function syncAchievements(stats: Stats, context: AchievementContext) {
     });
 }
 
-function buildAchievementContext(stats: Stats): AchievementContext {
+function syncAchievementsIfNeeded(stats: Stats, context: AchievementContext) {
+  if (achievementSyncInFlight) return;
+  const key = [
+    ledgerEntriesSignature(),
+    stats.xp,
+    stats.level,
+    Math.floor(stats.weather.tokensPerMinute),
+    achievementState.unlocked.map((item) => item.id).join(","),
+  ].join("|");
+  if (key === achievementSyncKey) return;
+  achievementSyncKey = key;
+  syncAchievements(stats, context);
+}
+
+function getAchievementContext(stats: Stats, enabledSources = enabledStatsSourceSet()): AchievementContext {
+  const key = [
+    ledgerEntriesSignature(),
+    [...enabledSources].join(","),
+    stats.xp,
+    stats.level,
+    stats.stage.id,
+  ].join("|");
+  if (cachedAchievementContext && key === achievementContextCacheKey) {
+    return { ...cachedAchievementContext, stats };
+  }
+  cachedAchievementContext = buildAchievementContext(stats, enabledSources);
+  achievementContextCacheKey = key;
+  return cachedAchievementContext;
+}
+
+function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSourceSet()): AchievementContext {
   const entries = ledger?.entries ?? [];
+  const countedEntries: LedgerEntry[] = [];
   const dayXp = new Map<string, number>();
   const daySources = new Map<string, Set<HistorySourceId>>();
   const activeSources = new Set<HistorySourceId>();
@@ -2515,15 +2366,24 @@ function buildAchievementContext(stats: Stats): AchievementContext {
   const hourSet = new Set<number>();
   const weekendDays = new Map<string, Set<number>>();
   const hourKeys = new Set<number>();
+  const dayEntries = new Map<string, number>();
+  const dayHours = new Map<string, Set<number>>();
   let hasFibonacciSession = false;
 
   for (const entry of entries) {
-    const xp = xpForEntry(entry);
+    const xp = xpForEntry(entry, enabledSources);
     if (xp <= 0) continue;
     const createdAt = new Date(entry.createdAt);
+    if (!Number.isFinite(createdAt.getTime())) continue;
+    countedEntries.push(entry);
     const key = dateKey(createdAt);
+    const hour = createdAt.getHours();
     dayXp.set(key, (dayXp.get(key) ?? 0) + xp);
-    hourSet.add(createdAt.getHours());
+    dayEntries.set(key, (dayEntries.get(key) ?? 0) + 1);
+    const hours = dayHours.get(key) ?? new Set<number>();
+    hours.add(hour);
+    dayHours.set(key, hours);
+    hourSet.add(hour);
     hourKeys.add(Math.floor(createdAt.getTime() / 3_600_000));
     if (isFibonacci(xp)) hasFibonacciSession = true;
 
@@ -2552,21 +2412,52 @@ function buildAchievementContext(stats: Stats): AchievementContext {
   const maxSourcesOneDay = Math.max(0, ...[...daySources.values()].map((sources) => sources.size));
   const stageIndex = tree ? tree.stages.findIndex((stage) => stage.id === stats.stage.id) : 0;
 
+  const uniqueModels = new Set(
+    countedEntries
+      .map((entry) => entry.model?.trim())
+      .filter((model): model is string => typeof model === "string" && model.length > 0),
+  ).size;
+  const totalSourceXp = Object.values(sourceXp).reduce((a, b) => a + b, 0);
+  const dominantSourceRatio = totalSourceXp > 0 ? Math.max(...Object.values(sourceXp)) / totalSourceXp : 0;
+  const maxEntriesOneDay = Math.max(0, ...dayEntries.values());
+
+  let longestInactiveDays = 0;
+  for (let i = 1; i < activeDayKeys.length; i++) {
+    const prev = Date.parse(`${activeDayKeys[i - 1]}T00:00:00`);
+    const curr = Date.parse(`${activeDayKeys[i]}T00:00:00`);
+    if (Number.isFinite(prev) && Number.isFinite(curr)) {
+      const dayGap = Math.round((curr - prev) / 86_400_000);
+      longestInactiveDays = Math.max(longestInactiveDays, Math.max(0, dayGap - 1));
+    }
+  }
+
+  const hasHolidayCoding = activeDayKeys.some(isNewYearOrLunarNewYearPeriod);
+  const has5amTo9amStreak = [...dayHours.values()].some((hours) => [5, 6, 7, 8].every((hour) => hours.has(hour)));
+
   return {
     stats,
-    entries,
+    entries: countedEntries,
     stageIndex,
     maxDailyXp,
     consecutiveDays: longestConsecutiveDays(activeDayKeys),
     activeSources,
     maxSourcesOneDay,
-    hasAgentSwitchWithinTenMinutes: hasAgentSwitchWithin(entries, 10 * 60 * 1000),
+    hasAgentSwitchWithinTenMinutes: hasAgentSwitchWithin(countedEntries, 10 * 60 * 1000),
     sourceXp,
     hourSet,
     weekendWarrior: [...weekendDays.values()].some((days) => days.has(0) && days.has(6)),
     touchGrassReturn: hasReturnAfterInactiveGap(activeDayKeys, 7),
     coffeeOverdose: hasConsecutiveHourActivity(hourKeys, 8),
     hasFibonacciSession,
+    totalActiveDays: activeDayKeys.length,
+    uniqueModels,
+    dominantSourceRatio,
+    hasNoonPeak: hourSet.has(12),
+    has5amTo9amStreak,
+    longestInactiveDays,
+    totalEntries: countedEntries.length,
+    maxEntriesOneDay,
+    hasHolidayCoding,
   };
 }
 
@@ -2664,6 +2555,20 @@ function hasReturnAfterInactiveGap(keys: string[], gapDays: number) {
     }
   }
   return false;
+}
+
+function isNewYearOrLunarNewYearPeriod(key: string) {
+  if (key.slice(5) === "01-01") return true;
+
+  const year = Number(key.slice(0, 4));
+  const lunarNewYear = LUNAR_NEW_YEAR_DATES[year];
+  if (!lunarNewYear) return false;
+
+  const current = Date.parse(`${key}T00:00:00`);
+  const start = Date.parse(`${lunarNewYear}T00:00:00`);
+  if (!Number.isFinite(current) || !Number.isFinite(start)) return false;
+
+  return current >= start && current < start + LUNAR_NEW_YEAR_PERIOD_DAYS * 86_400_000;
 }
 
 function hasConsecutiveHourActivity(hourKeys: Set<number>, target: number) {
@@ -2805,6 +2710,9 @@ function renderUsageStatus() {
 }
 
 function renderUpdateStatus() {
+  const renderKey = updateStatusRenderSignature();
+  if (renderKey === updateStatusRenderKey) return;
+  updateStatusRenderKey = renderKey;
   if (settingsButton) {
     settingsButton.classList.toggle("has-update", updateStatus.available);
     settingsButton.setAttribute("data-update-available", String(updateStatus.available));
@@ -2853,21 +2761,25 @@ function renderUpdateStatus() {
 }
 
 function renderLeaderboardSettings() {
-  if (leaderboardJoinInput) {
-    leaderboardJoinInput.checked = leaderboardStatus.joined;
-    leaderboardJoinInput.disabled = leaderboardStatus.syncing || !leaderboardStatus.configured;
-  }
-  if (leaderboardLoginButton) {
-    leaderboardLoginButton.disabled = leaderboardStatus.syncing || !leaderboardStatus.configured || leaderboardStatus.authenticated;
-    leaderboardLoginButton.textContent = t("loginGithub");
-  }
-  if (leaderboardLogoutButton) {
-    leaderboardLogoutButton.disabled = leaderboardStatus.syncing || !leaderboardStatus.authenticated;
+  const renderKey = leaderboardSettingsSignature();
+  if (renderKey === leaderboardSettingsRenderKey) return;
+  leaderboardSettingsRenderKey = renderKey;
+  if (leaderboardMembershipButton) {
+    leaderboardMembershipButton.disabled =
+      leaderboardStatus.syncing ||
+      !leaderboardStatus.configured ||
+      (leaderboardStatus.joined && !leaderboardStatus.authenticated);
+    leaderboardMembershipButton.textContent = leaderboardStatus.joined ? t("leaveLeaderboard") : t("joinLeaderboard");
+    leaderboardMembershipButton.classList.toggle("danger-button", leaderboardStatus.joined);
   }
   if (leaderboardSettingsSyncButton) {
     leaderboardSettingsSyncButton.disabled =
       leaderboardStatus.syncing || !leaderboardStatus.configured || !leaderboardStatus.joined;
     leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncNow");
+  }
+  if (leaderboardPageRefreshButton) {
+    leaderboardPageRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
+    leaderboardPageRefreshButton.textContent = leaderboardLoading ? t("leaderboardRefreshing") : t("refreshLeaderboard");
   }
   if (leaderboardPageSyncButton) {
     leaderboardPageSyncButton.disabled =
@@ -2907,6 +2819,9 @@ function renderLeaderboardSettings() {
 
 function renderLeaderboard() {
   if (!leaderboardRows || !leaderboardSummary) return;
+  const renderKey = leaderboardRenderSignature();
+  if (renderKey === leaderboardRenderKey) return;
+  leaderboardRenderKey = renderKey;
 
   leaderboardRangeTabs?.querySelectorAll<HTMLButtonElement>("[data-leaderboard-range]").forEach((button) => {
     const active = button.dataset.leaderboardRange === leaderboardRange;
@@ -2917,6 +2832,18 @@ function renderLeaderboard() {
   if (!leaderboardStatus.configured) {
     leaderboardSummary.innerHTML = `<strong>${t("leaderboardServiceNotConfigured")}</strong><span>${t("leaderboardNoService")}</span>`;
     leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardNoService")}</div>`;
+    return;
+  }
+
+  if (leaderboardLoading) {
+    leaderboardSummary.innerHTML = `<strong>${t("leaderboardRefreshing")}</strong><span>${leaderboardRangeLabel(leaderboardRange)}</span>`;
+    leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardRefreshing")}</div>`;
+    return;
+  }
+
+  if (leaderboardLoadedRange !== leaderboardRange) {
+    leaderboardSummary.innerHTML = `<strong>${leaderboardRangeLabel(leaderboardRange)}</strong><span>${t("leaderboardClickRefresh")}</span>`;
+    leaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardClickRefresh")}</div>`;
     return;
   }
 
@@ -3017,17 +2944,33 @@ function leaderboardAvatar(avatarUrl: string | undefined, username: string) {
   return `<img class="leaderboard-avatar" src="${escapeHtml(avatarUrl)}" alt="" loading="lazy" />`;
 }
 
-function renderScopedSourceBreakdown() {
-  if (!ledger) return;
-  renderSourceBreakdown(getSourceBreakdown(getSourceScopeEntries(ledger.entries)));
+function renderScopedSourceBreakdown(visibility = sourceVisibility()) {
+  if (!ledger || !sourceBreakdownElement) return;
+  const key = [
+    ledgerEntriesSignature(),
+    sourceScope,
+    currentLanguage(),
+    expandedSourceKey ?? "",
+    [...visibility.enabled].join(","),
+    visibility.visible.join(","),
+    usageStatusSignature(),
+    relativeRenderBucket(15_000),
+  ].join("|");
+  if (key === sourceBreakdownCacheKey) return;
+  sourceBreakdownCacheKey = key;
+  renderSourceBreakdown(
+    getSourceBreakdown(getSourceScopeEntries(ledger.entries), visibility.enabled, sourceLabel),
+    visibility,
+  );
 }
 
-function renderSourceBreakdown(rows: SourceBreakdown[]) {
+function renderSourceBreakdown(rows: SourceBreakdown[], visibility = sourceVisibility()) {
   const element = document.querySelector<HTMLElement>("#sourceBreakdown");
   if (!element) return;
   syncSourceScopeTabs();
-  const totalXp = rows.reduce((total, row) => total + row.xp, 0);
-  const activeSources = rows.filter((row) => row.xp > 0).length;
+  const sourceRows = getMonitorSourceRows(rows, visibility);
+  const totalXp = sourceRows.reduce((total, row) => total + row.xp, 0);
+  const activeSources = sourceRows.filter((row) => row.xp > 0).length;
   text(
     "#sourceSummary",
     activeSources
@@ -3036,7 +2979,11 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
         ? t("waitingTodayTokens")
         : t("waitingTokens"),
   );
-  element.innerHTML = getMonitorSourceRows(rows)
+  if (!sourceRows.length) {
+    element.innerHTML = `<div class="source-empty">${escapeHtml(t("statsSourceEmpty"))}</div>`;
+    return;
+  }
+  element.innerHTML = sourceRows
     .map((row) => {
       const percent = row.xp > 0 && totalXp > 0 ? Math.max(3, Math.round((row.xp / totalXp) * 100)) : 0;
       const expanded = !row.compact && expandedSourceKey === row.sourceKey;
@@ -3067,7 +3014,7 @@ function renderSourceBreakdown(rows: SourceBreakdown[]) {
             <div class="source-meter"><span style="width:${percent}%"></span></div>
             <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
           </div>
-          ${expanded ? renderModelBreakdown(row.sourceKey) : ""}
+          ${expanded ? renderModelBreakdown(row.sourceKey, visibility.enabled) : ""}
         </article>
       `;
     })
@@ -3088,78 +3035,15 @@ type SourceRowView = SourceBreakdown & {
   compact: boolean;
 };
 
-function getMonitorSourceRows(rows: SourceBreakdown[]): SourceRowView[] {
-  const monitors = [
-    {
-      sourceKey: "codex",
-      label: "Codex",
-      status: usageStatus?.codexSession,
-      match: (row: SourceBreakdown) => row.id === "codex-desktop" || row.id === "codex-session" || row.label === "Codex",
-    },
-    {
-      sourceKey: "claude",
-      label: "Claude Code",
-      status: usageStatus?.claudeSession,
-      match: (row: SourceBreakdown) =>
-        row.id === "claude-code" ||
-        row.id === "claude-session" ||
-        row.label === "Claude Code" ||
-        row.id.startsWith("claude-code:"),
-    },
-    {
-      sourceKey: "openclaw",
-      label: "OpenClaw",
-      status: usageStatus?.openclawSession,
-      match: (row: SourceBreakdown) => row.id === "openclaw" || row.id === "openclaw-session" || row.label === "OpenClaw",
-    },
-    {
-      sourceKey: "opencode",
-      label: "OpenCode",
-      status: usageStatus?.opencodeSession,
-      match: (row: SourceBreakdown) =>
-        row.id === "opencode" || row.id === "opencode-session" || row.label === "OpenCode" || row.id.startsWith("opencode:"),
-    },
-    {
-      sourceKey: "gemini",
-      label: "Gemini",
-      status: usageStatus?.geminiSession,
-      match: (row: SourceBreakdown) => row.id === "gemini" || row.id === "gemini-session" || row.label === "Gemini",
-    },
-    {
-      sourceKey: "hermes",
-      label: "Hermes",
-      status: usageStatus?.hermesSession,
-      match: (row: SourceBreakdown) => row.id === "hermes" || row.id === "hermes-session" || row.label === "Hermes",
-    },
-  ];
-  const used = new Set<SourceBreakdown>();
-  const monitorRows = monitors.map((monitor) => {
-    const matches = rows.filter((row) => monitor.match(row));
-    matches.forEach((row) => used.add(row));
+function getMonitorSourceRows(rows: SourceBreakdown[], visibility = sourceVisibility()): SourceRowView[] {
+  return AGENT_SOURCES.filter((source) => visibility.visibleSet.has(source.id)).map((monitor) => {
+    const matches = rows.filter((row) => sourceMatchesBreakdownRow(row, monitor.id));
     return {
       ...combineSourceRows(monitor.label, matches),
-      sourceKey: monitor.sourceKey,
-      ...monitorStatusView(monitor.status),
+      sourceKey: monitor.id,
+      ...monitorStatusView(sourceMonitorStatus(monitor.id)),
     };
   });
-  return [
-    ...monitorRows.filter((row) => !row.compact),
-    ...monitorRows.filter((row) => row.compact),
-  ];
-}
-
-function combineSourceRows(label: string, rows: SourceBreakdown[]): SourceBreakdown {
-  return rows.reduce(
-    (total, row) => ({
-      ...total,
-      xp: total.xp + row.xp,
-      inputTokens: total.inputTokens + row.inputTokens,
-      outputTokens: total.outputTokens + row.outputTokens,
-      cacheReadTokens: total.cacheReadTokens + row.cacheReadTokens,
-      cacheWriteTokens: total.cacheWriteTokens + row.cacheWriteTokens,
-    }),
-    { id: label, label, xp: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-  );
 }
 
 function monitorStatusView(status: UsageStatus["codexSession"] | undefined) {
@@ -3179,8 +3063,8 @@ function monitorStatusView(status: UsageStatus["codexSession"] | undefined) {
   };
 }
 
-function renderModelBreakdown(sourceKey: string) {
-  const rows = getModelBreakdown(sourceKey);
+function renderModelBreakdown(sourceKey: string, enabledSources = enabledStatsSourceSet()) {
+  const rows = getModelBreakdown(sourceKey, enabledSources);
   if (!rows.length) {
     return `<div class="model-breakdown empty">${escapeHtml(t("modelEmpty"))}</div>`;
   }
@@ -3207,7 +3091,7 @@ function renderModelBreakdown(sourceKey: string) {
   `;
 }
 
-function getModelBreakdown(sourceKey: string) {
+function getModelBreakdown(sourceKey: string, enabledSources = enabledStatsSourceSet()) {
   if (!ledger) return [];
   const rows = new Map<string, SourceBreakdown>();
   for (const entry of getSourceScopeEntries(ledger.entries)) {
@@ -3224,7 +3108,7 @@ function getModelBreakdown(sourceKey: string) {
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
       };
-    existing.xp += xpForEntry(entry);
+    existing.xp += xpForEntry(entry, enabledSources);
     existing.inputTokens += safeTokens(entry.inputTokens ?? 0);
     existing.outputTokens += safeTokens(entry.outputTokens ?? 0);
     existing.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
@@ -3240,417 +3124,8 @@ function getSourceScopeEntries(entries: LedgerEntry[]) {
   return entries.filter((entry) => dateKey(new Date(entry.createdAt)) === todayKey);
 }
 
-function entryMatchesSourceKey(entry: LedgerEntry, sourceKey: string) {
-  if (sourceKey === "codex") return entry.source === "codex-session" || entry.agent === "codex-desktop";
-  if (sourceKey === "claude") return entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"));
-  if (sourceKey === "openclaw") return entry.source === "openclaw-session" || entry.agent === "openclaw";
-  if (sourceKey === "opencode") {
-    return entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"));
-  }
-  if (sourceKey === "gemini") return entry.source === "gemini-session" || entry.agent === "gemini";
-  if (sourceKey === "hermes") return entry.source === "hermes-session" || entry.agent === "hermes";
-  if (sourceKey.startsWith("source:")) {
-    const id = sourceKey.slice("source:".length);
-    const entryId = entry.source === "manual" ? "manual" : entry.agent || entry.source;
-    return entryId === id;
-  }
-  return false;
-}
-
-function buildTreeAsset(manifest: PureSvgManifest): TreeAsset {
-  const labels: Record<string, string> = {
-    sprout: "新芽",
-    seedling: "幼苗",
-    young: "小树",
-    medium: "成长期",
-    lush: "繁茂",
-    full: "完全体",
-  };
-
-  return {
-    id: "vibe-bonsai",
-    displayName: "Vibe Tree",
-    baseSize: { width: 96, height: 96 },
-    defaultScale: 2,
-    palette: {
-      leaf: "#5bbf7a",
-      rain: "#78b7d8",
-      storm: "#fff2a8",
-      soilGlow: "#f2a541",
-      wind: "#d7f7d0",
-    },
-    stages: manifest.stages.map((stage) => ({
-      id: stage.id,
-      label: labels[stage.id] ?? stage.label,
-      image: stage.asset,
-    })),
-  };
-}
-
-function calculateStats(entries: LedgerEntry[], asset: TreeAsset, balance: GameBalance): Stats {
-  const now = Date.now();
-  const peakWindowAgo = now - balance.activity.peakWindowSeconds * 1000;
-  const activeWindowAgo = now - balance.activity.activeWindowSeconds * 1000;
-  const todayKey = dateKey(new Date());
-  const xp = entries.reduce((total, entry) => total + xpForEntry(entry), 0);
-  const todayXp = entries
-    .filter((entry) => dateKey(new Date(entry.createdAt)) === todayKey)
-    .reduce((total, entry) => total + xpForEntry(entry), 0);
-  const lastFiveMinuteXp = entries
-    .filter((entry) => new Date(entry.createdAt).getTime() >= peakWindowAgo)
-    .reduce((total, entry) => total + xpForEntry(entry), 0);
-  const recentXp = entries
-    .filter((entry) => new Date(entry.createdAt).getTime() >= activeWindowAgo)
-    .reduce((total, entry) => total + xpForEntry(entry), 0);
-  const activeSessions = getActiveSessionCount(entries, activeWindowAgo);
-  const levelState = getLevelState(xp, balance);
-  const stageInfo = getStageForLevel(levelState.level, balance);
-  const stage = asset.stages.find((item) => item.id === stageInfo.id) ?? asset.stages[0];
-  const nextStage = getNextStageForLevel(levelState.level, balance);
-  const stageProgress = getStageProgress(levelState.level, balance);
-  const weather = getWeather(getWeatherRate(entries, now, balance), balance);
-
-  return {
-    xp,
-    todayXp,
-    level: levelState.level,
-    levelXp: levelState.levelXp,
-    nextLevelXp: levelState.nextLevelXp,
-    levelProgress: levelState.progress,
-    stage,
-    nextStageLabel: nextStage?.label,
-    stageProgress,
-    weather,
-    lastFiveMinuteXp,
-    recentXp,
-    activeSessions,
-    sevenDays: getSevenDayRows(entries),
-    sourceBreakdown: getSourceBreakdown(entries),
-  };
-}
-
-function getLevelState(totalXp: number, balance: GameBalance) {
-  let level = 1;
-  let remaining = totalXp;
-  let needed = xpForNextLevel(level, balance);
-  while (remaining >= needed && level < balance.xp.maxLevel) {
-    remaining -= needed;
-    level += 1;
-    needed = xpForNextLevel(level, balance);
-  }
-  return {
-    level,
-    levelXp: remaining,
-    nextLevelXp: needed,
-    progress: needed ? clamp(remaining / needed, 0, 1) : 1,
-  };
-}
-
-function xpForNextLevel(level: number, balance: GameBalance) {
-  return Math.round(balance.xp.levelBase * level ** balance.xp.levelExponent);
-}
-
-function getStageForLevel(level: number, balance: GameBalance) {
-  return balance.stages.reduce((current, stage) => (level >= stage.minLevel ? stage : current), balance.stages[0]);
-}
-
-function getNextStageForLevel(level: number, balance: GameBalance) {
-  return balance.stages.find((stage) => stage.minLevel > level);
-}
-
-function getStageProgress(level: number, balance: GameBalance) {
-  const current = getStageForLevel(level, balance);
-  const next = getNextStageForLevel(level, balance);
-  if (!next) return 1;
-  return clamp((level - current.minLevel) / (next.minLevel - current.minLevel), 0, 1);
-}
-
-function getWeatherRate(entries: LedgerEntry[], now: number, balance: GameBalance) {
-  const recentTokens = getWindowXp(entries, now, balance.weather.rateWindowSeconds);
-  return (recentTokens / balance.weather.rateWindowSeconds) * 60;
-}
-
-function getWindowXp(entries: LedgerEntry[], now: number, seconds: number) {
-  return entries.reduce((total, entry) => {
-    const ageSeconds = Math.max(0, (now - new Date(entry.createdAt).getTime()) / 1000);
-    if (ageSeconds > seconds) return total;
-    return total + xpForEntry(entry);
-  }, 0);
-}
-
-function getActiveSessionCount(entries: LedgerEntry[], since: number) {
-  const sessions = new Set<string>();
-  for (const entry of entries) {
-    if (new Date(entry.createdAt).getTime() < since) continue;
-    if (xpForEntry(entry) <= 0) continue;
-    sessions.add(entry.agent || entry.source);
-  }
-  return sessions.size;
-}
-
-function getWeather(tokensPerMinute: number, balance: GameBalance): WeatherState {
-  const state = balance.weather.thresholds.reduce((current, candidate) => {
-    return tokensPerMinute >= candidate.minXpPerMinute ? candidate : current;
-  }, balance.weather.thresholds[0]);
-  const maxWeatherRate = balance.weather.thresholds[balance.weather.thresholds.length - 1]?.minXpPerMinute || 1;
-  return {
-    id: state.id,
-    label: state.label,
-    tokensPerMinute,
-    activity: clamp(tokensPerMinute / maxWeatherRate, 0, 1),
-  };
-}
-
-function getSevenDayRows(entries: LedgerEntry[], filter: HistoryFilter = "all") {
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (6 - index));
-    const key = dateKey(date);
-    const dayEntries = entries.filter(
-      (entry) => sourceMatchesHistoryFilter(entry, filter) && dateKey(new Date(entry.createdAt)) === key,
-    );
-    const inputTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.inputTokens ?? 0), 0);
-    const outputTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.outputTokens ?? 0), 0);
-    const cacheReadTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.cacheReadTokens ?? 0), 0);
-    const cacheWriteTokens = dayEntries.reduce((total, entry) => total + safeTokens(entry.cacheWriteTokens ?? 0), 0);
-    const tokens = dayEntries.reduce((total, entry) => total + xpForEntry(entry), 0);
-    const sources: Record<HistorySourceId, number> = emptySourceTotals();
-    for (const entry of dayEntries) {
-      const source = historySourceId(entry);
-      if (source) sources[source] += xpForEntry(entry);
-    }
-    return {
-      label: `${date.getMonth() + 1}/${date.getDate()}`,
-      tokens,
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-      sources,
-    };
-  });
-}
-
-function historySourceId(entry: LedgerEntry): HistorySourceId | undefined {
-  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
-  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
-  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
-    return "opencode";
-  }
-  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
-  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
-  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
-  return undefined;
-}
-
-function sourceMatchesHistoryFilter(entry: LedgerEntry, filter: HistoryFilter) {
-  if (filter === "all") return true;
-  return historySourceId(entry) === filter;
-}
-
-function getSourceBreakdown(entries: LedgerEntry[]): SourceBreakdown[] {
-  const rows = new Map<string, SourceBreakdown>();
-  for (const entry of entries) {
-    const id = entry.source === "manual" ? "manual" : entry.agent || entry.source;
-    const existing =
-      rows.get(id) ??
-      {
-        id,
-        label: sourceLabel(id, entry.source),
-        xp: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-      };
-    const inputTokens = safeTokens(entry.inputTokens ?? 0);
-    const outputTokens = safeTokens(entry.outputTokens ?? 0);
-    existing.inputTokens += inputTokens;
-    existing.outputTokens += outputTokens;
-    existing.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
-    existing.cacheWriteTokens += safeTokens(entry.cacheWriteTokens ?? 0);
-    existing.xp += xpForEntry(entry);
-    rows.set(id, existing);
-  }
-  return [...rows.values()].sort((a, b) => b.xp - a.xp);
-}
-
 function sourceLabel(id: string, source: string) {
-  if (source === "manual") return t("manualFeed");
-  if (id.startsWith("claude-code:")) return `Claude ${id.replace("claude-code:", "")}`;
-  if (id === "claude-code" || source === "claude-session") return "Claude Code";
-  if (id === "codex-desktop" || source === "codex-session") return "Codex";
-  if (id === "openclaw" || source === "openclaw-session") return "OpenClaw";
-  if (id.startsWith("opencode:")) return `OpenCode ${id.replace("opencode:", "")}`;
-  if (id === "opencode" || source === "opencode-session") return "OpenCode";
-  if (id === "gemini" || source === "gemini-session") return "Gemini";
-  if (id === "hermes" || source === "hermes-session") return "Hermes";
-  return id;
-}
-
-function renderHistoryChart(rows: HistoryDayRow[], filter: HistoryFilter) {
-  const labels: Record<HistoryFilter, string> = {
-    all: t("historyAllSources"),
-    codex: "Codex",
-    openclaw: "OpenClaw",
-    opencode: "OpenCode",
-    claude: "Claude Code",
-    gemini: "Gemini",
-    hermes: "Hermes",
-  };
-  const total = rows.reduce((sum, row) => sum + row.tokens, 0);
-  const max = Math.max(1, ...rows.map((row) => row.tokens));
-
-  text("#historySummary", `${labels[filter]} · ${formatCompact(total)} token`);
-  if (historyLegend) historyLegend.innerHTML = filter === "all" ? historyAgentLegendHtml() : historyTokenLegendHtml();
-
-  historyTabs?.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
-    const active = button.dataset.historyFilter === filter;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", String(active));
-  });
-
-  if (!historyBars) return;
-  const chartKey = historyChartKey(rows, filter);
-  if (chartKey === lastHistoryChartKey && historyBars.childElementCount > 0) return;
-  lastHistoryChartKey = chartKey;
-  historyBars.innerHTML = rows
-    .map((row) => {
-      const segmentTotal = filter === "all" ? row.tokens : row.tokens + row.cacheReadTokens + row.cacheWriteTokens;
-      const height = row.tokens > 0 ? scaledHistoryHeight(row.tokens, max) : 0;
-      const segments =
-        filter === "all"
-          ? `
-              <span class="history-segment codex" style="height:${segmentPercent(row.sources.codex, segmentTotal)}%"></span>
-              <span class="history-segment openclaw" style="height:${segmentPercent(row.sources.openclaw, segmentTotal)}%"></span>
-              <span class="history-segment opencode" style="height:${segmentPercent(row.sources.opencode, segmentTotal)}%"></span>
-              <span class="history-segment claude" style="height:${segmentPercent(row.sources.claude, segmentTotal)}%"></span>
-              <span class="history-segment gemini" style="height:${segmentPercent(row.sources.gemini, segmentTotal)}%"></span>
-              <span class="history-segment hermes" style="height:${segmentPercent(row.sources.hermes, segmentTotal)}%"></span>
-            `
-          : `
-              <span class="history-segment input" style="height:${segmentPercent(row.inputTokens, segmentTotal)}%"></span>
-              <span class="history-segment output" style="height:${segmentPercent(row.outputTokens, segmentTotal)}%"></span>
-              <span class="history-segment cache-read" style="height:${segmentPercent(row.cacheReadTokens, segmentTotal)}%"></span>
-              <span class="history-segment cache-write" style="height:${segmentPercent(row.cacheWriteTokens, segmentTotal)}%"></span>
-            `;
-      return `
-        <article class="history-day" tabindex="0">
-          <div class="history-bar-shell">
-            <div class="history-stack" style="height:${height}%">
-              ${segments}
-            </div>
-          </div>
-          ${historyTooltipHtml(row, filter)}
-          <strong>${formatCompact(row.tokens)}</strong>
-          <span>${row.label}</span>
-        </article>
-      `;
-    })
-    .join("");
-}
-
-function historyChartKey(rows: HistoryDayRow[], filter: HistoryFilter) {
-  return JSON.stringify({
-    filter,
-    rows: rows.map((row) => [
-      row.label,
-      row.tokens,
-      row.inputTokens,
-      row.outputTokens,
-      row.cacheReadTokens,
-      row.cacheWriteTokens,
-      row.sources.codex,
-      row.sources.openclaw,
-      row.sources.opencode,
-      row.sources.claude,
-      row.sources.gemini,
-      row.sources.hermes,
-    ]),
-  });
-}
-
-function historyTooltipHtml(row: HistoryDayRow, filter: HistoryFilter) {
-  const items =
-    filter === "all"
-      ? [
-          { label: "Codex", value: row.sources.codex, tone: "codex" },
-          { label: "OpenClaw", value: row.sources.openclaw, tone: "openclaw" },
-          { label: "OpenCode", value: row.sources.opencode, tone: "opencode" },
-          { label: "Claude", value: row.sources.claude, tone: "claude" },
-          { label: "Gemini", value: row.sources.gemini, tone: "gemini" },
-          { label: "Hermes", value: row.sources.hermes, tone: "hermes" },
-        ]
-      : [
-          { label: "input", value: row.inputTokens, tone: "input" },
-          { label: "output", value: row.outputTokens, tone: "output" },
-          { label: "cache hit", value: row.cacheReadTokens, tone: "cache-read" },
-          { label: "cache write", value: row.cacheWriteTokens, tone: "cache-write" },
-        ];
-
-  return `
-    <div class="history-tooltip" role="tooltip">
-      <div class="history-tooltip-head">
-        <span>${escapeHtml(row.label)}</span>
-        <strong>${formatCompact(row.tokens)} token</strong>
-      </div>
-      <div class="history-tooltip-items">
-        ${items
-          .map(
-            (item) => `
-              <span class="${item.value > 0 ? "" : "empty"}">
-                <i class="history-tooltip-dot ${item.tone}"></i>
-                <b>${escapeHtml(item.label)}</b>
-                <em>${formatCompact(item.value)}</em>
-              </span>
-            `,
-          )
-          .join("")}
-      </div>
-    </div>
-  `;
-}
-
-function historyTokenLegendHtml() {
-  return `
-    <span><i class="legend-input"></i>input</span>
-    <span><i class="legend-output"></i>output</span>
-    <span><i class="legend-cache-read"></i>cache hit</span>
-    <span><i class="legend-cache-write"></i>cache write</span>
-  `;
-}
-
-function historyAgentLegendHtml() {
-  return `
-    <span><i class="legend-codex"></i>Codex</span>
-    <span><i class="legend-openclaw"></i>OpenClaw</span>
-    <span><i class="legend-opencode"></i>OpenCode</span>
-    <span><i class="legend-claude"></i>Claude Code</span>
-    <span><i class="legend-gemini"></i>Gemini</span>
-    <span><i class="legend-hermes"></i>Hermes</span>
-  `;
-}
-
-function emptySourceTotals(): Record<HistorySourceId, number> {
-  return { codex: 0, openclaw: 0, opencode: 0, claude: 0, gemini: 0, hermes: 0 };
-}
-
-function segmentPercent(value: number, total: number) {
-  if (value <= 0 || total <= 0) return 0;
-  return Math.max(4, Math.round((value / total) * 100));
-}
-
-function scaledHistoryHeight(value: number, max: number) {
-  if (value <= 0 || max <= 0) return 0;
-  return clamp((value / max) * 100, 1.5, 100);
-}
-
-function xpForEntry(entry: LedgerEntry) {
-  return countedTokensForEntry(entry);
-}
-
-function safeTokens(value: number) {
-  return Number.isFinite(value) ? Math.max(0, value) : 0;
+  return defaultSourceLabel(id, source, t("manualFeed"));
 }
 
 function normalizeBadgeMetric(value: string, fallback: BadgeMetric): BadgeMetric {
@@ -3666,184 +3141,11 @@ function normalizeLeaderboardRange(value: unknown): LeaderboardRange {
 }
 
 function formatByUnit(value: number, unit: TotalDisplayUnit) {
-  const safeValue = Math.max(0, value);
-  if (unit === "raw") return formatIntegerWithCommas(safeValue);
-  if (unit === "wan") return `${formatScaledUnit(safeValue, 10_000)}万`;
-  if (unit === "yi") return `${formatScaledUnit(safeValue, 100_000_000)}亿`;
-  const divisor = unit === "m" ? 1_000_000 : 1_000;
-  return `${formatIntegerWithCommas(Math.round(safeValue / divisor))}${unit}`;
-}
-
-function formatScaledUnit(value: number, divisor: number) {
-  const scaled = value / divisor;
-  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
-  return new Intl.NumberFormat(languageLocale(), { maximumFractionDigits: digits }).format(scaled);
-}
-
-function formatIntegerWithCommas(value: number) {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(value));
-}
-
-function weatherBackHtml(weather: WeatherId) {
-  if (weather === "drizzle") {
-    return `<svg class="weather-svg behind" viewBox="0 0 192 192">${cloud(118, 34, false, "small")}</svg>`;
-  }
-  if (weather === "rain") {
-    return `<svg class="weather-svg behind" viewBox="0 0 192 192">${cloud(56, 34, false, "medium")}</svg>`;
-  }
-  if (weather === "thunder" || weather === "storm") {
-    return `<svg class="weather-svg behind" viewBox="0 0 192 192">${cloud(weather === "storm" ? 102 : 104, weather === "storm" ? 32 : 30, true, weather === "storm" ? "wide" : "thunder")}</svg>`;
-  }
-  return "";
-}
-
-function weatherFrontHtml(weather: WeatherId) {
-  if (weather === "clear") {
-    return `
-      <svg class="weather-svg" viewBox="0 0 192 192">
-        <g class="sun">${sunIcon(34, 34)}</g>
-        <g class="spark-a">${tinySpark(36, 108)}${tinySpark(82, 84)}</g>
-        <g class="spark-b">${tinySpark(146, 98)}</g>
-      </svg>
-    `;
-  }
-  if (weather === "breeze") {
-    return `
-      <svg class="weather-svg" viewBox="0 0 192 192">
-        <g class="wind-a">${windLine(118, 68, 24)}${windLine(110, 84, 30)}</g>
-        <g class="wind-b">${windLine(124, 100, 22)}${leafBit(76, 96)}${leafBit(132, 94)}</g>
-      </svg>
-    `;
-  }
-  if (weather === "drizzle") {
-    return `<svg class="weather-svg" viewBox="0 0 192 192"><g class="rain-slow">${drop(114, 56)}${drop(134, 68)}${drop(152, 86)}${drop(150, 116)}</g></svg>`;
-  }
-  if (weather === "rain") {
-    return `
-      <svg class="weather-svg" viewBox="0 0 192 192">
-        <g class="rain-slow">${drop(52, 72)}${drop(74, 66)}${drop(112, 68)}${drop(136, 76)}</g>
-        <g class="rain-fast">${drop(48, 102)}${drop(88, 94)}${drop(126, 102)}${drop(148, 116)}</g>
-        <g class="puddle">${puddle(72, 140)}${puddle(116, 142)}</g>
-      </svg>
-    `;
-  }
-  if (weather === "thunder") {
-    return `
-      <svg class="weather-svg" viewBox="0 0 192 192">
-        <g class="rain-slow">${drop(52, 72)}${drop(74, 66)}${drop(112, 68)}${drop(136, 76)}</g>
-        <g class="rain-fast">${drop(48, 102)}${drop(88, 94)}${drop(126, 102)}${drop(148, 116)}</g>
-        <g class="puddle">${puddle(72, 140)}${puddle(116, 142)}</g>
-        <g class="bolt">${boltIcon(132, 58)}</g>
-      </svg>
-    `;
-  }
-  if (weather === "storm") {
-    return `
-      <svg class="weather-svg" viewBox="0 0 192 192">
-        <g class="rain-slant">${slantDrop(76, 70)}${slantDrop(100, 66)}${slantDrop(124, 72)}${slantDrop(146, 84)}${slantDrop(154, 104)}</g>
-        <g class="wind-a">${windLine(56, 112, 28)}${windLine(52, 128, 22)}</g>
-        <g class="wind-b">${windLine(112, 124, 30)}${leafBit(150, 92)}</g>
-        <g class="puddle">${puddle(72, 140)}${puddle(116, 142)}</g>
-      </svg>
-    `;
-  }
-  return "";
-}
-
-function px(x: number, y: number, w: number, h: number, fill: string) {
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}"/>`;
-}
-
-function tinySpark(x: number, y: number) {
-  return `${px(x, y + 4, 10, 4, "#ffd239")}${px(x + 3, y, 4, 12, "#ffd239")}`;
-}
-
-function sunIcon(x: number, y: number) {
-  return `
-    ${px(x, y, 17, 17, "#ffd239")}
-    ${px(x + 5, y - 8, 5, 5, "#ffc928")}
-    ${px(x + 5, y + 20, 5, 5, "#ffc928")}
-    ${px(x - 8, y + 6, 5, 5, "#ffc928")}
-    ${px(x + 20, y + 6, 5, 5, "#ffc928")}
-    ${px(x + 4, y + 4, 8, 8, "#fff07a")}
-  `;
-}
-
-function windLine(x: number, y: number, w: number) {
-  return px(x, y, w, 4, "#b9e8f4");
-}
-
-function leafBit(x: number, y: number) {
-  return px(x, y, 5, 5, "#83b93c");
-}
-
-function drop(x: number, y: number) {
-  return px(x, y, 4, 14, "#86cbed");
-}
-
-function slantDrop(x: number, y: number) {
-  return `<rect x="${x}" y="${y}" width="4" height="18" fill="#86cbed" transform="rotate(28 ${x} ${y})"/>`;
-}
-
-function puddle(x: number, y: number) {
-  return `${px(x, y, 15, 4, "#5dbde7")}${px(x + 3, y - 2, 7, 2, "#9fe4ff")}`;
-}
-
-function boltIcon(x: number, y: number) {
-  return `
-    <polygon points="${x + 10},${y} ${x + 24},${y} ${x + 16},${y + 20} ${x + 26},${y + 20} ${x + 2},${y + 52} ${x + 10},${y + 28} ${x},${y + 28}" fill="#070807"/>
-    <polygon points="${x + 12},${y + 4} ${x + 20},${y + 4} ${x + 12},${y + 24} ${x + 22},${y + 24} ${x + 6},${y + 44} ${x + 12},${y + 24} ${x + 4},${y + 24}" fill="#ffc928"/>
-    ${px(x + 13, y + 6, 5, 7, "#fff07a")}
-  `;
-}
-
-function cloud(x: number, y: number, dark: boolean, size: "small" | "medium" | "wide" | "thunder") {
-  const main = dark ? "#66707a" : "#aebfca";
-  const mid = dark ? "#505860" : "#7f929f";
-  const hi = dark ? "#929ba3" : "#dfe9ee";
-  const scale = size === "small" ? 0.72 : size === "wide" ? 0.92 : size === "thunder" ? 0.96 : 0.82;
-  const sx = (value: number) => Math.round(value * scale);
-  return `
-    <g class="cloud" transform="translate(${x} ${y})">
-      ${px(-sx(4), sx(22), sx(70), sx(18), "#070807")}
-      ${px(sx(8), sx(10), sx(48), sx(24), "#070807")}
-      ${px(sx(2), sx(24), sx(62), sx(12), main)}
-      ${px(sx(14), sx(14), sx(40), sx(18), main)}
-      ${px(sx(20), sx(14), sx(15), sx(6), hi)}
-      ${px(sx(42), sx(24), sx(16), sx(8), mid)}
-      ${px(sx(4), sx(32), sx(18), sx(8), mid)}
-    </g>
-  `;
-}
-
-function dateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return formatValueByUnit(value, unit, languageLocale());
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat(languageLocale()).format(Math.round(value));
-}
-
-function formatCompact(value: number) {
-  const sign = value < 0 ? "-" : "";
-  const absolute = Math.abs(value);
-  if (absolute < 1_000) return `${Math.round(value)}`;
-
-  const units = [
-    { value: 1_000_000_000, suffix: "b" },
-    { value: 1_000_000, suffix: "m" },
-    { value: 1_000, suffix: "k" },
-  ];
-  const unit = units.find((item) => absolute >= item.value);
-  if (!unit) return `${Math.round(value)}`;
-
-  const scaled = absolute / unit.value;
-  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
-  const formatted = scaled.toFixed(digits).replace(/\.0+$|(\.\d*[1-9])0+$/, "$1");
-  return `${sign}${formatted}${unit.suffix}`;
+  return formatLocaleNumber(value, languageLocale());
 }
 
 function assetUrl(path: string) {
@@ -3861,13 +3163,153 @@ function formatRelativeTime(isoTime: string) {
   return relativeTimeText(elapsedHours, "hoursAgo");
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
 function text(selector: string, value: string) {
   const element = document.querySelector(selector);
   if (element) element.textContent = value;
+}
+
+function ledgerEntriesSignature() {
+  if (!ledger) return "no-ledger";
+  const first = ledger.entries[0];
+  const last = ledger.entries[ledger.entries.length - 1];
+  return [
+    ledger.entries.length,
+    ledger.installedAt,
+    first?.id ?? "",
+    first?.createdAt ?? "",
+    first?.tokens ?? "",
+    last?.id ?? "",
+    last?.createdAt ?? "",
+    last?.tokens ?? "",
+  ].join(":");
+}
+
+function usageStatusSignature() {
+  if (!usageStatus) return "no-usage-status";
+  return AGENT_SOURCES.map((source) => {
+    const status = usageStatus?.[source.statusKey];
+    return [
+      source.id,
+      status?.exists ? "1" : "0",
+      status?.running ? "1" : "0",
+      status?.filesWatched ?? 0,
+      status?.eventsImported ?? 0,
+      status?.lastEventAt ?? "",
+      status?.sessionsRoot ?? "",
+    ].join(":");
+  }).join("|");
+}
+
+function updateStatusRenderSignature() {
+  return JSON.stringify({
+    language: currentLanguage(),
+    bucket: relativeRenderBucket(30_000),
+    status: updateStatus,
+  });
+}
+
+function leaderboardSettingsSignature() {
+  return JSON.stringify({
+    language: currentLanguage(),
+    bucket: relativeRenderBucket(30_000),
+    status: leaderboardStatus,
+    loading: leaderboardLoading,
+  });
+}
+
+function leaderboardRenderSignature() {
+  return JSON.stringify({
+    language: currentLanguage(),
+    bucket: relativeRenderBucket(30_000),
+    range: leaderboardRange,
+    loadedRange: leaderboardLoadedRange,
+    loading: leaderboardLoading,
+    status: {
+      configured: leaderboardStatus.configured,
+      authenticated: leaderboardStatus.authenticated,
+      joined: leaderboardStatus.joined,
+      syncing: leaderboardStatus.syncing,
+      profileId: leaderboardStatus.profile?.id,
+    },
+    data: {
+      range: leaderboardData.range,
+      updatedAt: leaderboardData.updatedAt,
+      error: leaderboardData.error,
+      me: leaderboardData.me?.rank,
+      entries: leaderboardData.entries.map((entry) => [
+        entry.rank,
+        entry.userId,
+        entry.username,
+        entry.tokens,
+        entry.daysActive ?? 0,
+      ]),
+    },
+  });
+}
+
+function achievementsRenderSignature(stats?: Stats, context?: AchievementContext) {
+  return JSON.stringify({
+    language: currentLanguage(),
+    entries: ledgerEntriesSignature(),
+    enabled: enabledStatsSourceIds(),
+    category: achievementCategoryFilter,
+    status: achievementStatusFilter,
+    bucket: relativeRenderBucket(15_000),
+    stats: stats
+      ? {
+          xp: stats.xp,
+          todayXp: stats.todayXp,
+          level: stats.level,
+          stage: stats.stage.id,
+          weatherRate: Math.floor(stats.weather.tokensPerMinute),
+        }
+      : undefined,
+    context: context
+      ? {
+          maxDailyXp: context.maxDailyXp,
+          consecutiveDays: context.consecutiveDays,
+          activeSources: [...context.activeSources].sort(),
+          maxSourcesOneDay: context.maxSourcesOneDay,
+          hasAgentSwitchWithinTenMinutes: context.hasAgentSwitchWithinTenMinutes,
+          weekendWarrior: context.weekendWarrior,
+          touchGrassReturn: context.touchGrassReturn,
+          coffeeOverdose: context.coffeeOverdose,
+          hasFibonacciSession: context.hasFibonacciSession,
+          totalActiveDays: context.totalActiveDays,
+          uniqueModels: context.uniqueModels,
+          dominantSourceRatio: context.dominantSourceRatio,
+          hasNoonPeak: context.hasNoonPeak,
+          has5amTo9amStreak: context.has5amTo9amStreak,
+          longestInactiveDays: context.longestInactiveDays,
+          totalEntries: context.totalEntries,
+          maxEntriesOneDay: context.maxEntriesOneDay,
+          hasHolidayCoding: context.hasHolidayCoding,
+        }
+      : undefined,
+    unlocked: achievementState.unlocked.map((item) => [item.id, item.unlockedAt]),
+    achievementStats: achievementState.stats ?? {},
+    seen: [...seenAchievementIds].sort(),
+  });
+}
+
+function relativeRenderBucket(intervalMs: number) {
+  return Math.floor(Date.now() / intervalMs);
+}
+
+function selectedStatsSourceIds(): string[] {
+  if (!sourceSettings) return enabledStatsSourceIds();
+  return [...sourceSettings.querySelectorAll<HTMLInputElement>("[data-stats-source]")]
+    .filter((input) => input.checked)
+    .map((input) => input.dataset.statsSource)
+    .filter(isHistorySourceId);
+}
+
+function syncStatsSourceInputs() {
+  const enabled = new Set(enabledStatsSourceIds());
+  sourceSettings?.querySelectorAll<HTMLInputElement>("[data-stats-source]").forEach((input) => {
+    const sourceId = input.dataset.statsSource;
+    input.checked = Boolean(isHistorySourceId(sourceId) && enabled.has(sourceId));
+  });
 }
 
 function syncInputValue(input: HTMLInputElement | null, value: string) {

@@ -62,16 +62,20 @@ export interface Settings {
   badgeBackMetric: "level" | "total" | "rate";
   totalDisplayUnit: "raw" | "k" | "m" | "wan" | "yi";
   updateCheckEnabled: boolean;
+  lastUpdateCheckedAt?: string;
   lastUpdateReminderVersion?: string;
   leaderboardEnabled: boolean;
   leaderboardProfile?: LeaderboardProfile;
   leaderboardLastSyncedAt?: string;
   launchOnStartup: boolean;
   silentStartup: boolean;
+  proxyUrl?: string;
+  enabledSourceIds: string[];
   windowPosition?: {
     x: number;
     y: number;
   };
+  fontScale?: number;
   codexSessionsDir?: string;
   claudeSessionsDir?: string;
   openclawSessionsDir?: string;
