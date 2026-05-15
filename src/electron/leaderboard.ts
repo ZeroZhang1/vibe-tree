@@ -6,9 +6,11 @@ import type {
   LedgerFile,
   LeaderboardData,
   LeaderboardEntry,
+  LeaderboardPreferencePeriod,
   LeaderboardProfile,
   LeaderboardRange,
   LeaderboardStatus,
+  LeaderboardUsagePreference,
   Settings,
 } from "../shared/types.js";
 
@@ -52,6 +54,10 @@ interface LeaderboardServiceOptions {
   writeJsonAtomic: (path: string, value: unknown) => void;
   broadcastStatus: (status: LeaderboardStatus) => void;
   requestJson?: LeaderboardRequestJson;
+}
+
+export interface LeaderboardSyncOptions {
+  force?: boolean;
 }
 
 export function createLeaderboardService(options: LeaderboardServiceOptions) {
@@ -186,7 +192,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     return status(text("leaderboardLoggedOut"));
   }
 
-  async function syncUsage(): Promise<LeaderboardStatus> {
+  async function syncUsage(syncOptions: LeaderboardSyncOptions = {}): Promise<LeaderboardStatus> {
     if (!configured) return status(text("leaderboardServiceNotConfigured"));
     if (!auth.token || !auth.profile) return status(text("leaderboardLoginRequired"));
     if (!ledger().settings.leaderboardEnabled) return status();
@@ -203,7 +209,11 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         body: {
           days: dailyUsage(),
           appVersion: options.currentAppVersion(),
+          usageStartDate: usageStartDate(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          forceSync: syncOptions.force === true,
+          usagePreferencesPublic: ledger().settings.leaderboardPreferencesPublic,
+          usagePreferences: ledger().settings.leaderboardPreferencesPublic ? usagePreferences() : undefined,
         },
       });
       syncing = false;
@@ -377,6 +387,65 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       });
   }
 
+  function usagePreferences() {
+    return LEADERBOARD_PREFERENCE_RANGES.map((range) => {
+      const preference = usagePreferenceForRange(range);
+      return preference ? { range, ...preference } : undefined;
+    }).filter((item): item is { range: LeaderboardRange } & LeaderboardUsagePreference => Boolean(item));
+  }
+
+  function usagePreferenceForRange(range: LeaderboardRange): LeaderboardUsagePreference | undefined {
+    const now = new Date();
+    const start = preferenceRangeStart(range, now);
+    const agentTotals = new Map<string, number>();
+    const modelTotals = new Map<string, number>();
+    const hourTotals = Array.from({ length: 24 }, () => 0);
+    const hourBuckets = new Map<number, number>();
+    let totalTokens = 0;
+
+    for (const entry of ledger().entries) {
+      const createdAt = new Date(entry.createdAt);
+      if (!Number.isFinite(createdAt.getTime())) continue;
+      if (start && createdAt < start) continue;
+      const tokens = options.xpForEntry(entry);
+      if (tokens <= 0) continue;
+
+      totalTokens += tokens;
+      const agentLabel = agentLabelForEntry(entry);
+      if (agentLabel) agentTotals.set(agentLabel, (agentTotals.get(agentLabel) ?? 0) + tokens);
+      const model = cleanPreferenceLabel(entry.model);
+      if (model) modelTotals.set(model, (modelTotals.get(model) ?? 0) + tokens);
+      hourTotals[createdAt.getHours()] += tokens;
+      const hourKey = Math.floor(createdAt.getTime() / 3_600_000);
+      hourBuckets.set(hourKey, (hourBuckets.get(hourKey) ?? 0) + tokens);
+    }
+
+    if (totalTokens <= 0) return undefined;
+
+    const topAgent = topPreferenceEntry(agentTotals);
+    const topModel = topPreferenceEntry(modelTotals);
+    const peakHourTokens = Math.max(0, ...hourBuckets.values());
+    const favoritePeriod = favoritePreferencePeriod(hourTotals);
+
+    return {
+      favoriteAgent: topAgent
+        ? {
+            label: topAgent.label,
+            percent: Math.max(1, Math.min(100, Math.round((topAgent.tokens / totalTokens) * 100))),
+          }
+        : undefined,
+      favoriteModel: topModel?.label,
+      favoritePeriod,
+      peakTokensPerMinute: Math.max(0, Math.round(peakHourTokens / 60)),
+    };
+  }
+
+  function usageStartDate() {
+    const installedAt = new Date(ledger().installedAt);
+    if (!Number.isFinite(installedAt.getTime())) return undefined;
+    return options.dateKey(installedAt);
+  }
+
   function apiUrl(path: string) {
     return new URL(path.replace(/^\/+/, ""), `${options.apiUrl}/`).toString();
   }
@@ -484,6 +553,84 @@ function normalizeRange(value: unknown): LeaderboardRange {
   return value === "today" || value === "30d" || value === "all" ? value : "7d";
 }
 
+const LEADERBOARD_PREFERENCE_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+
+const AGENT_LABELS: Record<string, string> = {
+  codex: "Codex",
+  openclaw: "OpenClaw",
+  opencode: "OpenCode",
+  claude: "Claude Code",
+  gemini: "Gemini",
+  hermes: "Hermes",
+};
+
+const PREFERENCE_PERIODS: Array<{
+  id: LeaderboardPreferencePeriod;
+  startHour: number;
+  endHour: number;
+  hours: number[];
+}> = [
+  { id: "early", startHour: 0, endHour: 6, hours: [0, 1, 2, 3, 4, 5] },
+  { id: "morning", startHour: 6, endHour: 12, hours: [6, 7, 8, 9, 10, 11] },
+  { id: "afternoon", startHour: 12, endHour: 18, hours: [12, 13, 14, 15, 16, 17] },
+  { id: "evening", startHour: 18, endHour: 21, hours: [18, 19, 20] },
+  { id: "night", startHour: 21, endHour: 24, hours: [21, 22, 23] },
+];
+
+function preferenceRangeStart(range: LeaderboardRange, now: Date) {
+  if (range === "all") return undefined;
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  if (range === "7d") start.setDate(start.getDate() - 6);
+  if (range === "30d") start.setDate(start.getDate() - 29);
+  return start;
+}
+
+function topPreferenceEntry(values: Map<string, number>) {
+  let best: { label: string; tokens: number } | undefined;
+  for (const [label, tokens] of values) {
+    if (!best || tokens > best.tokens) best = { label, tokens };
+  }
+  return best;
+}
+
+function favoritePreferencePeriod(hourTotals: number[]): LeaderboardUsagePreference["favoritePeriod"] | undefined {
+  let best: (typeof PREFERENCE_PERIODS)[number] | undefined;
+  let bestTokens = 0;
+  for (const period of PREFERENCE_PERIODS) {
+    const tokens = period.hours.reduce((sum, hour) => sum + (hourTotals[hour] ?? 0), 0);
+    if (tokens > bestTokens) {
+      best = period;
+      bestTokens = tokens;
+    }
+  }
+  return best && bestTokens > 0
+    ? { id: best.id, startHour: best.startHour, endHour: best.endHour }
+    : undefined;
+}
+
+function agentLabelForEntry(entry: LedgerEntry) {
+  const sourceId = preferenceSourceIdForEntry(entry);
+  if (sourceId) return AGENT_LABELS[sourceId];
+  return cleanPreferenceLabel(entry.agent) || cleanPreferenceLabel(entry.source);
+}
+
+function preferenceSourceIdForEntry(entry: LedgerEntry): keyof typeof AGENT_LABELS | undefined {
+  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
+  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
+  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+    return "opencode";
+  }
+  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
+  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
+  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
+  return undefined;
+}
+
+function cleanPreferenceLabel(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 64) : undefined;
+}
+
 function randomPkceValue() {
   return base64Url(randomBytes(32));
 }
@@ -526,7 +673,47 @@ function normalizeEntry(value: unknown): LeaderboardEntry | undefined {
   const daysActive = Number.isFinite(Number(entry?.daysActive))
     ? Math.max(0, Math.round(Number(entry?.daysActive)))
     : undefined;
-  return { rank, userId, username, avatarUrl, tokens, xp: tokens, daysActive };
+  const usagePreference = normalizeUsagePreference(entry?.usagePreference);
+  return { rank, userId, username, avatarUrl, tokens, xp: tokens, daysActive, usagePreference };
+}
+
+function normalizeUsagePreference(value: unknown): LeaderboardUsagePreference | undefined {
+  const input = value as Partial<LeaderboardUsagePreference> | undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const favoriteAgent =
+    typeof input.favoriteAgent?.label === "string" && input.favoriteAgent.label.trim()
+      ? {
+          label: input.favoriteAgent.label.trim().slice(0, 64),
+          percent: Math.max(0, Math.min(100, Math.round(Number(input.favoriteAgent.percent)))),
+        }
+      : undefined;
+  const favoriteModel =
+    typeof input.favoriteModel === "string" && input.favoriteModel.trim()
+      ? input.favoriteModel.trim().slice(0, 64)
+      : undefined;
+  const period = input.favoritePeriod;
+  const favoritePeriod =
+    period &&
+    (period.id === "early" ||
+      period.id === "morning" ||
+      period.id === "afternoon" ||
+      period.id === "evening" ||
+      period.id === "night") &&
+    Number.isFinite(Number(period.startHour)) &&
+    Number.isFinite(Number(period.endHour))
+      ? {
+          id: period.id,
+          startHour: Math.max(0, Math.min(23, Math.round(Number(period.startHour)))),
+          endHour: Math.max(1, Math.min(24, Math.round(Number(period.endHour)))),
+        }
+      : undefined;
+  const peakTokensPerMinute = Number.isFinite(Number(input.peakTokensPerMinute))
+    ? Math.max(0, Math.round(Number(input.peakTokensPerMinute)))
+    : undefined;
+  const updatedAt =
+    typeof input.updatedAt === "string" && Number.isFinite(Date.parse(input.updatedAt)) ? input.updatedAt : undefined;
+  if (!favoriteAgent && !favoriteModel && !favoritePeriod && !peakTokensPerMinute) return undefined;
+  return { favoriteAgent, favoriteModel, favoritePeriod, peakTokensPerMinute, updatedAt };
 }
 
 function escapeHtml(value: string) {

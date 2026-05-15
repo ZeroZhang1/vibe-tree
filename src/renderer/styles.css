@@ -33,6 +33,14 @@
   --progress-start: var(--leaf-dark);
   --progress-end: var(--leaf);
   --progress-highlight: #d7ff75;
+  --scrollbar-track: color-mix(in srgb, var(--bg-light) 72%, transparent);
+  --scrollbar-thumb: color-mix(in srgb, var(--leaf) 58%, var(--bg-light));
+  --scrollbar-thumb-hover: var(--leaf);
+  --chrome-bg: #1a1c2c;
+  --chrome-border: rgba(255, 255, 255, 0.08);
+  --window-chrome-height: 36px;
+  --window-chrome-left: 14px;
+  --window-chrome-right: 150px;
 
   /* Rarity colors - game style */
   --rarity-common: #8cd460;
@@ -67,19 +75,18 @@
 
 html[data-ui-theme="day"],
 .manager-root[data-ui-theme="day"],
-.pet-root[data-ui-theme="day"],
 .toast-root[data-ui-theme="day"] {
   color-scheme: light;
-  --bg: #f8f8f5;
-  --bg-light: #f0f1ec;
-  --bg-card: #f4f5f1;
-  --bg-warm: #e9eee4;
+  --bg: #ffffff;
+  --bg-light: #ffffff;
+  --bg-card: #ffffff;
+  --bg-warm: #f8fbf2;
   --ink: #11120e;
   --ink-soft: #2c3028;
   --muted: rgba(17, 18, 14, 0.56);
   --muted-light: #8aaa84;
-  --border: rgba(20, 20, 16, 0.08);
-  --border-strong: rgba(20, 20, 16, 0.14);
+  --border: rgba(20, 20, 16, 0.045);
+  --border-strong: rgba(20, 20, 16, 0.105);
   --leaf: #2c756c;
   --leaf-dark: #245a55;
   --leaf-glow: rgba(44, 117, 108, 0.14);
@@ -90,8 +97,8 @@ html[data-ui-theme="day"],
   --hp-red: #d54a3a;
   --accent: #2c756c;
   --on-accent: #f8f8f5;
-  --app-grid: rgba(17, 18, 14, 0.055);
-  --panel-glow: rgba(44, 117, 108, 0.08);
+  --app-grid: rgba(17, 18, 14, 0.028);
+  --panel-glow: rgba(44, 117, 108, 0.04);
   --token-input: #405f58;
   --token-output: #5aa6c8;
   --token-cache-read: #9ddf5d;
@@ -106,20 +113,23 @@ html[data-ui-theme="day"],
   --rarity-legendary-border: #d6ba68;
   --rarity-hidden-bg: #e0f0eb;
   --rarity-hidden-border: #a7cfc5;
-  --pixel-shadow: 0 18px 44px rgba(25, 28, 22, 0.12);
-  --pixel-shadow-lg: 0 28px 70px rgba(25, 28, 22, 0.18);
+  --pixel-shadow: 0 18px 42px rgba(25, 28, 22, 0.055);
+  --pixel-shadow-lg: 0 28px 68px rgba(25, 28, 22, 0.085);
   --progress-start: #425c56;
   --progress-end: #7ea79d;
   --progress-highlight: #aec8be;
-  --glow-sm: 0 0 10px rgba(44, 117, 108, 0.12);
-  --glow-lg: 0 0 22px rgba(44, 117, 108, 0.16);
+  --scrollbar-thumb: rgba(44, 117, 108, 0.36);
+  --scrollbar-thumb-hover: rgba(44, 117, 108, 0.58);
+  --chrome-bg: #ffffff;
+  --chrome-border: rgba(20, 20, 16, 0.065);
+  --glow-sm: 0 0 10px rgba(44, 117, 108, 0.09);
+  --glow-lg: 0 0 22px rgba(44, 117, 108, 0.12);
   --radius: 16px;
   --radius-lg: 22px;
 }
 
 html[data-ui-theme="night"],
 .manager-root[data-ui-theme="night"],
-.pet-root[data-ui-theme="night"],
 .toast-root[data-ui-theme="night"] {
   color-scheme: dark;
   --bg: #161922;
@@ -151,6 +161,10 @@ html[data-ui-theme="night"],
   --progress-start: #7a9850;
   --progress-end: #c7f66c;
   --progress-highlight: #fff06a;
+  --scrollbar-thumb: rgba(199, 246, 108, 0.34);
+  --scrollbar-thumb-hover: rgba(199, 246, 108, 0.58);
+  --chrome-bg: #161922;
+  --chrome-border: rgba(255, 255, 255, 0.1);
   --rarity-common-bg: #243126;
   --rarity-common-border: #4f7547;
   --rarity-rare-bg: #20303c;
@@ -171,7 +185,6 @@ html[data-ui-theme="night"],
 
 html[data-ui-theme="soft"],
 .manager-root[data-ui-theme="soft"],
-.pet-root[data-ui-theme="soft"],
 .toast-root[data-ui-theme="soft"] {
   color-scheme: light;
   --bg: #fbf7ec;
@@ -215,6 +228,10 @@ html[data-ui-theme="soft"],
   --progress-start: #6a7650;
   --progress-end: #a9b86e;
   --progress-highlight: #d0c77b;
+  --scrollbar-thumb: rgba(176, 139, 62, 0.32);
+  --scrollbar-thumb-hover: rgba(176, 139, 62, 0.56);
+  --chrome-bg: #fbf7ec;
+  --chrome-border: rgba(28, 32, 25, 0.1);
   --glow-sm: 0 0 10px rgba(135, 152, 97, 0.13);
   --glow-lg: 0 0 22px rgba(135, 152, 97, 0.18);
   --radius: 16px;
@@ -223,6 +240,17 @@ html[data-ui-theme="soft"],
 
 * {
   box-sizing: border-box;
+}
+
+html[data-platform="mac"] {
+  --window-chrome-height: 38px;
+  --window-chrome-left: 88px;
+  --window-chrome-right: 16px;
+}
+
+html[data-platform="linux"] {
+  --window-chrome-left: 14px;
+  --window-chrome-right: 116px;
 }
 
 html,
@@ -236,6 +264,40 @@ body,
 }
 
 body {
+  background: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-button,
+*::-webkit-scrollbar-corner {
+  width: 0;
+  height: 0;
+  display: none;
   background: transparent;
 }
 
@@ -501,7 +563,7 @@ button {
   backface-visibility: hidden;
   border-radius: 0;
   background: var(--badge-bg);
-  box-shadow: 5px 5px 0 rgba(7, 16, 8, 0.28);
+  box-shadow: 3px 3px 0 rgba(7, 16, 8, 0.24);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -565,7 +627,7 @@ button {
 
 .pet-root[data-scale="0-5"] .level-badge .badge-face {
   padding: 2px 0 3px;
-  box-shadow: 4px 4px 0 rgba(7, 16, 8, 0.28);
+  box-shadow: 2px 2px 0 rgba(7, 16, 8, 0.24);
 }
 
 .pet-root.level-up .level-up-toast,
@@ -644,11 +706,57 @@ button {
   display: grid;
   grid-template-columns: clamp(240px, 26vw, 320px) minmax(0, 1fr);
   gap: 16px;
-  padding: 16px;
+  padding: calc(var(--window-chrome-height) + 14px) 16px 16px;
   align-items: start;
   overflow: auto;
   color: var(--ink);
   background: var(--bg);
+}
+
+.manager-root[data-ui-theme="day"] {
+  background: #ffffff;
+}
+
+.manager-root[data-ui-theme="day"] .window-chrome {
+  background: #ffffff;
+}
+
+.manager-root::before {
+  content: "";
+  position: fixed;
+  top: var(--window-chrome-height);
+  left: 0;
+  right: 0;
+  z-index: 71;
+  height: 1px;
+  background: var(--chrome-border);
+  pointer-events: none;
+}
+
+.window-chrome {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 70;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 var(--window-chrome-right) 0 var(--window-chrome-left);
+  color: var(--muted);
+  background: var(--chrome-bg);
+  font-size: 0.72rem;
+  font-weight: 800;
+  -webkit-app-region: drag;
+}
+
+.window-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pet-preview-panel,
@@ -731,6 +839,25 @@ h4 {
   box-shadow: inset 0 0 34px rgba(255, 255, 255, 0.035);
 }
 
+.manager-root[data-ui-theme="day"] .pet-preview-panel,
+.manager-root[data-ui-theme="day"] .dashboard-header,
+.manager-root[data-ui-theme="day"] .metric-grid article,
+.manager-root[data-ui-theme="day"] .source-card,
+.manager-root[data-ui-theme="day"] .achievement-card,
+.manager-root[data-ui-theme="day"] .leaderboard-card,
+.manager-root[data-ui-theme="day"] .chart-card {
+  background: #ffffff;
+}
+
+.manager-root[data-ui-theme="day"] .preview-stage {
+  background:
+    radial-gradient(ellipse at 50% 76%, rgba(44, 117, 108, 0.035), transparent 58%),
+    #ffffff;
+  box-shadow:
+    inset 0 0 42px rgba(44, 117, 108, 0.035),
+    0 0 0 1px rgba(255, 255, 255, 0.65);
+}
+
 .preview-stage .tree-image {
   padding: 34px;
 }
@@ -746,6 +873,7 @@ h4 {
 }
 
 .side-tabs button {
+  position: relative;
   min-height: 36px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -756,6 +884,26 @@ h4 {
   font-weight: 700;
   overflow-wrap: anywhere;
   transition: all 0.1s;
+}
+
+.side-tabs button.has-new-achievements::after {
+  content: attr(data-new-count);
+  position: absolute;
+  top: -7px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--bg-card);
+  border-radius: 999px;
+  color: var(--on-accent);
+  background: var(--leaf);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+  font-size: 0.52rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .side-tabs button:hover {
@@ -774,23 +922,58 @@ h4 {
    SETTINGS
    ============================ */
 
-.settings-fab {
+.floating-tool-group {
   position: fixed;
   left: 16px;
   bottom: 16px;
   z-index: 20;
-  width: 38px;
-  min-height: 38px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--bg-card) 94%, transparent);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--ink) 10%, transparent);
+  display: flex;
+  align-items: center;
+  overflow: visible;
+}
+
+.settings-fab,
+.share-fab {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  z-index: auto;
+  width: 44px;
+  min-height: 40px;
   padding: 0;
   display: grid;
   place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  color: var(--ink);
-  background: var(--bg-card);
-  box-shadow: var(--pixel-shadow);
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
   font-size: 1rem;
+  line-height: 1;
   transition: all 0.1s;
+}
+
+.settings-fab {
+  border-radius: 999px 0 0 999px;
+}
+
+.share-fab {
+  border-radius: 0 999px 999px 0;
+}
+
+.settings-fab::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 0;
+  bottom: 10px;
+  width: 1px;
+  background: var(--border);
 }
 
 .settings-update-badge {
@@ -815,7 +998,7 @@ h4 {
 }
 
 .settings-fab.has-update {
-  border-color: var(--leaf);
+  color: var(--leaf);
 }
 
 .settings-fab.has-update .settings-update-badge {
@@ -823,33 +1006,52 @@ h4 {
 }
 
 .settings-fab:hover {
-  border-color: var(--leaf);
   color: var(--leaf);
 }
 
-.share-fab {
-  position: fixed;
-  left: 64px;
-  bottom: 16px;
-  z-index: 20;
-  width: 38px;
-  min-height: 38px;
+.share-export-button.share-fab {
+  width: 44px;
+  min-height: 40px;
   padding: 0;
   display: grid;
   place-items: center;
-  border-radius: var(--radius);
+  border: 0;
+  border-radius: 0 999px 999px 0;
+  color: var(--ink);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
   font-size: 1rem;
-  line-height: 1;
 }
 
-.share-fab span {
+.settings-fab svg,
+.share-fab svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.share-fab svg {
+  width: 20px;
+  height: 20px;
   transform: translate(1px, -1px);
 }
 
-.share-fab[data-state="exporting"] {
+.share-export-button.share-fab:hover {
   color: var(--leaf);
-  border-color: var(--leaf);
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--leaf) 10%, transparent);
+  border-color: transparent;
+  filter: none;
+}
+
+.share-export-button.share-fab[data-state="exporting"] {
+  color: var(--leaf);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--leaf) 12%, transparent);
 }
 
 .settings-modal {
@@ -939,7 +1141,7 @@ h4 {
 }
 
 .theme-switcher button[data-ui-theme="day"] {
-  background: #f8f8f5;
+  background: #ffffff;
   color: rgba(17, 18, 14, 0.56);
 }
 
@@ -1182,6 +1384,28 @@ h4 {
   min-height: 14px;
   padding: 0;
   accent-color: var(--leaf);
+}
+
+.leaderboard-preference-public-row {
+  align-items: flex-start;
+  padding: 9px 10px;
+}
+
+.leaderboard-preference-public-row > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.leaderboard-preference-public-row strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+}
+
+.leaderboard-preference-public-row small {
+  color: var(--muted);
+  font-size: 0.64rem;
+  line-height: 1.35;
 }
 
 .scale-select {
@@ -1580,24 +1804,29 @@ label {
   line-height: 1;
 }
 
-.level-title-row .help-tip {
+.next-level-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.next-level-help .help-tip {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
-  margin-top: -1px;
   font-size: 0.62rem;
 }
 
 .help-tip::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: 50%;
+  left: 0;
   bottom: calc(100% + 7px);
   z-index: 20;
   width: max-content;
-  max-width: 180px;
+  max-width: min(300px, calc(100vw - 36px));
   padding: 6px 8px;
-  transform: translateX(-50%);
+  transform: none;
   border: 1px solid var(--border-strong);
   background: var(--bg-light);
   box-shadow: var(--pixel-shadow);
@@ -1607,7 +1836,8 @@ label {
   line-height: 1.2;
   opacity: 0;
   pointer-events: none;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   transition: opacity 0.1s ease;
 }
 
@@ -1943,6 +2173,34 @@ label {
   font-size: 0.66rem;
 }
 
+.leaderboard-preferences {
+  display: flex;
+  gap: 5px 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.35;
+}
+
+.leaderboard-preferences span {
+  max-width: 100%;
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-preferences b {
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.leaderboard-preferences.is-private {
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
 .leaderboard-tokens {
   color: var(--ink);
   font-size: 0.82rem;
@@ -2070,6 +2328,18 @@ label {
   grid-template-columns: repeat(7, minmax(38px, 1fr));
   gap: 8px;
   align-items: end;
+}
+
+.manager-root[data-ui-theme="day"] .history-bars {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 37px,
+      rgba(17, 18, 14, 0.028) 37px,
+      rgba(17, 18, 14, 0.028) 38px
+    ),
+    #ffffff;
 }
 
 .history-day {
@@ -2582,6 +2852,7 @@ label {
 
 .achievement-category-tabs button,
 .achievement-status-tabs button {
+  position: relative;
   min-height: 26px;
   padding: 0 9px;
   border: 1px solid var(--border-strong);
@@ -2591,6 +2862,26 @@ label {
   font-size: 0.66rem;
   font-weight: 800;
   box-shadow: none;
+}
+
+.achievement-category-tabs button.has-new-achievements::after {
+  content: attr(data-new-count);
+  position: absolute;
+  top: -6px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--bg-light);
+  border-radius: 999px;
+  color: var(--on-accent);
+  background: var(--leaf);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+  font-size: 0.5rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .achievement-category-tabs button:hover,
@@ -2660,26 +2951,29 @@ label {
   overflow: auto;
   padding-right: 8px;
   scrollbar-width: thin;
-  scrollbar-color: var(--muted-light) rgba(255, 255, 255, 0.05);
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .achievement-grid::-webkit-scrollbar {
-  width: 10px;
+  width: 6px;
 }
 
 .achievement-grid::-webkit-scrollbar-track {
-  border: 1px solid var(--border);
-  background: var(--bg-light);
+  border: 0;
+  background: transparent;
 }
 
 .achievement-grid::-webkit-scrollbar-thumb {
-  border: 1px solid rgba(10, 12, 24, 0.45);
-  background: var(--muted-light);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+  box-shadow: none;
 }
 
 .achievement-grid::-webkit-scrollbar-thumb:hover {
-  background: var(--leaf);
+  background: var(--scrollbar-thumb-hover);
+  background-clip: content-box;
 }
 
 .achievement-category {
@@ -2983,10 +3277,10 @@ label {
 .achievement-toast {
   width: min(260px, calc(100vw - 24px));
   padding: 12px 14px;
-  border: 3px solid var(--rarity-common-border);
-  border-radius: 0;
+  border: 2px solid var(--rarity-common-border);
+  border-radius: var(--radius);
   background: var(--bg-card);
-  box-shadow: var(--pixel-shadow-lg), 0 0 20px var(--rarity-common-bg);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.08);
   animation: achievementToastIn 0.2s steps(4) both;
   position: relative;
   overflow: hidden;
@@ -3009,19 +3303,6 @@ label {
   letter-spacing: 0.08em;
 }
 
-.achievement-toast-new {
-  flex: 0 0 auto;
-  padding: 2px 5px;
-  border: 2px solid var(--leaf);
-  background: var(--leaf);
-  color: var(--ink);
-  box-shadow: var(--pixel-shadow);
-  font-size: 0.54rem;
-  font-weight: 900;
-  line-height: 1;
-  letter-spacing: 0.04em;
-}
-
 .achievement-toast strong {
   display: block;
   margin-top: 4px;
@@ -3041,6 +3322,7 @@ label {
   width: 120px;
   padding: 7px 8px;
   border-width: 2px;
+  box-shadow: none;
   animation: achievementToastIn 0.2s steps(4) both;
   transform-origin: 100% 0;
 }
@@ -3052,12 +3334,6 @@ label {
 .pet-root .achievement-toast-meta {
   font-size: 0.56rem;
   letter-spacing: 0.04em;
-}
-
-.pet-root .achievement-toast-new {
-  padding: 1px 4px;
-  border-width: 1px;
-  font-size: 0.48rem;
 }
 
 .pet-root .achievement-toast strong {
@@ -3114,7 +3390,8 @@ label {
   min-width: 150px;
   max-width: 216px;
   padding: 10px 12px;
-  border-width: 3px;
+  border-width: 2px;
+  box-shadow: none;
   --toast-border: var(--rarity-common-border);
 }
 
@@ -3139,21 +3416,20 @@ label {
 
 .toast-root[data-placement="right"] .achievement-toast::after {
   left: -8px;
-  border-left: 3px solid var(--toast-border);
-  border-bottom: 3px solid var(--toast-border);
+  border-left: 2px solid var(--toast-border);
+  border-bottom: 2px solid var(--toast-border);
 }
 
 .toast-root[data-placement="left"] .achievement-toast::after {
   right: -8px;
-  border-right: 3px solid var(--toast-border);
-  border-top: 3px solid var(--toast-border);
+  border-right: 2px solid var(--toast-border);
+  border-top: 2px solid var(--toast-border);
 }
 
 /* Rarity-specific toast styles */
 .achievement-toast.rarity-rare {
   border-color: var(--rarity-rare-border);
   --toast-border: var(--rarity-rare-border);
-  box-shadow: var(--pixel-shadow-lg), 0 0 20px var(--rarity-rare-bg);
 }
 
 .achievement-toast.rarity-rare .achievement-toast-meta {
@@ -3163,7 +3439,6 @@ label {
 .achievement-toast.rarity-epic {
   border-color: var(--rarity-epic-border);
   --toast-border: var(--rarity-epic-border);
-  box-shadow: var(--pixel-shadow-lg), 0 0 24px var(--rarity-epic-bg);
 }
 
 .achievement-toast.rarity-epic .achievement-toast-meta {
@@ -3173,7 +3448,6 @@ label {
 .achievement-toast.rarity-legendary {
   border-color: var(--rarity-legendary-border);
   --toast-border: var(--rarity-legendary-border);
-  box-shadow: var(--pixel-shadow-lg), 0 0 28px var(--rarity-legendary-bg);
 }
 
 .achievement-toast.rarity-legendary .achievement-toast-meta {
@@ -3183,7 +3457,6 @@ label {
 .achievement-toast.rarity-hidden {
   border-color: var(--rarity-hidden-border);
   --toast-border: var(--rarity-hidden-border);
-  box-shadow: var(--pixel-shadow-lg), 0 0 16px var(--rarity-hidden-bg);
 }
 
 .achievement-toast.rarity-hidden .achievement-toast-meta {
@@ -3206,8 +3479,8 @@ label {
 .achievement-detail-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(10, 12, 20, 0.75);
-  backdrop-filter: blur(4px);
+  background: rgba(10, 12, 20, 0.58);
+  backdrop-filter: blur(3px);
 }
 
 .achievement-detail {
@@ -3217,7 +3490,7 @@ label {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--bg-card);
-  box-shadow: var(--pixel-shadow-lg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3251,39 +3524,39 @@ label {
   color: var(--muted-light);
   font-size: 1.6rem;
   font-weight: 900;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .achievement-detail.unlocked .achievement-detail-mark {
   color: var(--on-accent);
   border-color: var(--rarity-common);
   background: var(--rarity-common);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .achievement-detail.unlocked.rarity-rare .achievement-detail-mark {
   border-color: var(--rarity-rare);
   background: var(--rarity-rare);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .achievement-detail.unlocked.rarity-epic .achievement-detail-mark {
   border-color: var(--rarity-epic);
   background: var(--rarity-epic);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .achievement-detail.unlocked.rarity-legendary .achievement-detail-mark {
   border-color: var(--rarity-legendary);
   background: linear-gradient(135deg, #ffcc33, #ff9900);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
   animation: none;
 }
 
 .achievement-detail.unlocked.rarity-hidden .achievement-detail-mark {
   border-color: var(--rarity-hidden);
   background: var(--rarity-hidden);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .achievement-detail h3 {
@@ -3301,6 +3574,25 @@ label {
   padding: 2px 10px;
   border: 1px solid var(--border);
   background: var(--bg-light);
+}
+
+.achievement-detail-tags {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.achievement-detail-new {
+  padding: 2px 8px;
+  border: 1px solid var(--leaf);
+  border-radius: 999px;
+  color: var(--on-accent);
+  background: var(--leaf);
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .achievement-detail.rarity-common .achievement-detail-rarity { color: var(--rarity-common); border-color: var(--rarity-common-border); }
@@ -3358,7 +3650,6 @@ label {
 
 .achievement-detail.unlocked.rarity-legendary {
   border-color: var(--rarity-legendary-border);
-  box-shadow: var(--pixel-shadow-lg);
 }
 
 .achievement-detail.unlocked.rarity-epic {
@@ -3511,7 +3802,7 @@ label {
 
 @media (max-width: 600px) {
   .manager-root {
-    padding: 10px;
+    padding: 46px 10px 10px;
     gap: 10px;
   }
 

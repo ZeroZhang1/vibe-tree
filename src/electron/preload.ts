@@ -34,7 +34,8 @@ const api = {
   logoutLeaderboard: () => ipcRenderer.invoke("leaderboard:logout") as Promise<LeaderboardStatus>,
   setLeaderboardEnabled: (enabled: boolean) =>
     ipcRenderer.invoke("leaderboard:set-enabled", enabled) as Promise<LeaderboardStatus>,
-  syncLeaderboard: () => ipcRenderer.invoke("leaderboard:sync") as Promise<LeaderboardStatus>,
+  syncLeaderboard: (options?: { force?: boolean }) =>
+    ipcRenderer.invoke("leaderboard:sync", options) as Promise<LeaderboardStatus>,
   getLeaderboard: (range: LeaderboardRange) => ipcRenderer.invoke("leaderboard:get", range) as Promise<LeaderboardData>,
   getAchievements: () => ipcRenderer.invoke("achievements:get") as Promise<AchievementState>,
   unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>

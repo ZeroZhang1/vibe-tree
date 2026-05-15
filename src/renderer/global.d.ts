@@ -31,7 +31,7 @@ declare global {
       loginLeaderboard: () => Promise<LeaderboardStatus>;
       logoutLeaderboard: () => Promise<LeaderboardStatus>;
       setLeaderboardEnabled: (enabled: boolean) => Promise<LeaderboardStatus>;
-      syncLeaderboard: () => Promise<LeaderboardStatus>;
+      syncLeaderboard: (options?: { force?: boolean }) => Promise<LeaderboardStatus>;
       getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
       getAchievements: () => Promise<AchievementState>;
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;

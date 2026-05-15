@@ -5,6 +5,7 @@ import type {
   LedgerEntry,
   LedgerFile,
   LeaderboardData,
+  LeaderboardEntry,
   LeaderboardRange,
   LeaderboardStatus,
   TreeAsset,
@@ -94,17 +95,12 @@ interface ShareReportData {
   };
 }
 
-const SHARE_TEMPLATES: Array<{ id: ShareTemplateId; title: string; note: string }> = [
-  { id: "receipt", title: "04 Growth Receipt", note: "收据/日报，有传播梗" },
-  { id: "glass", title: "05 Glass Terrarium", note: "玻璃生态箱，精致偏潮流" },
-  { id: "mono", title: "06 Monochrome Index", note: "极简索引卡，最克制" },
+const SHARE_TEMPLATES: Array<{ id: ShareTemplateId; titleKey: string; noteKey: string }> = [
+  { id: "receipt", titleKey: "shareTemplateReceiptTitle", noteKey: "shareTemplateReceiptNote" },
+  { id: "glass", titleKey: "shareTemplateGlassTitle", noteKey: "shareTemplateGlassNote" },
+  { id: "mono", titleKey: "shareTemplateMonoTitle", noteKey: "shareTemplateMonoNote" },
 ];
 const SHARE_PREVIEW_SIZE = { width: 284, height: 442 };
-const UI_THEMES: Array<{ id: UiTheme; label: string; note: string }> = [
-  { id: "day", label: "白天", note: "06 的克制白底" },
-  { id: "night", label: "黑夜", note: "05 的玻璃黑底" },
-  { id: "soft", label: "柔和", note: "04 的暖纸底" },
-];
 
 function shareTemplateForUiTheme(theme: UiTheme | undefined): ShareTemplateId {
   if (theme === "day") return "mono";
@@ -117,7 +113,17 @@ if (!app) throw new Error("Missing #app");
 document.title = "Vibe Tree";
 
 const viewParam = new URLSearchParams(location.search).get("view");
+const uiThemeParam = new URLSearchParams(location.search).get("uiTheme");
 const viewMode: ViewMode = viewParam === "manager" ? "manager" : viewParam === "toast" ? "toast" : "pet";
+const UI_THEME_STORAGE_KEY = "vibe-tree:ui-theme";
+const initialUiTheme = viewMode === "toast" ? "night" : readCachedUiTheme();
+const platformName = rendererPlatform();
+document.documentElement.dataset.platform = platformName;
+if (viewMode === "pet") {
+  delete document.documentElement.dataset.uiTheme;
+} else {
+  document.documentElement.dataset.uiTheme = initialUiTheme;
+}
 let ledger: LedgerFile | null = null;
 let tree: TreeAsset | null = null;
 let gameBalance: GameBalance | null = null;
@@ -141,6 +147,8 @@ let leaderboardData: LeaderboardData = {
   entries: [],
 };
 let leaderboardLoadedRange: LeaderboardRange | null = null;
+const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+const leaderboardDataCache = new Map<LeaderboardRange, LeaderboardData>();
 let leaderboardLoading = false;
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
@@ -226,6 +234,12 @@ app.innerHTML = appShellHtml(viewMode);
 const root = document.querySelector<HTMLElement>(
   viewMode === "pet" ? ".pet-root" : viewMode === "manager" ? ".manager-root" : ".toast-root",
 )!;
+if (viewMode === "pet") {
+  delete root.dataset.uiTheme;
+} else {
+  root.dataset.uiTheme = initialUiTheme;
+}
+root.dataset.platform = platformName;
 const treeImage = document.querySelector<HTMLImageElement>("#treeImage");
 const previewTreeImage = document.querySelector<HTMLImageElement>("#previewTreeImage");
 const weatherBack = document.querySelector<HTMLElement>("#weatherBack");
@@ -263,6 +277,7 @@ const geminiSessionsDirInput = document.querySelector<HTMLInputElement>("#gemini
 const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermesSessionsDirInput");
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
+const leaderboardPreferencesPublicInput = document.querySelector<HTMLInputElement>("#leaderboardPreferencesPublicInput");
 const leaderboardMembershipButton = document.querySelector<HTMLButtonElement>("#leaderboardMembershipButton");
 const leaderboardSettingsSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardSettingsSyncButton");
 const leaderboardPageRefreshButton = document.querySelector<HTMLButtonElement>("#leaderboardPageRefreshButton");
@@ -331,11 +346,49 @@ function languageLocale(): string {
 }
 
 function currentUiTheme(): UiTheme {
+  if (viewMode === "toast") return "night";
   return normalizeUiTheme(ledger?.settings.uiTheme);
 }
 
 function normalizeUiTheme(value: unknown): UiTheme {
   return value === "day" || value === "soft" || value === "night" ? value : "night";
+}
+
+function readCachedUiTheme(): UiTheme {
+  if (uiThemeParam) return normalizeUiTheme(uiThemeParam);
+  try {
+    return normalizeUiTheme(localStorage.getItem(UI_THEME_STORAGE_KEY));
+  } catch {
+    return "night";
+  }
+}
+
+function cacheUiTheme(theme: UiTheme) {
+  try {
+    localStorage.setItem(UI_THEME_STORAGE_KEY, theme);
+  } catch {
+    // Ignore private-mode or storage permission failures; the ledger remains the source of truth.
+  }
+}
+
+function applyUiTheme(theme: UiTheme) {
+  if (viewMode === "pet") {
+    delete root.dataset.uiTheme;
+    delete document.documentElement.dataset.uiTheme;
+    cacheUiTheme(theme);
+    return;
+  }
+  root.dataset.uiTheme = theme;
+  document.documentElement.dataset.uiTheme = theme;
+  cacheUiTheme(theme);
+}
+
+function rendererPlatform() {
+  const platform = navigator.platform.toLowerCase();
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (platform.includes("mac") || userAgent.includes("mac os")) return "mac";
+  if (platform.includes("win") || userAgent.includes("windows")) return "windows";
+  return "linux";
 }
 
 function t(key: string): string {
@@ -344,7 +397,11 @@ function t(key: string): string {
 
 function applyI18n() {
   document.documentElement.lang = languageLocale();
-  document.documentElement.dataset.uiTheme = currentUiTheme();
+  if (viewMode === "pet") {
+    delete document.documentElement.dataset.uiTheme;
+  } else {
+    document.documentElement.dataset.uiTheme = currentUiTheme();
+  }
   document.title = t("appTitle");
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((element) => {
     const key = element.dataset.i18n;
@@ -460,6 +517,17 @@ function relativeTimeText(value: number, unitKey: "secondsAgo" | "minutesAgo" | 
 
 async function boot() {
   if (viewMode === "toast") {
+    const nextLedger = await window.bonsai.getLedger();
+    ledger = nextLedger;
+    appLanguage = normalizeLanguage(ledger.settings.language);
+    applyUiTheme("night");
+    applyI18n();
+    window.bonsai.onLedger((nextLedger) => {
+      ledger = nextLedger;
+      appLanguage = normalizeLanguage(ledger.settings.language);
+      applyUiTheme("night");
+      applyI18n();
+    });
     bindToastOverlayEvents();
     return;
   }
@@ -752,11 +820,20 @@ function bindEvents() {
   });
 
   leaderboardSettingsSyncButton?.addEventListener("click", () => {
-    void syncLeaderboard();
+    void syncLeaderboard({ force: true });
+  });
+
+  leaderboardPreferencesPublicInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      leaderboardPreferencesPublic: leaderboardPreferencesPublicInput.checked,
+    });
+    render();
+    if (leaderboardStatus.joined) void syncLeaderboard({ force: true });
   });
 
   leaderboardPageRefreshButton?.addEventListener("click", () => {
-    void refreshLeaderboard();
+    void refreshLeaderboard({ syncFirst: leaderboardStatus.joined, forceSync: true });
   });
 
   leaderboardPageSyncButton?.addEventListener("click", async () => {
@@ -850,14 +927,15 @@ function bindEvents() {
   leaderboardRangeTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-leaderboard-range]");
     if (!button) return;
-    const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
-    if (nextRange === leaderboardRange) return;
-    leaderboardRange = nextRange;
-    leaderboardData = { range: leaderboardRange, entries: [] };
-    leaderboardLoadedRange = null;
-    leaderboardRenderKey = "";
-    renderLeaderboard();
-  });
+  const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
+  if (nextRange === leaderboardRange) return;
+  leaderboardRange = nextRange;
+  const cached = leaderboardDataCache.get(leaderboardRange);
+  leaderboardData = cached ?? { range: leaderboardRange, entries: [] };
+  leaderboardLoadedRange = cached ? leaderboardRange : null;
+  leaderboardRenderKey = "";
+  renderLeaderboard();
+});
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-achievement-category]");
@@ -887,8 +965,9 @@ function bindEvents() {
       showLockedAchievementHint(item);
       return;
     }
+    const isNew = !seenAchievementIds.has(def.id);
+    showAchievementDetail(def, isNew);
     markAchievementSeen(def.id);
-    showAchievementDetail(def);
   });
 
   achievementRecentElement?.addEventListener("click", (event) => {
@@ -897,8 +976,9 @@ function bindEvents() {
     const id = item.dataset.achievementId;
     const def = ACHIEVEMENTS.find((d) => d.id === id);
     if (!def) return;
+    const isNew = !seenAchievementIds.has(def.id);
+    showAchievementDetail(def, isNew);
     markAchievementSeen(def.id);
-    showAchievementDetail(def);
   });
 
   achievementToastPreviewButton?.addEventListener("click", () => {
@@ -961,21 +1041,40 @@ async function updatePathSetting(
   render();
 }
 
-async function refreshLeaderboard() {
+async function refreshLeaderboard(options: { syncFirst?: boolean; forceSync?: boolean } = {}) {
   if (leaderboardLoading) return;
   leaderboardLoading = true;
   renderLeaderboardSettings();
   renderLeaderboard();
   try {
     leaderboardStatus = await window.bonsai.getLeaderboardStatus();
-    leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
-    leaderboardLoadedRange = leaderboardRange;
+    if (options.syncFirst && leaderboardStatus.joined) {
+      leaderboardStatus = await window.bonsai.syncLeaderboard({ force: options.forceSync === true });
+    }
+    const results = await Promise.all(
+      LEADERBOARD_RANGES.map(async (range) => {
+        try {
+          return await window.bonsai.getLeaderboard(range);
+        } catch (error) {
+          return {
+            range,
+            entries: [],
+            error: error instanceof Error ? error.message : t("leaderboardLoadFailed"),
+          } satisfies LeaderboardData;
+        }
+      }),
+    );
+    results.forEach((data) => leaderboardDataCache.set(data.range, data));
+    const cached = leaderboardDataCache.get(leaderboardRange);
+    leaderboardData = cached ?? { range: leaderboardRange, entries: [], error: t("leaderboardLoadFailed") };
+    leaderboardLoadedRange = cached ? leaderboardRange : null;
   } catch (error) {
     leaderboardData = {
       range: leaderboardRange,
       entries: [],
       error: error instanceof Error ? error.message : t("leaderboardLoadFailed"),
     };
+    leaderboardDataCache.set(leaderboardRange, leaderboardData);
     leaderboardLoadedRange = leaderboardRange;
   } finally {
     leaderboardLoading = false;
@@ -1009,14 +1108,17 @@ async function leaveLeaderboard() {
   if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
   leaderboardStatus = await window.bonsai.logoutLeaderboard();
   leaderboardData = { range: leaderboardRange, entries: [] };
+  leaderboardDataCache.clear();
   leaderboardLoadedRange = null;
   leaderboardRenderKey = "";
   renderLeaderboardSettings();
   renderLeaderboard();
 }
 
-async function syncLeaderboard() {
-  leaderboardStatus = await window.bonsai.syncLeaderboard();
+async function syncLeaderboard(options: { force?: boolean } = {}) {
+  leaderboardStatus = await window.bonsai.syncLeaderboard({ force: options.force === true });
+  leaderboardDataCache.clear();
+  leaderboardLoadedRange = null;
   await refreshLeaderboardIfVisible();
 }
 
@@ -1037,10 +1139,10 @@ function openLeaderboardSettings() {
 async function exportShareImage() {
   if (!ledger || !tree || !gameBalance || !shareExportButton) return;
 
-  const defaultTitle = "导出分享图";
+  const defaultTitle = t("exportShareImage");
   shareExportButton.disabled = true;
   shareExportButton.dataset.state = "exporting";
-  shareExportButton.title = "生成预览";
+  shareExportButton.title = t("generatingPreview");
 
   try {
     const visibility = sourceVisibility();
@@ -1072,16 +1174,16 @@ function openShareExportPreview(report: ShareReportData) {
   overlay.className = "share-export-overlay";
   overlay.innerHTML = `
     <div class="share-export-backdrop"></div>
-    <section class="share-export-panel" role="dialog" aria-modal="true" aria-label="选择分享图模板">
+    <section class="share-export-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(t("chooseShareTemplate"))}">
       <header class="share-export-head">
         <div>
-          <p class="eyebrow">Share image</p>
-          <h3>选择分享图模板</h3>
+          <p class="eyebrow">${escapeHtml(t("shareImage"))}</p>
+          <h3>${escapeHtml(t("chooseShareTemplate"))}</h3>
         </div>
-        <button class="icon-button share-export-close" type="button" aria-label="关闭">×</button>
+        <button class="icon-button share-export-close" type="button" aria-label="${escapeHtml(t("close"))}">×</button>
       </header>
       <div class="share-template-carousel" aria-live="polite">
-        <button class="share-carousel-nav prev" type="button" aria-label="上一张分享图">‹</button>
+        <button class="share-carousel-nav prev" type="button" aria-label="${escapeHtml(t("previousShareTemplate"))}">‹</button>
         <div class="share-carousel-stage">
         ${SHARE_TEMPLATES.map(
           (template, index) => `
@@ -1093,22 +1195,22 @@ function openShareExportPreview(report: ShareReportData) {
           `,
         ).join("")}
         </div>
-        <button class="share-carousel-nav next" type="button" aria-label="下一张分享图">›</button>
+        <button class="share-carousel-nav next" type="button" aria-label="${escapeHtml(t("nextShareTemplate"))}">›</button>
       </div>
       <footer class="share-carousel-footer">
         <div class="share-template-title">
           <strong id="shareSelectedTitle"></strong>
           <span id="shareSelectedNote"></span>
         </div>
-        <div class="share-carousel-dots" aria-label="分享图模板">
+        <div class="share-carousel-dots" aria-label="${escapeHtml(t("shareTemplates"))}">
           ${SHARE_TEMPLATES.map(
             (template, index) => `
-              <button type="button" data-share-dot="${index}" aria-label="${escapeHtml(template.title)}"></button>
+              <button type="button" data-share-dot="${index}" aria-label="${escapeHtml(t(template.titleKey))}"></button>
             `,
           ).join("")}
         </div>
         <button class="primary-button share-template-export" id="shareTemplateExportButton" type="button">
-          导出这张
+          ${escapeHtml(t("exportSelectedShareTemplate"))}
         </button>
       </footer>
     </section>
@@ -1139,8 +1241,8 @@ function openShareExportPreview(report: ShareReportData) {
       dot.classList.toggle("active", active);
       dot.setAttribute("aria-current", active ? "true" : "false");
     });
-    if (selectedTitle) selectedTitle.textContent = activeTemplate.title;
-    if (selectedNote) selectedNote.textContent = activeTemplate.note;
+    if (selectedTitle) selectedTitle.textContent = t(activeTemplate.titleKey);
+    if (selectedNote) selectedNote.textContent = t(activeTemplate.noteKey);
     if (exportButton) exportButton.dataset.shareTemplate = activeTemplate.id;
   };
 
@@ -1178,11 +1280,11 @@ async function exportSelectedShareImage(
   close: () => void,
 ) {
   const allButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".share-template-export"));
-  const defaultLabel = button.textContent ?? "导出这张";
+  const defaultLabel = button.textContent ?? t("exportSelectedShareTemplate");
   allButtons.forEach((item) => {
     item.disabled = true;
   });
-  button.textContent = "生成中";
+  button.textContent = t("generating");
 
   try {
     const width = 1080;
@@ -1199,12 +1301,12 @@ async function exportSelectedShareImage(
       });
       return;
     }
-    button.textContent = "已导出";
+    button.textContent = t("exported");
     window.setTimeout(close, 500);
   } catch (error) {
     console.error("Failed to export selected share image", error);
     button.title = error instanceof Error ? error.message : String(error);
-    button.textContent = "导出失败";
+    button.textContent = t("exportFailed");
     window.setTimeout(() => {
       button.textContent = defaultLabel;
       button.title = "";
@@ -1859,8 +1961,7 @@ function render() {
   root.dataset.scale = String(ledger.settings.scale).replace(".", "-");
   root.dataset.stage = stats.stage.id;
   root.dataset.tab = dashboardTab;
-  root.dataset.uiTheme = ledger.settings.uiTheme;
-  document.documentElement.dataset.uiTheme = ledger.settings.uiTheme;
+  applyUiTheme(ledger.settings.uiTheme);
 
   if (treeImage) {
     treeImage.src = assetUrl(stats.stage.image);
@@ -1924,6 +2025,9 @@ function render() {
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
     syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
+    if (leaderboardPreferencesPublicInput) {
+      leaderboardPreferencesPublicInput.checked = ledger.settings.leaderboardPreferencesPublic;
+    }
     if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
     if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;
     if (totalDisplayUnitSelect) totalDisplayUnitSelect.value = ledger.settings.totalDisplayUnit;
@@ -1962,10 +2066,18 @@ function render() {
 
 function renderDashboardTabs() {
   root.dataset.tab = dashboardTab;
+  const unseenAchievementCount = achievementState.unlocked.filter((item) => !seenAchievementIds.has(item.id)).length;
   sideTabs?.querySelectorAll<HTMLButtonElement>("[data-dashboard-tab]").forEach((button) => {
     const active = button.dataset.dashboardTab === dashboardTab;
+    const hasNewAchievements = button.dataset.dashboardTab === "achievements" && unseenAchievementCount > 0;
     button.classList.toggle("active", active);
+    button.classList.toggle("has-new-achievements", hasNewAchievements);
     button.setAttribute("aria-selected", String(active));
+    if (hasNewAchievements) {
+      button.dataset.newCount = String(Math.min(unseenAchievementCount, 99));
+    } else {
+      delete button.dataset.newCount;
+    }
   });
 }
 
@@ -1995,6 +2107,7 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
   achievementRenderKey = key;
   const unlockedIds = achievementUnlockedIds();
   const unseenIds = new Set([...unlockedIds].filter((id) => !seenAchievementIds.has(id)));
+  renderDashboardTabs();
   const visibleDefs = ACHIEVEMENTS.filter((def) => !def.planned || unlockedIds.has(def.id));
   const unlockedCount = visibleDefs.filter((def) => unlockedIds.has(def.id)).length;
   const completion = visibleDefs.length ? Math.round((unlockedCount / visibleDefs.length) * 100) : 0;
@@ -2006,8 +2119,16 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
 
   achievementCategoryTabs?.querySelectorAll<HTMLButtonElement>("[data-achievement-category]").forEach((button) => {
     const active = button.dataset.achievementCategory === achievementCategoryFilter;
+    const category = button.dataset.achievementCategory;
+    const newCount =
+      typeof category === "string"
+        ? ACHIEVEMENTS.filter((def) => def.category === category && unseenIds.has(def.id)).length
+        : 0;
     button.classList.toggle("active", active);
+    button.classList.toggle("has-new-achievements", newCount > 0);
     button.setAttribute("aria-selected", String(active));
+    if (newCount > 0) button.dataset.newCount = String(Math.min(newCount, 99));
+    else delete button.dataset.newCount;
   });
 
   achievementStatusTabs?.querySelectorAll<HTMLButtonElement>("[data-achievement-status]").forEach((button) => {
@@ -2063,6 +2184,9 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
       const defs = filteredDefs.filter((def) => def.category === cat);
       if (!defs.length) return "";
       const sorted = [...defs].sort((a, b) => {
+        const aNew = unlockedIds.has(a.id) && unseenIds.has(a.id) ? 0 : 1;
+        const bNew = unlockedIds.has(b.id) && unseenIds.has(b.id) ? 0 : 1;
+        if (aNew !== bNew) return aNew - bNew;
         const aUnlocked = unlockedIds.has(a.id) ? 0 : 1;
         const bUnlocked = unlockedIds.has(b.id) ? 0 : 1;
         if (aUnlocked !== bUnlocked) return aUnlocked - bUnlocked;
@@ -2126,7 +2250,7 @@ function achievementItemHtml(
   `;
 }
 
-function showAchievementDetail(def: AchievementDef) {
+function showAchievementDetail(def: AchievementDef, isNew = false) {
   const unlockedIds = achievementUnlockedIds();
   const unlocked = unlockedIds.has(def.id);
   const reveal = unlocked || !def.hidden;
@@ -2156,7 +2280,10 @@ function showAchievementDetail(def: AchievementDef) {
       <button class="achievement-detail-close" type="button" aria-label="${escapeHtml(t("closeSettings"))}">×</button>
       <div class="achievement-detail-mark">${markIcon}</div>
       <h3>${escapeHtml(reveal ? copy.name : "???")}</h3>
-      <span class="achievement-detail-rarity">${escapeHtml(rarityLabel)}</span>
+      <div class="achievement-detail-tags">
+        <span class="achievement-detail-rarity">${escapeHtml(rarityLabel)}</span>
+        ${isNew ? `<span class="achievement-detail-new">${escapeHtml(t("newBadge"))}</span>` : ""}
+      </div>
       <p class="achievement-detail-condition">${escapeHtml(reveal ? copy.description : t("lockedReveal"))}</p>
       ${reveal && copy.flavor ? `<p class="achievement-detail-flavor">${escapeHtml(copy.flavor)}</p>` : ""}
       <div class="achievement-detail-meta">
@@ -2492,6 +2619,7 @@ function markAchievementSeen(id: string) {
   seenAchievementIds.add(id);
   persistSeenAchievements();
   renderAchievements();
+  renderDashboardTabs();
 }
 
 function queueAchievementToasts(ids: string[]) {
@@ -2519,7 +2647,6 @@ function showNextAchievementToast() {
     <div class="achievement-toast rarity-${def.rarity}">
       <div class="achievement-toast-head">
         <span class="achievement-toast-meta">${escapeHtml(achievementRarityLabel(def.rarity))} · ${escapeHtml(t("achievementUnlocked"))}</span>
-        <span class="achievement-toast-new">${escapeHtml(t("newBadge"))}</span>
       </div>
       <strong>${escapeHtml(copy.name)}</strong>
       <p>${escapeHtml(copy.description)}</p>
@@ -2797,7 +2924,7 @@ function renderLeaderboardSettings() {
         ${leaderboardAvatar(profile.avatarUrl, profile.username)}
         <div>
           <strong>${escapeHtml(profile.username)}</strong>
-          <span>${leaderboardStatus.joined ? t("leaderboardOnlyDailyTokens") : t("leaderboardSignedInNotJoined")}</span>
+          <span>${leaderboardStatus.joined ? leaderboardPreferenceStatusLabel() : t("leaderboardSignedInNotJoined")}</span>
         </div>
       `
       : `
@@ -2872,6 +2999,7 @@ function renderLeaderboard() {
     .map((entry) => {
       const isMe = myUserId === entry.userId;
       const days = entry.daysActive ? `<span>${entry.daysActive} ${t("leaderboardDaysActive")}</span>` : "";
+      const preference = leaderboardPreferenceHtml(entry);
       return `
         <article class="leaderboard-row${isMe ? " is-me" : ""}">
           <strong class="leaderboard-rank">#${entry.rank}</strong>
@@ -2879,6 +3007,7 @@ function renderLeaderboard() {
           <div class="leaderboard-person">
             <strong>${escapeHtml(entry.username || t("unknownUser"))}${isMe ? ` <em>${t("leaderboardMe")}</em>` : ""}</strong>
             ${days}
+            ${preference}
           </div>
           <strong class="leaderboard-tokens">${formatNumber(entry.tokens)} token</strong>
         </article>
@@ -2926,6 +3055,47 @@ function leaderboardStatusCopy() {
     title: t("leaderboardNotSignedIn"),
     detail: t("leaderboardLoginRequired"),
   };
+}
+
+function leaderboardPreferenceStatusLabel() {
+  return ledger?.settings.leaderboardPreferencesPublic
+    ? t("leaderboardPreferencesPublicOn")
+    : t("leaderboardOnlyDailyTokens");
+}
+
+function leaderboardPreferenceHtml(entry: LeaderboardEntry) {
+  const preference = entry.usagePreference;
+  if (!preference) {
+    return `<div class="leaderboard-preferences is-private">${escapeHtml(t("leaderboardPreferencePrivate"))}</div>`;
+  }
+  const rows = [
+    preference.favoriteAgent
+      ? `${t("leaderboardFavoriteAgent")}: <b>${escapeHtml(preference.favoriteAgent.label)} ${preference.favoriteAgent.percent}%</b>`
+      : "",
+    preference.favoriteModel ? `${t("leaderboardFavoriteModel")}: <b>${escapeHtml(preference.favoriteModel)}</b>` : "",
+    preference.favoritePeriod
+      ? `${t("leaderboardFavoritePeriod")}: <b>${escapeHtml(leaderboardPeriodText(preference.favoritePeriod))}</b>`
+      : "",
+    preference.peakTokensPerMinute !== undefined
+      ? `${t("leaderboardPeakRate")}: <b>${formatNumber(preference.peakTokensPerMinute)} token/min</b>`
+      : "",
+  ].filter(Boolean);
+  if (!rows.length) {
+    return `<div class="leaderboard-preferences is-private">${escapeHtml(t("leaderboardPreferencePrivate"))}</div>`;
+  }
+  return `<div class="leaderboard-preferences">${rows.map((row) => `<span>${row}</span>`).join("")}</div>`;
+}
+
+function leaderboardPeriodText(period: NonNullable<LeaderboardEntry["usagePreference"]>["favoritePeriod"]) {
+  if (!period) return "";
+  const labels: Record<string, string> = {
+    early: t("leaderboardPeriodEarly"),
+    morning: t("leaderboardPeriodMorning"),
+    afternoon: t("leaderboardPeriodAfternoon"),
+    evening: t("leaderboardPeriodEvening"),
+    night: t("leaderboardPeriodNight"),
+  };
+  return `${labels[period.id] ?? period.id} ${period.startHour}-${period.endHour} ${t("hourUnit")}`;
 }
 
 function leaderboardRangeLabel(range: LeaderboardRange) {
@@ -3214,6 +3384,7 @@ function leaderboardSettingsSignature() {
     bucket: relativeRenderBucket(30_000),
     status: leaderboardStatus,
     loading: leaderboardLoading,
+    preferencesPublic: ledger?.settings.leaderboardPreferencesPublic,
   });
 }
 
@@ -3242,6 +3413,13 @@ function leaderboardRenderSignature() {
         entry.username,
         entry.tokens,
         entry.daysActive ?? 0,
+        entry.usagePreference?.favoriteAgent?.label ?? "",
+        entry.usagePreference?.favoriteAgent?.percent ?? 0,
+        entry.usagePreference?.favoriteModel ?? "",
+        entry.usagePreference?.favoritePeriod?.id ?? "",
+        entry.usagePreference?.favoritePeriod?.startHour ?? 0,
+        entry.usagePreference?.favoritePeriod?.endHour ?? 0,
+        entry.usagePreference?.peakTokensPerMinute ?? 0,
       ]),
     },
   });

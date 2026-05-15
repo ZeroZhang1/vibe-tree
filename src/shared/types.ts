@@ -34,6 +34,23 @@ export interface LeaderboardStatus {
   error?: string;
 }
 
+export type LeaderboardPreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
+
+export interface LeaderboardUsagePreference {
+  favoriteAgent?: {
+    label: string;
+    percent: number;
+  };
+  favoriteModel?: string;
+  favoritePeriod?: {
+    id: LeaderboardPreferencePeriod;
+    startHour: number;
+    endHour: number;
+  };
+  peakTokensPerMinute?: number;
+  updatedAt?: string;
+}
+
 export interface LeaderboardEntry {
   rank: number;
   userId: string;
@@ -42,6 +59,7 @@ export interface LeaderboardEntry {
   tokens: number;
   xp?: number;
   daysActive?: number;
+  usagePreference?: LeaderboardUsagePreference;
 }
 
 export interface LeaderboardData {
@@ -67,6 +85,7 @@ export interface Settings {
   leaderboardEnabled: boolean;
   leaderboardProfile?: LeaderboardProfile;
   leaderboardLastSyncedAt?: string;
+  leaderboardPreferencesPublic: boolean;
   launchOnStartup: boolean;
   silentStartup: boolean;
   proxyUrl?: string;

@@ -10,6 +10,7 @@ export interface Env {
 }
 
 type LeaderboardRange = "today" | "7d" | "30d" | "all";
+type UsagePreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
 type RateLimitName = "PUBLIC_READ_RATE_LIMITER" | "AUTH_RATE_LIMITER" | "WRITE_RATE_LIMITER";
 type SecurityEventType =
   | "rate_limited"
@@ -50,6 +51,17 @@ interface SessionUser {
   userId: string;
   username: string;
   avatarUrl?: string;
+}
+
+interface UsagePreferenceRow {
+  range: LeaderboardRange;
+  favoriteAgentLabel?: string;
+  favoriteAgentPercent?: number;
+  favoriteModel?: string;
+  favoritePeriod?: UsagePreferencePeriod;
+  favoritePeriodStart?: number;
+  favoritePeriodEnd?: number;
+  peakTokensPerMinute?: number;
 }
 
 class HttpError extends Error {
@@ -370,8 +382,10 @@ async function getMe(request: Request, env: Env) {
 
 async function deleteMe(request: Request, env: Env) {
   const user = await requireAuth(request, env);
+  await ensureUsagePreferencesTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM auth_codes WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.userId),
@@ -383,15 +397,27 @@ async function deleteMe(request: Request, env: Env) {
 
 async function syncDailyUsage(request: Request, env: Env) {
   const user = await requireAuth(request, env);
-  await enforceSyncCooldown(user.userId, env);
 
   const body = await request.json().catch(() => undefined) as
-    | { days?: Array<{ date?: string; tokens?: number; xp?: number }>; appVersion?: string }
+    | {
+        days?: Array<{ date?: string; tokens?: number; xp?: number }>;
+        appVersion?: string;
+        usageStartDate?: string;
+        forceSync?: boolean;
+        usagePreferencesPublic?: boolean;
+        usagePreferences?: unknown[];
+      }
     | undefined;
+  if (body?.forceSync !== true) await enforceSyncCooldown(user.userId, env);
   const days = Array.isArray(body?.days) ? body.days.slice(0, MAX_BACKFILL_DAYS) : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
+  const usageStartDate = normalizeUsageStartDate(body?.usageStartDate);
+  const usagePreferencesPublic = body?.usagePreferencesPublic === true;
+  const usagePreferenceInput = Array.isArray(body?.usagePreferences) ? body.usagePreferences : [];
   const now = new Date().toISOString();
-  const normalizedDays = normalizeDailyUsageRows(days);
+  const syncWindow = dailySyncWindow(usageStartDate);
+  const normalizedDays = normalizeDailyUsageRows(days, syncWindow);
+  const preferenceRows = usagePreferencesPublic ? normalizeUsagePreferenceRows(usagePreferenceInput) : [];
   const statements = normalizedDays.map((day) =>
     env.DB.prepare(
       `INSERT INTO daily_usage (user_id, date, xp, app_version, updated_at)
@@ -402,9 +428,46 @@ async function syncDailyUsage(request: Request, env: Env) {
          updated_at = excluded.updated_at`,
     ).bind(user.userId, day.date, day.xp, appVersion, now),
   );
+  const preferenceStatements = preferenceRows.map((preference) =>
+    env.DB.prepare(
+      `INSERT INTO usage_preferences (
+         user_id, range, favorite_agent_label, favorite_agent_percent, favorite_model,
+         favorite_period, favorite_period_start, favorite_period_end, peak_tokens_per_minute, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, range) DO UPDATE SET
+         favorite_agent_label = excluded.favorite_agent_label,
+         favorite_agent_percent = excluded.favorite_agent_percent,
+         favorite_model = excluded.favorite_model,
+         favorite_period = excluded.favorite_period,
+         favorite_period_start = excluded.favorite_period_start,
+         favorite_period_end = excluded.favorite_period_end,
+         peak_tokens_per_minute = excluded.peak_tokens_per_minute,
+         updated_at = excluded.updated_at`,
+    ).bind(
+      user.userId,
+      preference.range,
+      preference.favoriteAgentLabel ?? null,
+      preference.favoriteAgentPercent ?? null,
+      preference.favoriteModel ?? null,
+      preference.favoritePeriod ?? null,
+      preference.favoritePeriodStart ?? null,
+      preference.favoritePeriodEnd ?? null,
+      preference.peakTokensPerMinute ?? null,
+      now,
+    ),
+  );
 
+  await ensureUsagePreferencesTable(env);
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date >= ? AND date <= ?")
+      .bind(user.userId, syncWindow.earliest, syncWindow.latest),
+    ...(usageStartDate
+      ? [env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date < ?").bind(user.userId, usageStartDate)]
+      : []),
+    env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     ...statements,
+    ...preferenceStatements,
     env.DB.prepare(
       `INSERT INTO sync_limits (user_id, last_synced_at)
        VALUES (?, ?)
@@ -415,7 +478,9 @@ async function syncDailyUsage(request: Request, env: Env) {
     {
       ok: true,
       synced: statements.length,
+      syncedPreferences: preferenceStatements.length,
       leaderboardType: "community",
+      usageStartDate,
       safetyMaxDailyTokens: MAX_DAILY_ACCEPTED_TOKENS,
       nextSyncAfterSeconds: SYNC_COOLDOWN_SECONDS,
     },
@@ -438,15 +503,37 @@ async function enforceSyncCooldown(userId: string, env: Env) {
   }
 }
 
-function normalizeDailyUsageRows(days: Array<{ date?: string; tokens?: number; xp?: number }>) {
-  const today = localDateKey(new Date());
-  const earliest = addDays(today, -(MAX_BACKFILL_DAYS - 1));
-  const latest = addDays(today, 1);
+async function ensureUsagePreferencesTable(env: Env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS usage_preferences (
+        user_id TEXT NOT NULL,
+        range TEXT NOT NULL,
+        favorite_agent_label TEXT,
+        favorite_agent_percent INTEGER,
+        favorite_model TEXT,
+        favorite_period TEXT,
+        favorite_period_start INTEGER,
+        favorite_period_end INTEGER,
+        peak_tokens_per_minute INTEGER,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, range),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_usage_preferences_user ON usage_preferences(user_id)"),
+  ]);
+}
+
+function normalizeDailyUsageRows(
+  days: Array<{ date?: string; tokens?: number; xp?: number }>,
+  window: { earliest: string; latest: string },
+) {
   const byDate = new Map<string, number>();
 
   for (const day of days) {
     const date = typeof day.date === "string" && isDateKey(day.date) ? day.date : "";
-    if (!date || date < earliest || date > latest) continue;
+    if (!date || date < window.earliest || date > window.latest) continue;
 
     const rawTokens = Math.round(Number(day.tokens ?? day.xp));
     if (!Number.isFinite(rawTokens) || rawTokens < 0) {
@@ -468,7 +555,52 @@ function normalizeDailyUsageRows(days: Array<{ date?: string; tokens?: number; x
   }));
 }
 
+function normalizeUsagePreferenceRows(rawRows: unknown[]) {
+  const rows = new Map<LeaderboardRange, UsagePreferenceRow>();
+  for (const raw of rawRows.slice(0, 4)) {
+    const input = raw as Record<string, unknown> | undefined;
+    if (!input || typeof input !== "object") continue;
+    const range = normalizePreferenceRange(input.range);
+    if (!range) continue;
+
+    const favoriteAgent = input.favoriteAgent as Record<string, unknown> | undefined;
+    const favoritePeriod = input.favoritePeriod as Record<string, unknown> | undefined;
+    const row: UsagePreferenceRow = {
+      range,
+      favoriteAgentLabel: cleanShortText(favoriteAgent?.label, 64),
+      favoriteAgentPercent: normalizePercent(favoriteAgent?.percent),
+      favoriteModel: cleanShortText(input.favoriteModel, 64),
+      favoritePeriod: normalizePreferencePeriod(favoritePeriod?.id),
+      favoritePeriodStart: normalizeHour(favoritePeriod?.startHour, 0, 23),
+      favoritePeriodEnd: normalizeHour(favoritePeriod?.endHour, 1, 24),
+      peakTokensPerMinute: normalizePreferenceCount(input.peakTokensPerMinute),
+    };
+
+    if (
+      !row.favoriteAgentLabel &&
+      !row.favoriteModel &&
+      !row.favoritePeriod &&
+      row.peakTokensPerMinute === undefined
+    ) {
+      continue;
+    }
+    rows.set(range, row);
+  }
+  return [...rows.values()];
+}
+
+function dailySyncWindow(usageStartDate: string | undefined) {
+  const today = localDateKey(new Date());
+  const earliest = addDays(today, -(MAX_BACKFILL_DAYS - 1));
+  const latest = addDays(today, 1);
+  return {
+    earliest: usageStartDate ? maxDateKey(earliest, usageStartDate) : earliest,
+    latest,
+  };
+}
+
 async function getLeaderboard(request: Request, env: Env) {
+  await ensureUsagePreferencesTable(env);
   const url = new URL(request.url);
   const range = normalizeRange(url.searchParams.get("range"));
   const today = localDateKey(new Date());
@@ -478,25 +610,43 @@ async function getLeaderboard(request: Request, env: Env) {
     range === "all"
       ? `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
            SUM(d.xp) AS tokens,
-           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive
+           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+           p.favorite_agent_label AS favoriteAgentLabel,
+           p.favorite_agent_percent AS favoriteAgentPercent,
+           p.favorite_model AS favoriteModel,
+           p.favorite_period AS favoritePeriod,
+           p.favorite_period_start AS favoritePeriodStart,
+           p.favorite_period_end AS favoritePeriodEnd,
+           p.peak_tokens_per_minute AS peakTokensPerMinute,
+           p.updated_at AS preferenceUpdatedAt
          FROM daily_usage d
          JOIN users u ON u.user_id = d.user_id
+         LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
          GROUP BY u.user_id
          HAVING tokens > 0
          ORDER BY tokens DESC
          LIMIT 100`
       : `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
            SUM(d.xp) AS tokens,
-           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive
+           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+           p.favorite_agent_label AS favoriteAgentLabel,
+           p.favorite_agent_percent AS favoriteAgentPercent,
+           p.favorite_model AS favoriteModel,
+           p.favorite_period AS favoritePeriod,
+           p.favorite_period_start AS favoritePeriodStart,
+           p.favorite_period_end AS favoritePeriodEnd,
+           p.peak_tokens_per_minute AS peakTokensPerMinute,
+           p.updated_at AS preferenceUpdatedAt
          FROM daily_usage d
          JOIN users u ON u.user_id = d.user_id
+         LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
          WHERE d.date >= ?
          GROUP BY u.user_id
          HAVING tokens > 0
          ORDER BY tokens DESC
          LIMIT 100`;
   const result =
-    range === "all" ? await env.DB.prepare(query).all() : await env.DB.prepare(query).bind(since).all();
+    range === "all" ? await env.DB.prepare(query).bind(range).all() : await env.DB.prepare(query).bind(range, since).all();
   const entries = (result.results || []).map((row, index) => ({
     rank: index + 1,
     userId: String(row.userId),
@@ -505,6 +655,7 @@ async function getLeaderboard(request: Request, env: Env) {
     tokens: Math.max(0, Math.round(Number(row.tokens))),
     xp: Math.max(0, Math.round(Number(row.tokens))),
     daysActive: Math.max(0, Math.round(Number(row.daysActive))),
+    usagePreference: rowToUsagePreference(row),
   }));
   return json(
     {
@@ -515,6 +666,39 @@ async function getLeaderboard(request: Request, env: Env) {
     },
     env,
   );
+}
+
+function rowToUsagePreference(row: Record<string, unknown>) {
+  const favoriteAgentLabel = typeof row.favoriteAgentLabel === "string" ? row.favoriteAgentLabel : undefined;
+  const favoriteAgentPercent = normalizePercent(row.favoriteAgentPercent);
+  const favoriteModel = typeof row.favoriteModel === "string" ? row.favoriteModel : undefined;
+  const favoritePeriod = normalizePreferencePeriod(row.favoritePeriod);
+  const favoritePeriodStart = normalizeHour(row.favoritePeriodStart, 0, 23);
+  const favoritePeriodEnd = normalizeHour(row.favoritePeriodEnd, 1, 24);
+  const peakTokensPerMinute = normalizePreferenceCount(row.peakTokensPerMinute);
+  const updatedAt =
+    typeof row.preferenceUpdatedAt === "string" && Number.isFinite(Date.parse(row.preferenceUpdatedAt))
+      ? row.preferenceUpdatedAt
+      : undefined;
+  const usagePreference = {
+    favoriteAgent:
+      favoriteAgentLabel && favoriteAgentPercent !== undefined
+        ? { label: favoriteAgentLabel, percent: favoriteAgentPercent }
+        : undefined,
+    favoriteModel,
+    favoritePeriod:
+      favoritePeriod && favoritePeriodStart !== undefined && favoritePeriodEnd !== undefined
+        ? { id: favoritePeriod, startHour: favoritePeriodStart, endHour: favoritePeriodEnd }
+        : undefined,
+    peakTokensPerMinute,
+    updatedAt,
+  };
+  return usagePreference.favoriteAgent ||
+    usagePreference.favoriteModel ||
+    usagePreference.favoritePeriod ||
+    usagePreference.peakTokensPerMinute !== undefined
+    ? usagePreference
+    : undefined;
 }
 
 async function requireAuth(request: Request, env: Env) {
@@ -686,11 +870,50 @@ function normalizeRange(value: string | null): LeaderboardRange {
   return value === "today" || value === "30d" || value === "all" ? value : "7d";
 }
 
+function normalizePreferenceRange(value: unknown): LeaderboardRange | undefined {
+  return value === "today" || value === "7d" || value === "30d" || value === "all" ? value : undefined;
+}
+
+function normalizePreferencePeriod(value: unknown): UsagePreferencePeriod | undefined {
+  return value === "early" || value === "morning" || value === "afternoon" || value === "evening" || value === "night"
+    ? value
+    : undefined;
+}
+
+function cleanShortText(value: unknown, maxLength: number) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+}
+
+function normalizePercent(value: unknown) {
+  const percent = Math.round(Number(value));
+  return Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : undefined;
+}
+
+function normalizeHour(value: unknown, min: number, max: number) {
+  const hour = Math.round(Number(value));
+  return Number.isFinite(hour) ? Math.max(min, Math.min(max, hour)) : undefined;
+}
+
+function normalizePreferenceCount(value: unknown) {
+  const count = Math.round(Number(value));
+  return Number.isFinite(count) ? Math.max(0, Math.min(MAX_DAILY_ACCEPTED_TOKENS, count)) : undefined;
+}
+
 function rangeStart(range: LeaderboardRange, today: string) {
   if (range === "today") return today;
   if (range === "30d") return addDays(today, -29);
   if (range === "7d") return addDays(today, -6);
   return "0000-01-01";
+}
+
+function normalizeUsageStartDate(value: unknown) {
+  if (typeof value !== "string" || !isDateKey(value)) return undefined;
+  const latest = addDays(localDateKey(new Date()), 1);
+  return value <= latest ? value : undefined;
+}
+
+function maxDateKey(left: string, right: string) {
+  return left > right ? left : right;
 }
 
 function addDays(dateKey: string, days: number) {

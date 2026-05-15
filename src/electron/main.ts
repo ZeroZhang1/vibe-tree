@@ -78,6 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardEnabled: false,
   leaderboardProfile: undefined,
   leaderboardLastSyncedAt: undefined,
+  leaderboardPreferencesPublic: false,
   launchOnStartup: false,
   silentStartup: false,
   proxyUrl: undefined,
@@ -461,6 +462,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardEnabled: Boolean(settings.leaderboardEnabled && leaderboardProfile),
     leaderboardProfile,
     leaderboardLastSyncedAt,
+    leaderboardPreferencesPublic: Boolean(settings.leaderboardPreferencesPublic),
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
     proxyUrl: cleanProxyUrl(settings.proxyUrl),
@@ -481,6 +483,22 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
 
 function normalizeUiTheme(value: unknown): Settings["uiTheme"] {
   return value === "day" || value === "soft" || value === "night" ? value : DEFAULT_SETTINGS.uiTheme;
+}
+
+function managerChromeTheme(theme: Settings["uiTheme"]) {
+  const height = process.platform === "darwin" ? 38 : 36;
+  if (theme === "night") return { color: "#161922", symbolColor: "#f4f1e9", height };
+  if (theme === "soft") return { color: "#fbf7ec", symbolColor: "#171a14", height };
+  return { color: "#ffffff", symbolColor: "#11120e", height };
+}
+
+function applyManagerWindowChrome() {
+  if (!managerWindow || managerWindow.isDestroyed()) return;
+  const chrome = managerChromeTheme(ledger.settings.uiTheme);
+  managerWindow.setBackgroundColor(chrome.color);
+  if (process.platform !== "darwin") {
+    managerWindow.setTitleBarOverlay(chrome);
+  }
 }
 
 function normalizeLeaderboardProfile(value: unknown): LeaderboardProfile | undefined {
@@ -651,11 +669,12 @@ function setPetBounds(position: { x: number; y: number }) {
 }
 
 async function loadRenderer(window: BrowserWindow, view: "pet" | "manager" | "toast") {
+  const query = { view, uiTheme: view === "toast" ? "night" : ledger.settings.uiTheme };
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
-    await window.loadURL(`${process.env.VITE_DEV_SERVER_URL}?view=${view}`);
+    await window.loadURL(`${process.env.VITE_DEV_SERVER_URL}?${new URLSearchParams(query).toString()}`);
     return;
   }
-  await window.loadFile(rendererFile, { query: { view } });
+  await window.loadFile(rendererFile, { query });
 }
 
 function createPetWindow() {
@@ -708,6 +727,7 @@ function createPetWindow() {
 
 function createManagerWindow() {
   if (managerWindow) return managerWindow;
+  const chrome = managerChromeTheme(ledger.settings.uiTheme);
 
   managerWindow = new BrowserWindow({
     width: MANAGER_SIZE.width,
@@ -717,10 +737,14 @@ function createManagerWindow() {
     title: APP_NAME,
     icon: createAppIcon(),
     frame: true,
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    ...(process.platform === "darwin"
+      ? { trafficLightPosition: { x: 14, y: 10 } }
+      : { titleBarOverlay: chrome }),
     transparent: false,
     resizable: true,
     show: true,
-    backgroundColor: "#f6f2e8",
+    backgroundColor: chrome.color,
     webPreferences: {
       preload: preloadFile,
       contextIsolation: true,
@@ -728,6 +752,7 @@ function createManagerWindow() {
       sandbox: false,
     },
   });
+  applyManagerWindowChrome();
 
   managerWindow.on("closed", () => {
     managerWindow = null;
@@ -1339,6 +1364,7 @@ function updateSettings(partial: Partial<Settings>) {
   const previous = ledger.settings;
   ledger.settings = normalizeSettings({ ...ledger.settings, ...partial });
   petWindow?.setAlwaysOnTop(ledger.settings.alwaysOnTop, "floating");
+  if (previous.uiTheme !== ledger.settings.uiTheme) applyManagerWindowChrome();
   if (partial.scale !== undefined) resizePetWindow();
   writeDeviceSettings();
   if (partial.launchOnStartup !== undefined || partial.silentStartup !== undefined) {
@@ -1400,7 +1426,7 @@ function appendUsageEvent(event: UsageEvent) {
 }
 
 function broadcast(channel: string, ...args: unknown[]) {
-  for (const window of [petWindow, managerWindow]) {
+  for (const window of [petWindow, managerWindow, achievementToastWindow]) {
     if (!window || window.isDestroyed()) continue;
     window.webContents.send(channel, ...args);
   }
@@ -1981,7 +2007,9 @@ ipcMain.handle("leaderboard:get-status", () => leaderboardService.status());
 ipcMain.handle("leaderboard:login", () => leaderboardService.login());
 ipcMain.handle("leaderboard:logout", () => leaderboardService.logout());
 ipcMain.handle("leaderboard:set-enabled", (_event, enabled: boolean) => leaderboardService.setEnabled(Boolean(enabled)));
-ipcMain.handle("leaderboard:sync", () => leaderboardService.syncUsage());
+ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
+  leaderboardService.syncUsage({ force: options?.force === true }),
+);
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>

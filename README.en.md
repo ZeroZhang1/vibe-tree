@@ -53,7 +53,7 @@ The manager panel shows source breakdowns, model ratios, and 7-day charts. View 
 The built-in achievement system tracks streaks, total usage, and coding rhythm, then celebrates key moments with a small pixel toast.
 
 ### 🏆 Compete with Global Vibe Coders
-An optional global leaderboard — sign in with GitHub to join. Only daily token totals are uploaded; no code or session content ever leaves your machine.
+An optional global leaderboard — sign in with GitHub to join. By default, only daily token totals are uploaded; no code or session content ever leaves your machine. Users can opt in to share aggregated usage preferences.
 
 ---
 
@@ -136,7 +136,7 @@ VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm start
 
 Backend template: `server/leaderboard-worker/`
 
-Privacy: only daily token totals from the last 30 days are uploaded. No prompts, files, sessions, or model info.
+Privacy: by default, each sync sends a rolling 30-day snapshot of daily token totals plus the local first-use date used to clean stale leaderboard rows. The service keeps older previously synced daily totals for the all-time range. If "Share usage preferences" is enabled, sync also uploads range-scoped aggregates for top agent, top model, preferred coding period, and peak token/min. Prompts, files, paths, session records, and the full heatmap are never uploaded.
 
 </details>
 
