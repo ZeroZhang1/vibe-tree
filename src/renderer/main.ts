@@ -5,9 +5,11 @@ import type {
   LedgerEntry,
   LedgerFile,
   LeaderboardData,
+  LeaderboardEntry,
   LeaderboardRange,
   LeaderboardStatus,
   TreeAsset,
+  UiTheme,
   UpdateStatus,
   UsageStatus,
   WindowBounds,
@@ -70,14 +72,58 @@ import type {
   WeatherId,
 } from "./types";
 import { weatherBackHtml, weatherFrontHtml } from "./weatherArt";
+import { toBlob } from "html-to-image";
 import "./styles.css";
+
+type ShareTemplateId = "receipt" | "glass" | "mono";
+
+interface ShareReportData {
+  generatedAt: Date;
+  totalTokens: number;
+  todayTokens: number;
+  peakTokensPerMinute: number;
+  level: number;
+  stageLabel: string;
+  treeImage: string;
+  mostUsedAgent: string;
+  activeDays: number;
+  currentStreak: number;
+  heatLevels: number[];
+  favoritePeriod: {
+    label: string;
+    range: string;
+  };
+}
+
+const SHARE_TEMPLATES: Array<{ id: ShareTemplateId; titleKey: string; noteKey: string }> = [
+  { id: "receipt", titleKey: "shareTemplateReceiptTitle", noteKey: "shareTemplateReceiptNote" },
+  { id: "glass", titleKey: "shareTemplateGlassTitle", noteKey: "shareTemplateGlassNote" },
+  { id: "mono", titleKey: "shareTemplateMonoTitle", noteKey: "shareTemplateMonoNote" },
+];
+const SHARE_PREVIEW_SIZE = { width: 284, height: 442 };
+
+function shareTemplateForUiTheme(theme: UiTheme | undefined): ShareTemplateId {
+  if (theme === "day") return "mono";
+  if (theme === "soft") return "receipt";
+  return "glass";
+}
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Missing #app");
 document.title = "Vibe Tree";
 
 const viewParam = new URLSearchParams(location.search).get("view");
+const uiThemeParam = new URLSearchParams(location.search).get("uiTheme");
 const viewMode: ViewMode = viewParam === "manager" ? "manager" : viewParam === "toast" ? "toast" : "pet";
+const UI_THEME_STORAGE_KEY = "vibe-tree:ui-theme";
+const initialUiTheme = viewMode === "toast" ? "night" : readCachedUiTheme();
+const platformName = rendererPlatform();
+document.documentElement.dataset.platform = platformName;
+if (viewMode === "pet") {
+  delete document.documentElement.dataset.uiTheme;
+} else {
+  document.documentElement.dataset.uiTheme = initialUiTheme;
+}
 let ledger: LedgerFile | null = null;
 let tree: TreeAsset | null = null;
 let gameBalance: GameBalance | null = null;
@@ -101,6 +147,8 @@ let leaderboardData: LeaderboardData = {
   entries: [],
 };
 let leaderboardLoadedRange: LeaderboardRange | null = null;
+const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+const leaderboardDataCache = new Map<LeaderboardRange, LeaderboardData>();
 let leaderboardLoading = false;
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
@@ -186,6 +234,12 @@ app.innerHTML = appShellHtml(viewMode);
 const root = document.querySelector<HTMLElement>(
   viewMode === "pet" ? ".pet-root" : viewMode === "manager" ? ".manager-root" : ".toast-root",
 )!;
+if (viewMode === "pet") {
+  delete root.dataset.uiTheme;
+} else {
+  root.dataset.uiTheme = initialUiTheme;
+}
+root.dataset.platform = platformName;
 const treeImage = document.querySelector<HTMLImageElement>("#treeImage");
 const previewTreeImage = document.querySelector<HTMLImageElement>("#previewTreeImage");
 const weatherBack = document.querySelector<HTMLElement>("#weatherBack");
@@ -210,6 +264,7 @@ const checkUpdateButton = document.querySelector<HTMLButtonElement>("#checkUpdat
 const installUpdateButton = document.querySelector<HTMLButtonElement>("#installUpdateButton");
 const releasePageButton = document.querySelector<HTMLButtonElement>("#releasePageButton");
 const languageSelect = document.querySelector<HTMLSelectElement>("#languageSelect");
+const themeSwitcher = document.querySelector<HTMLElement>("#themeSwitcher");
 const sourceSettings = document.querySelector<HTMLElement>("#sourceSettings");
 const badgeFrontMetricSelect = document.querySelector<HTMLSelectElement>("#badgeFrontMetricSelect");
 const badgeBackMetricSelect = document.querySelector<HTMLSelectElement>("#badgeBackMetricSelect");
@@ -222,6 +277,7 @@ const geminiSessionsDirInput = document.querySelector<HTMLInputElement>("#gemini
 const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermesSessionsDirInput");
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
+const leaderboardPreferencesPublicInput = document.querySelector<HTMLInputElement>("#leaderboardPreferencesPublicInput");
 const leaderboardMembershipButton = document.querySelector<HTMLButtonElement>("#leaderboardMembershipButton");
 const leaderboardSettingsSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardSettingsSyncButton");
 const leaderboardPageRefreshButton = document.querySelector<HTMLButtonElement>("#leaderboardPageRefreshButton");
@@ -229,6 +285,7 @@ const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#le
 const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
 const leaderboardRows = document.querySelector<HTMLElement>("#leaderboardRows");
+const shareExportButton = document.querySelector<HTMLButtonElement>("#shareExportButton");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -288,12 +345,63 @@ function languageLocale(): string {
   return currentLanguage();
 }
 
+function currentUiTheme(): UiTheme {
+  if (viewMode === "toast") return "night";
+  return normalizeUiTheme(ledger?.settings.uiTheme);
+}
+
+function normalizeUiTheme(value: unknown): UiTheme {
+  return value === "day" || value === "soft" || value === "night" ? value : "night";
+}
+
+function readCachedUiTheme(): UiTheme {
+  if (uiThemeParam) return normalizeUiTheme(uiThemeParam);
+  try {
+    return normalizeUiTheme(localStorage.getItem(UI_THEME_STORAGE_KEY));
+  } catch {
+    return "night";
+  }
+}
+
+function cacheUiTheme(theme: UiTheme) {
+  try {
+    localStorage.setItem(UI_THEME_STORAGE_KEY, theme);
+  } catch {
+    // Ignore private-mode or storage permission failures; the ledger remains the source of truth.
+  }
+}
+
+function applyUiTheme(theme: UiTheme) {
+  if (viewMode === "pet") {
+    delete root.dataset.uiTheme;
+    delete document.documentElement.dataset.uiTheme;
+    cacheUiTheme(theme);
+    return;
+  }
+  root.dataset.uiTheme = theme;
+  document.documentElement.dataset.uiTheme = theme;
+  cacheUiTheme(theme);
+}
+
+function rendererPlatform() {
+  const platform = navigator.platform.toLowerCase();
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (platform.includes("mac") || userAgent.includes("mac os")) return "mac";
+  if (platform.includes("win") || userAgent.includes("windows")) return "windows";
+  return "linux";
+}
+
 function t(key: string): string {
   return UI_TEXT[currentLanguage()][key] ?? UI_TEXT["zh-CN"][key] ?? key;
 }
 
 function applyI18n() {
   document.documentElement.lang = languageLocale();
+  if (viewMode === "pet") {
+    delete document.documentElement.dataset.uiTheme;
+  } else {
+    document.documentElement.dataset.uiTheme = currentUiTheme();
+  }
   document.title = t("appTitle");
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((element) => {
     const key = element.dataset.i18n;
@@ -409,6 +517,17 @@ function relativeTimeText(value: number, unitKey: "secondsAgo" | "minutesAgo" | 
 
 async function boot() {
   if (viewMode === "toast") {
+    const nextLedger = await window.bonsai.getLedger();
+    ledger = nextLedger;
+    appLanguage = normalizeLanguage(ledger.settings.language);
+    applyUiTheme("night");
+    applyI18n();
+    window.bonsai.onLedger((nextLedger) => {
+      ledger = nextLedger;
+      appLanguage = normalizeLanguage(ledger.settings.language);
+      applyUiTheme("night");
+      applyI18n();
+    });
     bindToastOverlayEvents();
     return;
   }
@@ -637,6 +756,16 @@ function bindEvents() {
     render();
   });
 
+  themeSwitcher?.addEventListener("click", async (event) => {
+    if (!ledger) return;
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-ui-theme]");
+    if (!button) return;
+    const uiTheme = normalizeUiTheme(button.dataset.uiTheme);
+    if (uiTheme === ledger.settings.uiTheme) return;
+    ledger = await window.bonsai.updateSettings({ uiTheme });
+    render();
+  });
+
   sourceSettings?.addEventListener("change", async (event) => {
     const input = (event.target as HTMLElement).closest<HTMLInputElement>("[data-stats-source]");
     if (!ledger || !input) return;
@@ -691,11 +820,20 @@ function bindEvents() {
   });
 
   leaderboardSettingsSyncButton?.addEventListener("click", () => {
-    void syncLeaderboard();
+    void syncLeaderboard({ force: true });
+  });
+
+  leaderboardPreferencesPublicInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      leaderboardPreferencesPublic: leaderboardPreferencesPublicInput.checked,
+    });
+    render();
+    if (leaderboardStatus.joined) void syncLeaderboard({ force: true });
   });
 
   leaderboardPageRefreshButton?.addEventListener("click", () => {
-    void refreshLeaderboard();
+    void refreshLeaderboard({ syncFirst: leaderboardStatus.joined, forceSync: true });
   });
 
   leaderboardPageSyncButton?.addEventListener("click", async () => {
@@ -789,14 +927,15 @@ function bindEvents() {
   leaderboardRangeTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-leaderboard-range]");
     if (!button) return;
-    const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
-    if (nextRange === leaderboardRange) return;
-    leaderboardRange = nextRange;
-    leaderboardData = { range: leaderboardRange, entries: [] };
-    leaderboardLoadedRange = null;
-    leaderboardRenderKey = "";
-    renderLeaderboard();
-  });
+  const nextRange = normalizeLeaderboardRange(button.dataset.leaderboardRange);
+  if (nextRange === leaderboardRange) return;
+  leaderboardRange = nextRange;
+  const cached = leaderboardDataCache.get(leaderboardRange);
+  leaderboardData = cached ?? { range: leaderboardRange, entries: [] };
+  leaderboardLoadedRange = cached ? leaderboardRange : null;
+  leaderboardRenderKey = "";
+  renderLeaderboard();
+});
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-achievement-category]");
@@ -826,8 +965,9 @@ function bindEvents() {
       showLockedAchievementHint(item);
       return;
     }
+    const isNew = !seenAchievementIds.has(def.id);
+    showAchievementDetail(def, isNew);
     markAchievementSeen(def.id);
-    showAchievementDetail(def);
   });
 
   achievementRecentElement?.addEventListener("click", (event) => {
@@ -836,12 +976,17 @@ function bindEvents() {
     const id = item.dataset.achievementId;
     const def = ACHIEVEMENTS.find((d) => d.id === id);
     if (!def) return;
+    const isNew = !seenAchievementIds.has(def.id);
+    showAchievementDetail(def, isNew);
     markAchievementSeen(def.id);
-    showAchievementDetail(def);
   });
 
   achievementToastPreviewButton?.addEventListener("click", () => {
     previewAchievementToast();
+  });
+
+  shareExportButton?.addEventListener("click", () => {
+    void exportShareImage();
   });
 
 }
@@ -896,21 +1041,40 @@ async function updatePathSetting(
   render();
 }
 
-async function refreshLeaderboard() {
+async function refreshLeaderboard(options: { syncFirst?: boolean; forceSync?: boolean } = {}) {
   if (leaderboardLoading) return;
   leaderboardLoading = true;
   renderLeaderboardSettings();
   renderLeaderboard();
   try {
     leaderboardStatus = await window.bonsai.getLeaderboardStatus();
-    leaderboardData = await window.bonsai.getLeaderboard(leaderboardRange);
-    leaderboardLoadedRange = leaderboardRange;
+    if (options.syncFirst && leaderboardStatus.joined) {
+      leaderboardStatus = await window.bonsai.syncLeaderboard({ force: options.forceSync === true });
+    }
+    const results = await Promise.all(
+      LEADERBOARD_RANGES.map(async (range) => {
+        try {
+          return await window.bonsai.getLeaderboard(range);
+        } catch (error) {
+          return {
+            range,
+            entries: [],
+            error: error instanceof Error ? error.message : t("leaderboardLoadFailed"),
+          } satisfies LeaderboardData;
+        }
+      }),
+    );
+    results.forEach((data) => leaderboardDataCache.set(data.range, data));
+    const cached = leaderboardDataCache.get(leaderboardRange);
+    leaderboardData = cached ?? { range: leaderboardRange, entries: [], error: t("leaderboardLoadFailed") };
+    leaderboardLoadedRange = cached ? leaderboardRange : null;
   } catch (error) {
     leaderboardData = {
       range: leaderboardRange,
       entries: [],
       error: error instanceof Error ? error.message : t("leaderboardLoadFailed"),
     };
+    leaderboardDataCache.set(leaderboardRange, leaderboardData);
     leaderboardLoadedRange = leaderboardRange;
   } finally {
     leaderboardLoading = false;
@@ -944,14 +1108,17 @@ async function leaveLeaderboard() {
   if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
   leaderboardStatus = await window.bonsai.logoutLeaderboard();
   leaderboardData = { range: leaderboardRange, entries: [] };
+  leaderboardDataCache.clear();
   leaderboardLoadedRange = null;
   leaderboardRenderKey = "";
   renderLeaderboardSettings();
   renderLeaderboard();
 }
 
-async function syncLeaderboard() {
-  leaderboardStatus = await window.bonsai.syncLeaderboard();
+async function syncLeaderboard(options: { force?: boolean } = {}) {
+  leaderboardStatus = await window.bonsai.syncLeaderboard({ force: options.force === true });
+  leaderboardDataCache.clear();
+  leaderboardLoadedRange = null;
   await refreshLeaderboardIfVisible();
 }
 
@@ -967,6 +1134,815 @@ function openLeaderboardSettings() {
     leaderboardMembershipButton?.scrollIntoView({ block: "center", behavior: "smooth" });
     leaderboardMembershipButton?.focus({ preventScroll: true });
   });
+}
+
+async function exportShareImage() {
+  if (!ledger || !tree || !gameBalance || !shareExportButton) return;
+
+  const defaultTitle = t("exportShareImage");
+  shareExportButton.disabled = true;
+  shareExportButton.dataset.state = "exporting";
+  shareExportButton.title = t("generatingPreview");
+
+  try {
+    const visibility = sourceVisibility();
+    const stats = statsCache.calculateStats(ledger.entries, tree, gameBalance, visibility.enabled, ledgerEntriesSignature());
+    const report = await buildShareReportData(ledger.entries, stats);
+    openShareExportPreview(report);
+    shareExportButton.title = defaultTitle;
+  } catch (error) {
+    console.error("Failed to export share image", error);
+    shareExportButton.title = error instanceof Error ? error.message : String(error);
+    window.setTimeout(() => {
+      shareExportButton.title = defaultTitle;
+    }, 2200);
+  } finally {
+    shareExportButton.disabled = false;
+    delete shareExportButton.dataset.state;
+  }
+}
+
+function openShareExportPreview(report: ShareReportData) {
+  document.querySelector(".share-export-overlay")?.remove();
+
+  const initialTemplateId = shareTemplateForUiTheme(ledger?.settings.uiTheme);
+  let activeIndex = Math.max(
+    0,
+    SHARE_TEMPLATES.findIndex((template) => template.id === initialTemplateId),
+  );
+  const overlay = document.createElement("div");
+  overlay.className = "share-export-overlay";
+  overlay.innerHTML = `
+    <div class="share-export-backdrop"></div>
+    <section class="share-export-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(t("chooseShareTemplate"))}">
+      <header class="share-export-head">
+        <div>
+          <p class="eyebrow">${escapeHtml(t("shareImage"))}</p>
+          <h3>${escapeHtml(t("chooseShareTemplate"))}</h3>
+        </div>
+        <button class="icon-button share-export-close" type="button" aria-label="${escapeHtml(t("close"))}">×</button>
+      </header>
+      <div class="share-template-carousel" aria-live="polite">
+        <button class="share-carousel-nav prev" type="button" aria-label="${escapeHtml(t("previousShareTemplate"))}">‹</button>
+        <div class="share-carousel-stage">
+        ${SHARE_TEMPLATES.map(
+          (template, index) => `
+            <article class="share-template-option" data-share-card data-template-index="${index}" data-share-template="${template.id}">
+              <div class="share-template-preview">
+                ${shareReportHtml(report, SHARE_PREVIEW_SIZE.width, SHARE_PREVIEW_SIZE.height, template.id)}
+              </div>
+            </article>
+          `,
+        ).join("")}
+        </div>
+        <button class="share-carousel-nav next" type="button" aria-label="${escapeHtml(t("nextShareTemplate"))}">›</button>
+      </div>
+      <footer class="share-carousel-footer">
+        <div class="share-template-title">
+          <strong id="shareSelectedTitle"></strong>
+          <span id="shareSelectedNote"></span>
+        </div>
+        <div class="share-carousel-dots" aria-label="${escapeHtml(t("shareTemplates"))}">
+          ${SHARE_TEMPLATES.map(
+            (template, index) => `
+              <button type="button" data-share-dot="${index}" aria-label="${escapeHtml(t(template.titleKey))}"></button>
+            `,
+          ).join("")}
+        </div>
+        <button class="primary-button share-template-export" id="shareTemplateExportButton" type="button">
+          ${escapeHtml(t("exportSelectedShareTemplate"))}
+        </button>
+      </footer>
+    </section>
+  `;
+
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".share-export-backdrop")?.addEventListener("click", close);
+  overlay.querySelector(".share-export-close")?.addEventListener("click", close);
+  const cards = Array.from(overlay.querySelectorAll<HTMLElement>("[data-share-card]"));
+  const dots = Array.from(overlay.querySelectorAll<HTMLButtonElement>("[data-share-dot]"));
+  const exportButton = overlay.querySelector<HTMLButtonElement>("#shareTemplateExportButton");
+  const selectedTitle = overlay.querySelector<HTMLElement>("#shareSelectedTitle");
+  const selectedNote = overlay.querySelector<HTMLElement>("#shareSelectedNote");
+
+  const setActiveTemplate = (nextIndex: number) => {
+    activeIndex = (nextIndex + SHARE_TEMPLATES.length) % SHARE_TEMPLATES.length;
+    const activeTemplate = SHARE_TEMPLATES[activeIndex];
+    cards.forEach((card, index) => {
+      const offset = (index - activeIndex + SHARE_TEMPLATES.length) % SHARE_TEMPLATES.length;
+      const position = offset === 0 ? "active" : offset === 1 ? "next" : "prev";
+      card.dataset.position = position;
+      card.setAttribute("aria-hidden", String(position !== "active"));
+      card.tabIndex = position === "active" ? 0 : -1;
+    });
+    dots.forEach((dot, index) => {
+      const active = index === activeIndex;
+      dot.classList.toggle("active", active);
+      dot.setAttribute("aria-current", active ? "true" : "false");
+    });
+    if (selectedTitle) selectedTitle.textContent = t(activeTemplate.titleKey);
+    if (selectedNote) selectedNote.textContent = t(activeTemplate.noteKey);
+    if (exportButton) exportButton.dataset.shareTemplate = activeTemplate.id;
+  };
+
+  const step = (direction: 1 | -1) => setActiveTemplate(activeIndex + direction);
+  overlay.querySelector<HTMLButtonElement>(".share-carousel-nav.prev")?.addEventListener("click", () => step(-1));
+  overlay.querySelector<HTMLButtonElement>(".share-carousel-nav.next")?.addEventListener("click", () => step(1));
+  cards.forEach((card, index) => {
+    card.addEventListener("click", () => {
+      if (index !== activeIndex) setActiveTemplate(index);
+    });
+  });
+  dots.forEach((dot) => {
+    dot.addEventListener("click", () => {
+      const nextIndex = Number(dot.dataset.shareDot);
+      if (Number.isFinite(nextIndex)) setActiveTemplate(nextIndex);
+    });
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+    if (event.key === "ArrowLeft") step(-1);
+    if (event.key === "ArrowRight") step(1);
+  });
+  exportButton?.addEventListener("click", () => {
+    const templateId = exportButton.dataset.shareTemplate as ShareTemplateId | undefined;
+    if (templateId) void exportSelectedShareImage(report, templateId, exportButton, close);
+  });
+  setActiveTemplate(activeIndex);
+  exportButton?.focus();
+}
+
+async function exportSelectedShareImage(
+  report: ShareReportData,
+  templateId: ShareTemplateId,
+  button: HTMLButtonElement,
+  close: () => void,
+) {
+  const allButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".share-template-export"));
+  const defaultLabel = button.textContent ?? t("exportSelectedShareTemplate");
+  allButtons.forEach((item) => {
+    item.disabled = true;
+  });
+  button.textContent = t("generating");
+
+  try {
+    const width = 1080;
+    const height = 1680;
+    const pngBase64 = await renderShareReportPng(report, width, height, templateId);
+    const result = await window.bonsai.saveShareImage({
+      filename: `vibe-tree-share-${templateId}-${dateKey(report.generatedAt)}.png`,
+      pngBase64,
+    });
+    if (result.canceled) {
+      button.textContent = defaultLabel;
+      allButtons.forEach((item) => {
+        item.disabled = false;
+      });
+      return;
+    }
+    button.textContent = t("exported");
+    window.setTimeout(close, 500);
+  } catch (error) {
+    console.error("Failed to export selected share image", error);
+    button.title = error instanceof Error ? error.message : String(error);
+    button.textContent = t("exportFailed");
+    window.setTimeout(() => {
+      button.textContent = defaultLabel;
+      button.title = "";
+      allButtons.forEach((item) => {
+        item.disabled = false;
+      });
+    }, 2200);
+  }
+}
+
+async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promise<ShareReportData> {
+  const generatedAt = new Date();
+  const enabledSources = sourceVisibility().enabled;
+  const hourly = buildShareHourlyProfile(entries, generatedAt, enabledSources);
+  const peakTokensPerMinute = Math.max(
+    Math.round(hourly.maxHourTokens / 60),
+    Math.round(peakStat("peakXpPerMinute", stats.weather.tokensPerMinute)),
+  );
+
+  return {
+    generatedAt,
+    totalTokens: stats.xp,
+    todayTokens: stats.todayXp,
+    peakTokensPerMinute,
+    level: stats.level,
+    stageLabel: stageLabel(stats.stage.id, stats.stage.label),
+    treeImage: await imageToDataUrl(stats.stage.image),
+    mostUsedAgent: mostUsedAgentLabel(entries, enabledSources),
+    activeDays: hourly.activeDays,
+    currentStreak: currentActiveDayStreak(entries, generatedAt, enabledSources),
+    heatLevels: hourly.heatLevels,
+    favoritePeriod: hourly.favoritePeriod,
+  };
+}
+
+function buildShareHourlyProfile(entries: LedgerEntry[], now: Date, enabledSources: Set<HistorySourceId>) {
+  const start = startOfLocalDay(now);
+  start.setDate(start.getDate() - 6);
+  const end = startOfLocalDay(now);
+  end.setDate(end.getDate() + 1);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const hourTotals = Array.from({ length: 7 * 24 }, () => 0);
+  const activeDays = new Set<string>();
+
+  for (const entry of entries) {
+    const xp = xpForEntry(entry, enabledSources);
+    if (xp <= 0) continue;
+    const createdAt = new Date(entry.createdAt);
+    const timestamp = createdAt.getTime();
+    if (!Number.isFinite(timestamp) || timestamp < start.getTime() || timestamp >= end.getTime()) continue;
+    const dayIndex = Math.floor((startOfLocalDay(createdAt).getTime() - start.getTime()) / dayMs);
+    if (dayIndex < 0 || dayIndex >= 7) continue;
+    const index = dayIndex * 24 + createdAt.getHours();
+    hourTotals[index] += xp;
+    activeDays.add(dateKey(createdAt));
+  }
+
+  const maxHourTokens = Math.max(0, ...hourTotals);
+  const heatLevels = hourTotals.map((value) => heatLevel(value, maxHourTokens));
+  return {
+    activeDays: activeDays.size,
+    favoritePeriod: favoriteCodingPeriod(hourTotals),
+    heatLevels,
+    maxHourTokens,
+  };
+}
+
+function heatLevel(value: number, max: number) {
+  if (value <= 0 || max <= 0) return 0;
+  const ratio = Math.sqrt(value / max);
+  return clamp(Math.ceil(ratio * 4), 1, 4);
+}
+
+function favoriteCodingPeriod(hourTotals: number[]): ShareReportData["favoritePeriod"] {
+  const periods = [
+    { label: "凌晨", range: "0-5 点", hours: [0, 1, 2, 3, 4, 5] },
+    { label: "上午", range: "6-11 点", hours: [6, 7, 8, 9, 10, 11] },
+    { label: "中午", range: "12-1 点", hours: [12, 13] },
+    { label: "午后", range: "2-5 点", hours: [14, 15, 16, 17] },
+    { label: "晚上", range: "6-9 点", hours: [18, 19, 20, 21] },
+    { label: "深夜", range: "10-11 点", hours: [22, 23] },
+  ];
+  let best = periods[0];
+  let bestValue = 0;
+  for (const period of periods) {
+    const value = period.hours.reduce((sum, hour) => {
+      let total = 0;
+      for (let day = 0; day < 7; day += 1) total += hourTotals[day * 24 + hour] ?? 0;
+      return sum + total;
+    }, 0);
+    if (value > bestValue) {
+      best = period;
+      bestValue = value;
+    }
+  }
+  if (bestValue <= 0) return { label: "待观察", range: "待解锁" };
+  return { label: best.label, range: best.range };
+}
+
+function currentActiveDayStreak(entries: LedgerEntry[], now: Date, enabledSources: Set<HistorySourceId>) {
+  const activeDayKeys = new Set<string>();
+  for (const entry of entries) {
+    if (xpForEntry(entry, enabledSources) <= 0) continue;
+    const createdAt = new Date(entry.createdAt);
+    if (Number.isFinite(createdAt.getTime())) activeDayKeys.add(dateKey(createdAt));
+  }
+
+  let streak = 0;
+  const cursor = startOfLocalDay(now);
+  while (activeDayKeys.has(dateKey(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function mostUsedAgentLabel(entries: LedgerEntry[], enabledSources: Set<HistorySourceId>) {
+  const top = getSourceBreakdown(entries, enabledSources, sourceLabel).find((row) => row.xp > 0);
+  return top?.label ?? "待解锁";
+}
+
+async function imageToDataUrl(path: string) {
+  const response = await fetch(assetUrl(path));
+  if (!response.ok) throw new Error(`Failed to load share image asset: ${response.status}`);
+  const blob = await response.blob();
+  return blobToDataUrl(blob);
+}
+
+async function renderShareReportPng(report: ShareReportData, width: number, height: number, templateId: ShareTemplateId) {
+  const host = document.createElement("div");
+  host.setAttribute("aria-hidden", "true");
+  host.style.position = "fixed";
+  host.style.left = "-9999px";
+  host.style.top = "0";
+  host.style.width = `${width}px`;
+  host.style.height = `${height}px`;
+  host.style.pointerEvents = "none";
+  host.style.zIndex = "-1";
+  host.innerHTML = shareReportHtml(report, width, height, templateId);
+  document.body.appendChild(host);
+
+  try {
+    const card = host.firstElementChild;
+    if (!(card instanceof HTMLElement)) throw new Error("Share card render failed");
+    await waitForShareReportAssets(card);
+    const blob = await toBlob(card, {
+      backgroundColor: shareTemplateBackground(templateId),
+      cacheBust: true,
+      pixelRatio: 1,
+    });
+    if (!blob) throw new Error("Share image conversion failed");
+    const dataUrl = await blobToDataUrl(blob);
+    return dataUrl.slice(dataUrl.indexOf(",") + 1);
+  } finally {
+    host.remove();
+  }
+}
+
+async function waitForShareReportAssets(root: HTMLElement) {
+  const images = Array.from(root.querySelectorAll("img"));
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) {
+            resolve();
+            return;
+          }
+          image.addEventListener("load", () => resolve(), { once: true });
+          image.addEventListener("error", () => resolve(), { once: true });
+        }),
+    ),
+  );
+  await document.fonts?.ready;
+  await new Promise((resolve) => window.setTimeout(resolve, 160));
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Failed to read share image blob"));
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("Failed to read share image blob")));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function shareTemplateBackground(templateId: ShareTemplateId) {
+  if (templateId === "mono") return "#f8f8f5";
+  if (templateId === "receipt") return "#fbf7ec";
+  return "#161922";
+}
+
+function shareReportHtml(report: ShareReportData, width: number, height: number, templateId: ShareTemplateId) {
+  const baseWidth = 430;
+  const baseHeight = 668;
+  const scaleX = width / baseWidth;
+  const scaleY = height / baseHeight;
+  const themeBackground = shareTemplateBackground(templateId);
+  const heatCells = report.heatLevels.map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
+  const heatScale = [0, 1, 2, 3, 4].map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
+  const periodStory =
+    report.favoritePeriod.label === "待观察"
+      ? `这 7 天，<mark>还没有明显时段</mark>，小树在等下一次生长。`
+      : `这 7 天，你最常在<mark>${escapeHtml(report.favoritePeriod.label)}</mark>进入 coding 状态。`;
+
+  return `
+    <div xmlns="http://www.w3.org/1999/xhtml" class="share-card" style="width:${width}px;height:${height}px">
+      <style>
+        .share-card,
+        .share-card * { box-sizing: border-box; }
+        .share-card {
+          position: relative;
+          overflow: hidden;
+          background: ${themeBackground};
+          border-radius: ${Math.round(22 * scaleX)}px;
+          font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
+        }
+        .share-card .poster {
+          --bg: #fbf7ec;
+          --panel: rgba(28, 32, 25, 0.05);
+          --line: rgba(28, 32, 25, 0.18);
+          --ink: #171a14;
+          --muted: rgba(45, 52, 42, 0.6);
+          --leaf: #2c9c52;
+          --accent: #c58a24;
+          --heat0: #ebe5d8;
+          --heat1: #d2dfbd;
+          --heat2: #9bd27f;
+          --heat3: #4fb665;
+          --heat4: #1f7445;
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: ${baseWidth}px;
+          height: ${baseHeight}px;
+          overflow: hidden;
+          padding: 26px;
+          border: 1px solid var(--line);
+          border-radius: 22px;
+          color: var(--ink);
+          background: var(--bg);
+          box-shadow: 0 24px 70px rgba(30, 38, 36, 0.2);
+          transform: scale(${scaleX}, ${scaleY});
+          transform-origin: 0 0;
+        }
+        .share-card .poster.glass {
+          --bg: #161922;
+          --panel: rgba(255, 255, 255, 0.1);
+          --line: rgba(255, 255, 255, 0.2);
+          --ink: #f4f1e9;
+          --muted: rgba(244, 241, 233, 0.56);
+          --leaf: #c7f66c;
+          --accent: #ffcf7a;
+          --heat0: #2b2d32;
+          --heat1: #4a5832;
+          --heat2: #7a9d44;
+          --heat3: #c7f66c;
+          --heat4: #fff07a;
+          background:
+            radial-gradient(circle at 50% 30%, rgba(199, 246, 108, 0.12), transparent 30%),
+            linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 48%),
+            var(--bg);
+        }
+        .share-card .poster.mono {
+          --bg: #f8f8f5;
+          --panel: rgba(20, 20, 16, 0.04);
+          --line: rgba(20, 20, 16, 0.14);
+          --ink: #11120e;
+          --muted: rgba(17, 18, 14, 0.56);
+          --leaf: #11120e;
+          --accent: #4f8f55;
+          --heat0: #e3e3dd;
+          --heat1: #b8c5b4;
+          --heat2: #8aaa84;
+          --heat3: #4f8f55;
+          --heat4: #11120e;
+        }
+        .share-card .poster::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          opacity: 0.06;
+          background-image:
+            linear-gradient(currentColor 1px, transparent 1px),
+            linear-gradient(90deg, currentColor 1px, transparent 1px);
+          background-size: 28px 28px;
+          mask-image: radial-gradient(circle at 50% 32%, black, transparent 74%);
+        }
+        .share-card .top,
+        .share-card .hero,
+        .share-card .metrics,
+        .share-card .heat-card,
+        .share-card .cta {
+          position: relative;
+          z-index: 1;
+        }
+        .share-card .top {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+        }
+        .share-card .brand {
+          display: grid;
+          gap: 5px;
+        }
+        .share-card .eyebrow {
+          color: var(--leaf);
+          font-size: 12px;
+          font-weight: 1000;
+          letter-spacing: 1.7px;
+        }
+        .share-card .brand b {
+          font-size: 21px;
+        }
+        .share-card .weather {
+          display: grid;
+          gap: 6px;
+          justify-items: end;
+          color: var(--accent);
+        }
+        .share-card .weather b {
+          font-size: 21px;
+        }
+        .share-card .weather span {
+          color: var(--muted);
+          font-size: 11px;
+        }
+        .share-card .hero {
+          display: grid;
+          grid-template-columns: 166px 1fr;
+          gap: 18px;
+          align-items: center;
+          margin-top: 18px;
+        }
+        .share-card .tree-frame {
+          position: relative;
+          display: grid;
+          place-items: center;
+          height: 166px;
+          border: 1px solid var(--line);
+          border-radius: 20px;
+          background: var(--panel);
+        }
+        .share-card .tree-frame::before {
+          content: "";
+          position: absolute;
+          width: 126px;
+          height: 126px;
+          border-radius: 50%;
+          background: color-mix(in srgb, var(--leaf) 20%, transparent);
+          filter: blur(18px);
+        }
+        .share-card .tree {
+          position: relative;
+          width: 134px;
+          height: 134px;
+          object-fit: contain;
+          image-rendering: pixelated;
+          filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.24));
+        }
+        .share-card h2 {
+          margin: 0;
+          font-size: 32px;
+          line-height: 1.04;
+        }
+        .share-card h2 span {
+          color: var(--leaf);
+        }
+        .share-card .level {
+          margin-top: 12px;
+          color: var(--accent);
+          font-size: 31px;
+          font-weight: 1000;
+          line-height: 1;
+        }
+        .share-card .metrics {
+          display: grid;
+          grid-template-columns: 0.92fr 1.16fr 0.92fr;
+          gap: 10px;
+          margin-top: 12px;
+        }
+        .share-card .metric {
+          display: grid;
+          gap: 5px;
+          min-height: 72px;
+          padding: 12px;
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          background: var(--panel);
+        }
+        .share-card .metric small {
+          color: var(--muted);
+          font-size: 11px;
+          line-height: 1.25;
+        }
+        .share-card .metric b {
+          font-size: 18px;
+          white-space: nowrap;
+        }
+        .share-card .metric.featured {
+          min-height: 82px;
+          padding: 13px;
+          border-color: color-mix(in srgb, var(--leaf) 36%, var(--line));
+          background: color-mix(in srgb, var(--panel) 72%, var(--leaf) 10%);
+        }
+        .share-card .metric.featured small {
+          color: var(--leaf);
+          font-weight: 900;
+        }
+        .share-card .metric.featured b {
+          font-size: 24px;
+        }
+        .share-card .heat-card {
+          margin-top: 12px;
+          padding: 14px;
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          background: color-mix(in srgb, var(--bg) 76%, #000 24%);
+        }
+        .share-card .heat-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 8px;
+        }
+        .share-card .heat-head strong {
+          display: block;
+          font-size: 16px;
+        }
+        .share-card .heat-head mark {
+          color: var(--leaf);
+          background: transparent;
+        }
+        .share-card .heat-meta {
+          display: grid;
+          grid-template-columns: repeat(2, auto);
+          gap: 8px;
+          color: var(--muted);
+          font-size: 9px;
+          text-align: right;
+        }
+        .share-card .heat-meta b {
+          color: var(--ink);
+          font-size: 10px;
+        }
+        .share-card .heat-meta span {
+          display: grid;
+          gap: 2px;
+        }
+        .share-card .heat-foot {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 10px;
+          margin-top: 8px;
+          padding-top: 7px;
+          border-top: 1px dashed color-mix(in srgb, var(--line) 72%, transparent);
+          color: var(--muted);
+          font-size: 9.5px;
+          line-height: 1.45;
+        }
+        .share-card .heat-foot b {
+          color: var(--accent);
+          font-size: 10px;
+        }
+        .share-card .heat-foot mark {
+          color: var(--accent);
+          background: transparent;
+          font-weight: 900;
+        }
+        .share-card .heat-story {
+          display: grid;
+          gap: 2px;
+        }
+        .share-card .heat-scale {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          min-width: 86px;
+          text-align: right;
+        }
+        .share-card .heat-scale span {
+          white-space: nowrap;
+        }
+        .share-card .scale-row {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 3px;
+        }
+        .share-card .scale-row i {
+          width: 9px;
+          height: 9px;
+          border-radius: 2px;
+          background: var(--c);
+        }
+        .share-card .heat {
+          display: grid;
+          grid-template-columns: repeat(24, 1fr);
+          gap: 2px;
+        }
+        .share-card .heat i {
+          display: block;
+          aspect-ratio: 1 / 1;
+          border-radius: 3px;
+          background: var(--c);
+        }
+        .share-card .cta {
+          position: absolute;
+          left: 26px;
+          right: 26px;
+          bottom: 26px;
+          display: flex;
+          align-items: flex-end;
+          gap: 30px;
+          justify-content: space-between;
+          color: var(--muted);
+          font-size: 13px;
+        }
+        .share-card .pill {
+          display: grid;
+          gap: 10px;
+          color: var(--muted);
+        }
+        .share-card .pill b {
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.4;
+        }
+        .share-card .pill span {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+        }
+        .share-card .pill span::before {
+          content: "";
+          width: 10px;
+          height: 10px;
+          border-radius: 3px;
+          background: var(--leaf);
+        }
+        .share-card .qr {
+          width: 48px;
+          height: 48px;
+          display: grid;
+          place-items: center;
+          border: 2px dashed currentColor;
+          border-radius: 11px;
+          font-size: 11px;
+          font-weight: 900;
+        }
+      </style>
+      <section class="poster ${templateId}">
+        <div class="top">
+          <div class="brand">
+            <span class="eyebrow">VIBE TREE</span>
+            <b>Token 天气树</b>
+          </div>
+          <div class="weather">
+            <b>${escapeHtml(formatShareNumber(report.peakTokensPerMinute))}/min</b>
+            <span>coding 峰值</span>
+          </div>
+        </div>
+        <div class="hero">
+          <div class="tree-frame">
+            <img class="tree" src="${escapeHtml(report.treeImage)}" alt="" />
+          </div>
+          <div>
+            <h2>我的<br /><span>成长档案</span></h2>
+            <div class="level">Lv.${report.level}</div>
+          </div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><small>今日成长</small><b>+${escapeHtml(formatShareNumber(report.todayTokens))}</b></div>
+          <div class="metric featured"><small>累计 Token</small><b>${escapeHtml(formatShareNumber(report.totalTokens))}</b></div>
+          <div class="metric"><small>最常用 Agent</small><b>${escapeHtml(report.mostUsedAgent)}</b></div>
+        </div>
+        <div class="heat-card">
+          <div class="heat-head">
+            <div>
+              <strong>最近 <mark>7 天</mark> / 24 小时</strong>
+            </div>
+            <div class="heat-meta">
+              <span>活跃天数<b>${report.activeDays}</b></span>
+              <span>当前连续<b>${report.currentStreak}</b></span>
+            </div>
+          </div>
+          <div class="heat">${heatCells}</div>
+          <div class="heat-foot">
+            <div class="heat-story">
+              <span>偏爱时段 <b>${escapeHtml(report.favoritePeriod.range)}</b></span>
+              <span>${periodStory}</span>
+            </div>
+            <div class="heat-scale">
+              <span>少</span>
+              <div class="scale-row">${heatScale}</div>
+              <span>多</span>
+            </div>
+          </div>
+        </div>
+        <div class="cta">
+          <div class="pill">
+            <b>这一周，我把 AI coding 养成了一棵树。</b>
+            <span>扫码领取桌面小树</span>
+          </div>
+          <div class="qr">QR</div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function formatShareNumber(value: number) {
+  const sign = value < 0 ? "-" : "";
+  const absolute = Math.abs(value);
+  if (absolute < 1_000) return `${Math.round(value)}`;
+  const units = [
+    { value: 1_000_000_000, suffix: "B" },
+    { value: 1_000_000, suffix: "M" },
+    { value: 1_000, suffix: "K" },
+  ];
+  const unit = units.find((item) => absolute >= item.value);
+  if (!unit) return `${Math.round(value)}`;
+  const scaled = absolute / unit.value;
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  const formatted = scaled.toFixed(digits).replace(/\.0+$|(\.\d*[1-9])0+$/, "$1");
+  return `${sign}${formatted}${unit.suffix}`;
 }
 
 function render() {
@@ -985,6 +1961,7 @@ function render() {
   root.dataset.scale = String(ledger.settings.scale).replace(".", "-");
   root.dataset.stage = stats.stage.id;
   root.dataset.tab = dashboardTab;
+  applyUiTheme(ledger.settings.uiTheme);
 
   if (treeImage) {
     treeImage.src = assetUrl(stats.stage.image);
@@ -1038,11 +2015,19 @@ function render() {
       document.documentElement.style.setProperty("--font-scale", String(fs));
     }
     if (languageSelect) languageSelect.value = ledger.settings.language;
+    themeSwitcher?.querySelectorAll<HTMLButtonElement>("[data-ui-theme]").forEach((button) => {
+      const active = button.dataset.uiTheme === ledger?.settings.uiTheme;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
     syncStatsSourceInputs();
     if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
     syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
+    if (leaderboardPreferencesPublicInput) {
+      leaderboardPreferencesPublicInput.checked = ledger.settings.leaderboardPreferencesPublic;
+    }
     if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
     if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;
     if (totalDisplayUnitSelect) totalDisplayUnitSelect.value = ledger.settings.totalDisplayUnit;
@@ -1081,10 +2066,18 @@ function render() {
 
 function renderDashboardTabs() {
   root.dataset.tab = dashboardTab;
+  const unseenAchievementCount = achievementState.unlocked.filter((item) => !seenAchievementIds.has(item.id)).length;
   sideTabs?.querySelectorAll<HTMLButtonElement>("[data-dashboard-tab]").forEach((button) => {
     const active = button.dataset.dashboardTab === dashboardTab;
+    const hasNewAchievements = button.dataset.dashboardTab === "achievements" && unseenAchievementCount > 0;
     button.classList.toggle("active", active);
+    button.classList.toggle("has-new-achievements", hasNewAchievements);
     button.setAttribute("aria-selected", String(active));
+    if (hasNewAchievements) {
+      button.dataset.newCount = String(Math.min(unseenAchievementCount, 99));
+    } else {
+      delete button.dataset.newCount;
+    }
   });
 }
 
@@ -1114,6 +2107,7 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
   achievementRenderKey = key;
   const unlockedIds = achievementUnlockedIds();
   const unseenIds = new Set([...unlockedIds].filter((id) => !seenAchievementIds.has(id)));
+  renderDashboardTabs();
   const visibleDefs = ACHIEVEMENTS.filter((def) => !def.planned || unlockedIds.has(def.id));
   const unlockedCount = visibleDefs.filter((def) => unlockedIds.has(def.id)).length;
   const completion = visibleDefs.length ? Math.round((unlockedCount / visibleDefs.length) * 100) : 0;
@@ -1125,8 +2119,16 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
 
   achievementCategoryTabs?.querySelectorAll<HTMLButtonElement>("[data-achievement-category]").forEach((button) => {
     const active = button.dataset.achievementCategory === achievementCategoryFilter;
+    const category = button.dataset.achievementCategory;
+    const newCount =
+      typeof category === "string"
+        ? ACHIEVEMENTS.filter((def) => def.category === category && unseenIds.has(def.id)).length
+        : 0;
     button.classList.toggle("active", active);
+    button.classList.toggle("has-new-achievements", newCount > 0);
     button.setAttribute("aria-selected", String(active));
+    if (newCount > 0) button.dataset.newCount = String(Math.min(newCount, 99));
+    else delete button.dataset.newCount;
   });
 
   achievementStatusTabs?.querySelectorAll<HTMLButtonElement>("[data-achievement-status]").forEach((button) => {
@@ -1182,6 +2184,9 @@ function renderAchievements(stats?: Stats, context?: AchievementContext) {
       const defs = filteredDefs.filter((def) => def.category === cat);
       if (!defs.length) return "";
       const sorted = [...defs].sort((a, b) => {
+        const aNew = unlockedIds.has(a.id) && unseenIds.has(a.id) ? 0 : 1;
+        const bNew = unlockedIds.has(b.id) && unseenIds.has(b.id) ? 0 : 1;
+        if (aNew !== bNew) return aNew - bNew;
         const aUnlocked = unlockedIds.has(a.id) ? 0 : 1;
         const bUnlocked = unlockedIds.has(b.id) ? 0 : 1;
         if (aUnlocked !== bUnlocked) return aUnlocked - bUnlocked;
@@ -1245,7 +2250,7 @@ function achievementItemHtml(
   `;
 }
 
-function showAchievementDetail(def: AchievementDef) {
+function showAchievementDetail(def: AchievementDef, isNew = false) {
   const unlockedIds = achievementUnlockedIds();
   const unlocked = unlockedIds.has(def.id);
   const reveal = unlocked || !def.hidden;
@@ -1275,7 +2280,10 @@ function showAchievementDetail(def: AchievementDef) {
       <button class="achievement-detail-close" type="button" aria-label="${escapeHtml(t("closeSettings"))}">×</button>
       <div class="achievement-detail-mark">${markIcon}</div>
       <h3>${escapeHtml(reveal ? copy.name : "???")}</h3>
-      <span class="achievement-detail-rarity">${escapeHtml(rarityLabel)}</span>
+      <div class="achievement-detail-tags">
+        <span class="achievement-detail-rarity">${escapeHtml(rarityLabel)}</span>
+        ${isNew ? `<span class="achievement-detail-new">${escapeHtml(t("newBadge"))}</span>` : ""}
+      </div>
       <p class="achievement-detail-condition">${escapeHtml(reveal ? copy.description : t("lockedReveal"))}</p>
       ${reveal && copy.flavor ? `<p class="achievement-detail-flavor">${escapeHtml(copy.flavor)}</p>` : ""}
       <div class="achievement-detail-meta">
@@ -1611,6 +2619,7 @@ function markAchievementSeen(id: string) {
   seenAchievementIds.add(id);
   persistSeenAchievements();
   renderAchievements();
+  renderDashboardTabs();
 }
 
 function queueAchievementToasts(ids: string[]) {
@@ -1638,7 +2647,6 @@ function showNextAchievementToast() {
     <div class="achievement-toast rarity-${def.rarity}">
       <div class="achievement-toast-head">
         <span class="achievement-toast-meta">${escapeHtml(achievementRarityLabel(def.rarity))} · ${escapeHtml(t("achievementUnlocked"))}</span>
-        <span class="achievement-toast-new">${escapeHtml(t("newBadge"))}</span>
       </div>
       <strong>${escapeHtml(copy.name)}</strong>
       <p>${escapeHtml(copy.description)}</p>
@@ -1916,7 +2924,7 @@ function renderLeaderboardSettings() {
         ${leaderboardAvatar(profile.avatarUrl, profile.username)}
         <div>
           <strong>${escapeHtml(profile.username)}</strong>
-          <span>${leaderboardStatus.joined ? t("leaderboardOnlyDailyTokens") : t("leaderboardSignedInNotJoined")}</span>
+          <span>${leaderboardStatus.joined ? leaderboardPreferenceStatusLabel() : t("leaderboardSignedInNotJoined")}</span>
         </div>
       `
       : `
@@ -1991,6 +2999,7 @@ function renderLeaderboard() {
     .map((entry) => {
       const isMe = myUserId === entry.userId;
       const days = entry.daysActive ? `<span>${entry.daysActive} ${t("leaderboardDaysActive")}</span>` : "";
+      const preference = leaderboardPreferenceHtml(entry);
       return `
         <article class="leaderboard-row${isMe ? " is-me" : ""}">
           <strong class="leaderboard-rank">#${entry.rank}</strong>
@@ -1998,6 +3007,7 @@ function renderLeaderboard() {
           <div class="leaderboard-person">
             <strong>${escapeHtml(entry.username || t("unknownUser"))}${isMe ? ` <em>${t("leaderboardMe")}</em>` : ""}</strong>
             ${days}
+            ${preference}
           </div>
           <strong class="leaderboard-tokens">${formatNumber(entry.tokens)} token</strong>
         </article>
@@ -2045,6 +3055,47 @@ function leaderboardStatusCopy() {
     title: t("leaderboardNotSignedIn"),
     detail: t("leaderboardLoginRequired"),
   };
+}
+
+function leaderboardPreferenceStatusLabel() {
+  return ledger?.settings.leaderboardPreferencesPublic
+    ? t("leaderboardPreferencesPublicOn")
+    : t("leaderboardOnlyDailyTokens");
+}
+
+function leaderboardPreferenceHtml(entry: LeaderboardEntry) {
+  const preference = entry.usagePreference;
+  if (!preference) {
+    return `<div class="leaderboard-preferences is-private">${escapeHtml(t("leaderboardPreferencePrivate"))}</div>`;
+  }
+  const rows = [
+    preference.favoriteAgent
+      ? `${t("leaderboardFavoriteAgent")}: <b>${escapeHtml(preference.favoriteAgent.label)} ${preference.favoriteAgent.percent}%</b>`
+      : "",
+    preference.favoriteModel ? `${t("leaderboardFavoriteModel")}: <b>${escapeHtml(preference.favoriteModel)}</b>` : "",
+    preference.favoritePeriod
+      ? `${t("leaderboardFavoritePeriod")}: <b>${escapeHtml(leaderboardPeriodText(preference.favoritePeriod))}</b>`
+      : "",
+    preference.peakTokensPerMinute !== undefined
+      ? `${t("leaderboardPeakRate")}: <b>${formatNumber(preference.peakTokensPerMinute)} token/min</b>`
+      : "",
+  ].filter(Boolean);
+  if (!rows.length) {
+    return `<div class="leaderboard-preferences is-private">${escapeHtml(t("leaderboardPreferencePrivate"))}</div>`;
+  }
+  return `<div class="leaderboard-preferences">${rows.map((row) => `<span>${row}</span>`).join("")}</div>`;
+}
+
+function leaderboardPeriodText(period: NonNullable<LeaderboardEntry["usagePreference"]>["favoritePeriod"]) {
+  if (!period) return "";
+  const labels: Record<string, string> = {
+    early: t("leaderboardPeriodEarly"),
+    morning: t("leaderboardPeriodMorning"),
+    afternoon: t("leaderboardPeriodAfternoon"),
+    evening: t("leaderboardPeriodEvening"),
+    night: t("leaderboardPeriodNight"),
+  };
+  return `${labels[period.id] ?? period.id} ${period.startHour}-${period.endHour} ${t("hourUnit")}`;
 }
 
 function leaderboardRangeLabel(range: LeaderboardRange) {
@@ -2333,6 +3384,7 @@ function leaderboardSettingsSignature() {
     bucket: relativeRenderBucket(30_000),
     status: leaderboardStatus,
     loading: leaderboardLoading,
+    preferencesPublic: ledger?.settings.leaderboardPreferencesPublic,
   });
 }
 
@@ -2361,6 +3413,13 @@ function leaderboardRenderSignature() {
         entry.username,
         entry.tokens,
         entry.daysActive ?? 0,
+        entry.usagePreference?.favoriteAgent?.label ?? "",
+        entry.usagePreference?.favoriteAgent?.percent ?? 0,
+        entry.usagePreference?.favoriteModel ?? "",
+        entry.usagePreference?.favoritePeriod?.id ?? "",
+        entry.usagePreference?.favoritePeriod?.startHour ?? 0,
+        entry.usagePreference?.favoritePeriod?.endHour ?? 0,
+        entry.usagePreference?.peakTokensPerMinute ?? 0,
       ]),
     },
   });

@@ -27,6 +27,9 @@ export function appShellHtml(viewMode: ViewMode) {
   if (viewMode === "manager") {
     return `
     <main class="manager-root" data-weather="clear" data-active="false">
+      <div class="window-chrome">
+        <span class="window-title">Vibe Tree</span>
+      </div>
       <aside class="pet-preview-panel">
         <header class="app-title">
           <p>Vibe Tree</p>
@@ -57,10 +60,22 @@ export function appShellHtml(viewMode: ViewMode) {
         </nav>
 
       </aside>
-      <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置" data-i18n-aria="openSettings" data-i18n-title="settings">
-        <span aria-hidden="true">⚙</span>
-        <span class="settings-update-badge" aria-hidden="true">NEW</span>
-      </button>
+      <div class="floating-tool-group" aria-label="快捷操作">
+        <button class="settings-fab" id="settingsButton" type="button" aria-label="打开设置" title="设置" data-i18n-aria="openSettings" data-i18n-title="settings">
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065" />
+            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+          </svg>
+          <span class="settings-update-badge" aria-hidden="true">NEW</span>
+        </button>
+        <button class="share-export-button share-fab" id="shareExportButton" type="button" aria-label="分享成长图" title="分享成长图" data-i18n-aria="exportShareImage" data-i18n-title="exportShareImage">
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+            <path d="M13 4v4c-6.575 1.028 -9.02 6.788 -10 12c-.037 .206 5.384 -5.962 10 -6v4l8 -7l-8 -7" />
+          </svg>
+        </button>
+      </div>
 
       <section class="dashboard">
         <header class="dashboard-header">
@@ -68,7 +83,6 @@ export function appShellHtml(viewMode: ViewMode) {
             <p class="eyebrow" data-i18n="liveGrowth">Live growth</p>
             <div class="level-title-row">
               <h2 id="levelTitle">Lv.1 新芽</h2>
-              <span class="help-tip" tabindex="0" aria-label="计入 Token = input + output；Claude 会加上 cache write" data-tooltip="计入 Token = input + output；Claude 会加上 cache write" data-i18n-tooltip="tokenHelp">?</span>
             </div>
           </div>
           <div class="weather-readout">
@@ -94,7 +108,10 @@ export function appShellHtml(viewMode: ViewMode) {
 
         <section class="progress-block">
           <div class="progress-meta">
-            <span id="nextLevelText">距离 Lv.2</span>
+            <span class="next-level-help">
+              <span id="nextLevelText">距离 Lv.2</span>
+              <span class="help-tip" tabindex="0" aria-label="Token = input + output；Claude 另加 cache write" data-tooltip="Token = input + output；Claude 另加 cache write" data-i18n-tooltip="tokenHelp">?</span>
+            </span>
             <span id="progressText">0 / 800 token</span>
           </div>
           <div class="progress-track xp-track">
@@ -246,6 +263,24 @@ export function appShellHtml(viewMode: ViewMode) {
           </section>
 
           <section class="settings-section">
+            <h4 data-i18n="visualTheme">界面主题</h4>
+            <div class="theme-switcher" id="themeSwitcher" aria-label="界面主题" data-i18n-aria="visualTheme">
+              <button type="button" data-ui-theme="day">
+                <span data-i18n="themeDay">白天</span>
+                <small data-i18n="themeDayNote">清爽浅色，适合白天工作</small>
+              </button>
+              <button type="button" data-ui-theme="night">
+                <span data-i18n="themeNight">黑夜</span>
+                <small data-i18n="themeNightNote">低亮深色，适合夜间专注</small>
+              </button>
+              <button type="button" data-ui-theme="soft">
+                <span data-i18n="themeSoft">柔和</span>
+                <small data-i18n="themeSoftNote">暖色低对比，看起来更柔和</small>
+              </button>
+            </div>
+          </section>
+
+          <section class="settings-section">
             <h4 data-i18n="languageTitle">语言</h4>
             <label class="scale-select">
               <span data-i18n="languageLabel">界面语言</span>
@@ -261,7 +296,14 @@ export function appShellHtml(viewMode: ViewMode) {
             <div class="leaderboard-settings" aria-label="全球排行榜设置" data-i18n-aria="leaderboardAria">
               <div class="leaderboard-user-card" id="leaderboardUserCard"></div>
               <div class="leaderboard-status" id="leaderboardStatusText"></div>
-              <p class="leaderboard-help" data-i18n="leaderboardPrivacyNote">用户说明：加入后仅上传近 30 日每日消耗的 Token，不会包含任何提示词、文件、会话记录、使用模型等其他信息。</p>
+              <p class="leaderboard-help" data-i18n="leaderboardPrivacyNote">用户说明：默认只同步每日 Token 总量和本地首次使用日期。开启公开使用偏好后，会额外同步聚合后的 Agent、模型、偏爱时段和峰值；不会包含提示词、文件、路径、会话记录或完整热力图。</p>
+              <label class="toggle-row leaderboard-preference-public-row">
+                <input id="leaderboardPreferencesPublicInput" type="checkbox" />
+                <span>
+                  <strong data-i18n="leaderboardPreferencePublic">公开使用偏好</strong>
+                  <small data-i18n="leaderboardPreferencePublicHint">只公开聚合后的 Agent、模型、偏爱时段和峰值，不上传原始记录。</small>
+                </span>
+              </label>
               <div class="leaderboard-actions">
                 <button class="secondary-button" id="leaderboardMembershipButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
                 <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncNow">立即同步</button>

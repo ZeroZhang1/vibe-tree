@@ -53,7 +53,7 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 内置成就系统会记录你的连续活跃、累计消耗和使用节奏，关键时刻用像素弹窗给你一点小小的反馈。
 
 ### 🏆 和全球 vibe coder 比一比
-可选的全球排行榜，GitHub 登录即可加入。仅上传每日 token 消耗总量，不上传任何代码或会话内容。
+可选的全球排行榜，GitHub 登录即可加入。默认仅上传每日 token 消耗总量，不上传任何代码或会话内容；也可以选择公开聚合后的使用偏好。
 
 ---
 
@@ -136,7 +136,7 @@ VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm start
 
 后端模板：`server/leaderboard-worker/`
 
-隐私保证：仅上传近 30 日每日 token 总量，不上传提示词、文件、会话记录或模型信息。
+隐私保证：默认同步只发送滚动近 30 日每日 token 总量，以及用于清理排行榜脏数据的本地首次使用日期；服务端会保留此前已同步过的每日总量用于“全部”榜。开启“公开使用偏好”后，会额外上传当前排行榜范围可展示的聚合信息：最常用 Agent、常用模型、偏爱时段和 token 峰值。不上传提示词、文件、路径、会话记录或完整热力图。
 
 </details>
 

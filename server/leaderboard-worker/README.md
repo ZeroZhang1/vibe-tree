@@ -2,13 +2,13 @@
 
 Cloudflare Worker + D1 backend for the optional global leaderboard.
 
-The desktop app uploads only daily token totals from the last 30 days. It does not upload prompts, files, session records, models used, or any other information.
+The desktop app sends a rolling 30-day snapshot of daily token totals plus the local first-use date used to clean stale leaderboard rows. The Worker keeps older previously synced daily rows, so the `all` range is still cumulative. By default it does not upload prompts, files, paths, session records, models used, or any other usage detail. If a user explicitly enables public usage preferences, sync also sends range-scoped aggregate preferences only: top agent percentage, top model, preferred coding period, and peak token/min.
 
 The first release is a Community leaderboard, not strict cheat-proof scoring. The backend keeps only broad safety rails:
 
 - Daily payloads above `1,000,000,000,000,000` tokens are rejected as obviously invalid dirty data.
 - Each GitHub user can sync at most once every 30 minutes.
-- Only the latest 30 daily rows are accepted.
+- Each sync accepts only the latest 30 daily rows, while the database retains older rows that were synced in previous windows for the all-time leaderboard.
 - Cloudflare Worker rate limit bindings throttle leaderboard reads, OAuth entry points, and write APIs per IP and route.
 - Suspicious events are written as structured Workers Logs. High-signal non-rate-limit events are also stored in D1 `security_events` with hashed IP values; rate-limit hits stay in Workers Logs to avoid turning an attack into D1 write load.
 
@@ -20,9 +20,9 @@ The IP limit is a coarse abuse brake, not identity. Public networks, VPNs, mobil
 - `GET /auth/github/callback` completes OAuth and returns a short-lived one-time code to the desktop app's localhost callback.
 - `POST /auth/session` exchanges the one-time code plus the app-held verifier for a session token.
 - `GET /api/me` returns the signed-in GitHub profile.
-- `DELETE /api/me` removes the user, sessions, leaderboard token rows, sync state, auth codes, and user-linked security log rows.
-- `POST /api/usage/daily` upserts daily token aggregates.
-- `GET /api/leaderboard?range=today|7d|30d|all` returns the top 100 users.
+- `DELETE /api/me` removes the user, sessions, leaderboard token rows, public preference rows, sync state, auth codes, and user-linked security log rows.
+- `POST /api/usage/daily` upserts daily token aggregates and, when opted in, range-scoped aggregate usage preferences.
+- `GET /api/leaderboard?range=today|7d|30d|all` returns the top 100 users plus public preference details when the user opted in.
 
 ## Setup
 

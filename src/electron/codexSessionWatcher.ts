@@ -301,8 +301,8 @@ function parseCodexTokenCountLine(
     stringValue(info?.model) ||
     stringValue(info?.model_name) ||
     stringValue(payload.model) ||
-    limitName ||
     currentModel ||
+    limitName ||
     (limitId && limitId !== "codex" ? limitId : undefined);
   const cumulativeKey = totalUsage ? `${filePath}:total` : `${filePath}:last`;
   const hashBasis = `${filePath}:${lineOffset}:${model}:${usage ? usageTotal(usage) : 0}:${

@@ -14,6 +14,7 @@ export interface LedgerEntry {
 }
 
 export type AppLanguage = "zh-CN" | "en-US";
+export type UiTheme = "day" | "night" | "soft";
 
 export type LeaderboardRange = "today" | "7d" | "30d" | "all";
 
@@ -33,6 +34,23 @@ export interface LeaderboardStatus {
   error?: string;
 }
 
+export type LeaderboardPreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
+
+export interface LeaderboardUsagePreference {
+  favoriteAgent?: {
+    label: string;
+    percent: number;
+  };
+  favoriteModel?: string;
+  favoritePeriod?: {
+    id: LeaderboardPreferencePeriod;
+    startHour: number;
+    endHour: number;
+  };
+  peakTokensPerMinute?: number;
+  updatedAt?: string;
+}
+
 export interface LeaderboardEntry {
   rank: number;
   userId: string;
@@ -41,6 +59,7 @@ export interface LeaderboardEntry {
   tokens: number;
   xp?: number;
   daysActive?: number;
+  usagePreference?: LeaderboardUsagePreference;
 }
 
 export interface LeaderboardData {
@@ -55,6 +74,7 @@ export interface Settings {
   locked: boolean;
   alwaysOnTop: boolean;
   language: AppLanguage;
+  uiTheme: UiTheme;
   scale: 0.5 | 1 | 1.5 | 2 | number;
   badgeFrontMetric: "level" | "total" | "rate";
   badgeBackMetric: "level" | "total" | "rate";
@@ -65,6 +85,7 @@ export interface Settings {
   leaderboardEnabled: boolean;
   leaderboardProfile?: LeaderboardProfile;
   leaderboardLastSyncedAt?: string;
+  leaderboardPreferencesPublic: boolean;
   launchOnStartup: boolean;
   silentStartup: boolean;
   proxyUrl?: string;

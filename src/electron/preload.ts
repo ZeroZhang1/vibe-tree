@@ -34,7 +34,8 @@ const api = {
   logoutLeaderboard: () => ipcRenderer.invoke("leaderboard:logout") as Promise<LeaderboardStatus>,
   setLeaderboardEnabled: (enabled: boolean) =>
     ipcRenderer.invoke("leaderboard:set-enabled", enabled) as Promise<LeaderboardStatus>,
-  syncLeaderboard: () => ipcRenderer.invoke("leaderboard:sync") as Promise<LeaderboardStatus>,
+  syncLeaderboard: (options?: { force?: boolean }) =>
+    ipcRenderer.invoke("leaderboard:sync", options) as Promise<LeaderboardStatus>,
   getLeaderboard: (range: LeaderboardRange) => ipcRenderer.invoke("leaderboard:get", range) as Promise<LeaderboardData>,
   getAchievements: () => ipcRenderer.invoke("achievements:get") as Promise<AchievementState>,
   unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
@@ -42,6 +43,8 @@ const api = {
   previewAchievementToast: (id: string) => ipcRenderer.invoke("achievements:preview-toast", id) as Promise<boolean>,
   updateAchievementStats: (stats: Record<string, unknown>) =>
     ipcRenderer.invoke("achievements:update-stats", stats) as Promise<AchievementState>,
+  saveShareImage: (input: { filename: string; pngBase64: string }) =>
+    ipcRenderer.invoke("share:save-image", input) as Promise<{ canceled: boolean; filePath?: string }>,
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
   notifyManagerReady: () => ipcRenderer.send("manager:ready"),

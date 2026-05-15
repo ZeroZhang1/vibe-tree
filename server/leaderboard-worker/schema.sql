@@ -34,6 +34,21 @@ CREATE TABLE IF NOT EXISTS daily_usage (
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS usage_preferences (
+  user_id TEXT NOT NULL,
+  range TEXT NOT NULL,
+  favorite_agent_label TEXT,
+  favorite_agent_percent INTEGER,
+  favorite_model TEXT,
+  favorite_period TEXT,
+  favorite_period_start INTEGER,
+  favorite_period_end INTEGER,
+  peak_tokens_per_minute INTEGER,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, range),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS sync_limits (
   user_id TEXT PRIMARY KEY,
   last_synced_at TEXT NOT NULL,
@@ -56,6 +71,7 @@ CREATE TABLE IF NOT EXISTS security_events (
 
 CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date);
 CREATE INDEX IF NOT EXISTS idx_daily_usage_user ON daily_usage(user_id);
+CREATE INDEX IF NOT EXISTS idx_usage_preferences_user ON usage_preferences(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_codes_expires ON auth_codes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);

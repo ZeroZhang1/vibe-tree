@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-05-15 (v0.5.0)
+
+- Added the share-image export flow with a carousel picker, three polished templates, and image saving from real user growth data.
+- Added 7-day / 24-hour share-card heatmaps, peak-hour stories, favorite coding period copy, most-used agent, and cumulative token highlights.
+- Reworked the manager UI around the new share-card visual language, including Day, Night, and Soft themes that can be switched from Settings.
+- Refined the floating settings/share control, title bar, scrollbars, progress bars, achievement surfaces, and theme-specific colors for a more consistent desktop feel.
+- Added leaderboard usage-preference sharing as an opt-in privacy feature: favorite agent, favorite model, preferred time period, and peak token rate can be shown on leaderboard rows.
+- Kept leaderboard privacy conservative by default: users who do not opt in show only the public ranking data and a "not shared" preference note.
+- Updated leaderboard sync behavior so manual refresh can submit the current local snapshot before fetching all leaderboard ranges.
+- Fixed the floating pet and achievement toast windows so visual themes no longer leak into surfaces that should stay transparent or dark.
+- Updated Chinese and English copy for share templates, visual themes, leaderboard preferences, and privacy notes.
+
 ## 2026-05-15 (v0.4.0)
 
 - Added 21 new achievements across active days, model variety, agent loyalty, daily peaks, time windows, holidays, long returns, and interaction milestones.

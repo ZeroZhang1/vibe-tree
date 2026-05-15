@@ -31,12 +31,13 @@ declare global {
       loginLeaderboard: () => Promise<LeaderboardStatus>;
       logoutLeaderboard: () => Promise<LeaderboardStatus>;
       setLeaderboardEnabled: (enabled: boolean) => Promise<LeaderboardStatus>;
-      syncLeaderboard: () => Promise<LeaderboardStatus>;
+      syncLeaderboard: (options?: { force?: boolean }) => Promise<LeaderboardStatus>;
       getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
       getAchievements: () => Promise<AchievementState>;
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;
       previewAchievementToast: (id: string) => Promise<boolean>;
       updateAchievementStats: (stats: Record<string, unknown>) => Promise<AchievementState>;
+      saveShareImage: (input: { filename: string; pngBase64: string }) => Promise<{ canceled: boolean; filePath?: string }>;
       notifyAchievementToastReady: () => void;
       notifyAchievementToastDrained: () => void;
       notifyManagerReady: () => void;

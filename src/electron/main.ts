@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, net, Notification, screen, session, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notification, screen, session, shell, Tray } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS: Settings = {
   locked: false,
   alwaysOnTop: true,
   language: "zh-CN",
+  uiTheme: "night",
   scale: 0.5,
   badgeFrontMetric: "level",
   badgeBackMetric: "total",
@@ -77,6 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardEnabled: false,
   leaderboardProfile: undefined,
   leaderboardLastSyncedAt: undefined,
+  leaderboardPreferencesPublic: false,
   launchOnStartup: false,
   silentStartup: false,
   proxyUrl: undefined,
@@ -219,6 +221,14 @@ function achievementsPath() {
 
 function leaderboardAuthPath() {
   return join(app.getPath("userData"), "leaderboard-auth.json");
+}
+
+function sanitizeShareImageFilename(value: unknown) {
+  const fallback = `vibe-tree-share-${new Date().toISOString().slice(0, 10)}.png`;
+  if (typeof value !== "string") return fallback;
+  const name = value.replace(/[<>:"/\\|?*\x00-\x1F]/g, "-").trim();
+  if (!name) return fallback;
+  return name.toLowerCase().endsWith(".png") ? name : `${name}.png`;
 }
 
 function currentAppVersion() {
@@ -441,6 +451,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     locked: Boolean(settings.locked),
     alwaysOnTop: settings.alwaysOnTop !== false,
     language: normalizeLanguage(settings.language),
+    uiTheme: normalizeUiTheme(settings.uiTheme),
     updateCheckEnabled: settings.updateCheckEnabled !== false,
     lastUpdateCheckedAt:
       typeof settings.lastUpdateCheckedAt === "string" && Number.isFinite(Date.parse(settings.lastUpdateCheckedAt))
@@ -451,6 +462,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardEnabled: Boolean(settings.leaderboardEnabled && leaderboardProfile),
     leaderboardProfile,
     leaderboardLastSyncedAt,
+    leaderboardPreferencesPublic: Boolean(settings.leaderboardPreferencesPublic),
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
     proxyUrl: cleanProxyUrl(settings.proxyUrl),
@@ -467,6 +479,26 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     geminiSessionsDir: cleanPath(settings.geminiSessionsDir),
     hermesSessionsDir: cleanPath(settings.hermesSessionsDir),
   };
+}
+
+function normalizeUiTheme(value: unknown): Settings["uiTheme"] {
+  return value === "day" || value === "soft" || value === "night" ? value : DEFAULT_SETTINGS.uiTheme;
+}
+
+function managerChromeTheme(theme: Settings["uiTheme"]) {
+  const height = process.platform === "darwin" ? 38 : 36;
+  if (theme === "night") return { color: "#161922", symbolColor: "#f4f1e9", height };
+  if (theme === "soft") return { color: "#fbf7ec", symbolColor: "#171a14", height };
+  return { color: "#ffffff", symbolColor: "#11120e", height };
+}
+
+function applyManagerWindowChrome() {
+  if (!managerWindow || managerWindow.isDestroyed()) return;
+  const chrome = managerChromeTheme(ledger.settings.uiTheme);
+  managerWindow.setBackgroundColor(chrome.color);
+  if (process.platform !== "darwin") {
+    managerWindow.setTitleBarOverlay(chrome);
+  }
 }
 
 function normalizeLeaderboardProfile(value: unknown): LeaderboardProfile | undefined {
@@ -637,11 +669,12 @@ function setPetBounds(position: { x: number; y: number }) {
 }
 
 async function loadRenderer(window: BrowserWindow, view: "pet" | "manager" | "toast") {
+  const query = { view, uiTheme: view === "toast" ? "night" : ledger.settings.uiTheme };
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
-    await window.loadURL(`${process.env.VITE_DEV_SERVER_URL}?view=${view}`);
+    await window.loadURL(`${process.env.VITE_DEV_SERVER_URL}?${new URLSearchParams(query).toString()}`);
     return;
   }
-  await window.loadFile(rendererFile, { query: { view } });
+  await window.loadFile(rendererFile, { query });
 }
 
 function createPetWindow() {
@@ -694,6 +727,7 @@ function createPetWindow() {
 
 function createManagerWindow() {
   if (managerWindow) return managerWindow;
+  const chrome = managerChromeTheme(ledger.settings.uiTheme);
 
   managerWindow = new BrowserWindow({
     width: MANAGER_SIZE.width,
@@ -703,10 +737,14 @@ function createManagerWindow() {
     title: APP_NAME,
     icon: createAppIcon(),
     frame: true,
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    ...(process.platform === "darwin"
+      ? { trafficLightPosition: { x: 14, y: 10 } }
+      : { titleBarOverlay: chrome }),
     transparent: false,
     resizable: true,
     show: true,
-    backgroundColor: "#f6f2e8",
+    backgroundColor: chrome.color,
     webPreferences: {
       preload: preloadFile,
       contextIsolation: true,
@@ -714,6 +752,7 @@ function createManagerWindow() {
       sandbox: false,
     },
   });
+  applyManagerWindowChrome();
 
   managerWindow.on("closed", () => {
     managerWindow = null;
@@ -1325,6 +1364,7 @@ function updateSettings(partial: Partial<Settings>) {
   const previous = ledger.settings;
   ledger.settings = normalizeSettings({ ...ledger.settings, ...partial });
   petWindow?.setAlwaysOnTop(ledger.settings.alwaysOnTop, "floating");
+  if (previous.uiTheme !== ledger.settings.uiTheme) applyManagerWindowChrome();
   if (partial.scale !== undefined) resizePetWindow();
   writeDeviceSettings();
   if (partial.launchOnStartup !== undefined || partial.silentStartup !== undefined) {
@@ -1386,7 +1426,7 @@ function appendUsageEvent(event: UsageEvent) {
 }
 
 function broadcast(channel: string, ...args: unknown[]) {
-  for (const window of [petWindow, managerWindow]) {
+  for (const window of [petWindow, managerWindow, achievementToastWindow]) {
     if (!window || window.isDestroyed()) continue;
     window.webContents.send(channel, ...args);
   }
@@ -1967,7 +2007,9 @@ ipcMain.handle("leaderboard:get-status", () => leaderboardService.status());
 ipcMain.handle("leaderboard:login", () => leaderboardService.login());
 ipcMain.handle("leaderboard:logout", () => leaderboardService.logout());
 ipcMain.handle("leaderboard:set-enabled", (_event, enabled: boolean) => leaderboardService.setEnabled(Boolean(enabled)));
-ipcMain.handle("leaderboard:sync", () => leaderboardService.syncUsage());
+ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
+  leaderboardService.syncUsage({ force: options?.force === true }),
+);
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
@@ -1987,6 +2029,29 @@ ipcMain.handle("achievements:update-stats", (_event, stats: Record<string, unkno
   writeAchievementState();
   return achievementState;
 });
+ipcMain.handle(
+  "share:save-image",
+  async (_event, input: { filename?: unknown; pngBase64?: unknown }) => {
+    const pngBase64 = typeof input?.pngBase64 === "string" ? input.pngBase64 : "";
+    if (!pngBase64) throw new Error("Missing share image data");
+
+    const pngBuffer = Buffer.from(pngBase64, "base64");
+    if (!pngBuffer.length) throw new Error("Empty share image");
+
+    const filename = sanitizeShareImageFilename(input?.filename);
+    const parent = managerWindow && !managerWindow.isDestroyed() ? managerWindow : undefined;
+    const options = {
+      title: "保存分享图",
+      defaultPath: join(app.getPath("pictures"), filename),
+      filters: [{ name: "PNG Image", extensions: ["png"] }],
+    };
+    const result = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { canceled: true };
+
+    writeFileSync(result.filePath, pngBuffer);
+    return { canceled: false, filePath: result.filePath };
+  },
+);
 
 ipcMain.on("achievements:toast-ready", (event) => {
   if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;
