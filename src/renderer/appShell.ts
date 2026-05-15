@@ -280,6 +280,10 @@ export function appShellHtml(viewMode: ViewMode) {
                 <input id="silentStartupInput" type="checkbox" />
                 <span data-i18n="silentStartup">静默启动</span>
               </label>
+              <label class="proxy-setting">
+                <span data-i18n="proxyUrl">网络代理</span>
+                <input id="proxyUrlInput" type="url" inputmode="url" placeholder="留空使用系统设置，例如 http://127.0.0.1:7897" data-i18n-placeholder="proxyPlaceholder" />
+              </label>
             </div>
           </section>
 

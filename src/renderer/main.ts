@@ -203,6 +203,7 @@ const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
 const fontScaleSelect = document.querySelector<HTMLSelectElement>("#fontScaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
 const silentStartupInput = document.querySelector<HTMLInputElement>("#silentStartupInput");
+const proxyUrlInput = document.querySelector<HTMLInputElement>("#proxyUrlInput");
 const updateCheckEnabledInput = document.querySelector<HTMLInputElement>("#updateCheckEnabledInput");
 const updateStatusText = document.querySelector<HTMLElement>("#updateStatusText");
 const checkUpdateButton = document.querySelector<HTMLButtonElement>("#checkUpdateButton");
@@ -305,6 +306,10 @@ function applyI18n() {
   document.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((element) => {
     const key = element.dataset.i18nTitle;
     if (key) element.setAttribute("title", t(key));
+  });
+  document.querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]").forEach((element) => {
+    const key = element.dataset.i18nPlaceholder;
+    if (key) element.setAttribute("placeholder", t(key));
   });
   document.querySelectorAll<HTMLElement>("[data-i18n-tooltip]").forEach((element) => {
     const key = element.dataset.i18nTooltip;
@@ -652,6 +657,12 @@ function bindEvents() {
   silentStartupInput?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({ silentStartup: silentStartupInput.checked });
+    render();
+  });
+
+  proxyUrlInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({ proxyUrl: proxyUrlInput.value.trim() || undefined });
     render();
   });
 
@@ -1030,6 +1041,7 @@ function render() {
     syncStatsSourceInputs();
     if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
+    syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
     if (badgeFrontMetricSelect) badgeFrontMetricSelect.value = ledger.settings.badgeFrontMetric;
     if (badgeBackMetricSelect) badgeBackMetricSelect.value = ledger.settings.badgeBackMetric;

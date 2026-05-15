@@ -737,6 +737,17 @@ h4 {
   gap: 8px;
 }
 
+.proxy-setting {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 5px;
+}
+
+.proxy-setting input {
+  min-height: 30px;
+  font-size: 0.68rem;
+}
+
 .pet-settings {
   align-items: end;
 }
