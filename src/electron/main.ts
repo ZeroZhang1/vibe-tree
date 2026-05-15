@@ -66,6 +66,7 @@ const DEFAULT_SETTINGS: Settings = {
   locked: false,
   alwaysOnTop: true,
   language: "zh-CN",
+  uiTheme: "night",
   scale: 0.5,
   badgeFrontMetric: "level",
   badgeBackMetric: "total",
@@ -400,6 +401,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     locked: Boolean(settings.locked),
     alwaysOnTop: settings.alwaysOnTop !== false,
     language: normalizeLanguage(settings.language),
+    uiTheme: normalizeUiTheme(settings.uiTheme),
     updateCheckEnabled: settings.updateCheckEnabled !== false,
     lastUpdateReminderVersion:
       typeof settings.lastUpdateReminderVersion === "string" ? settings.lastUpdateReminderVersion : undefined,
@@ -419,6 +421,10 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     geminiSessionsDir: cleanPath(settings.geminiSessionsDir),
     hermesSessionsDir: cleanPath(settings.hermesSessionsDir),
   };
+}
+
+function normalizeUiTheme(value: unknown): Settings["uiTheme"] {
+  return value === "day" || value === "soft" || value === "night" ? value : DEFAULT_SETTINGS.uiTheme;
 }
 
 function normalizeLeaderboardProfile(value: unknown): LeaderboardProfile | undefined {

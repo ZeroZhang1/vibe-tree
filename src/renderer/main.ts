@@ -9,6 +9,7 @@ import type {
   LeaderboardStatus,
   TreeAsset,
   TreeStage,
+  UiTheme,
   UpdateStatus,
   UsageStatus,
   WindowBounds,
@@ -109,7 +110,18 @@ const SHARE_TEMPLATES: Array<{ id: ShareTemplateId; title: string; note: string 
   { id: "glass", title: "05 Glass Terrarium", note: "玻璃生态箱，精致偏潮流" },
   { id: "mono", title: "06 Monochrome Index", note: "极简索引卡，最克制" },
 ];
-const SHARE_PREVIEW_SIZE = { width: 328, height: 510 };
+const SHARE_PREVIEW_SIZE = { width: 284, height: 442 };
+const UI_THEMES: Array<{ id: UiTheme; label: string; note: string }> = [
+  { id: "day", label: "白天", note: "06 的克制白底" },
+  { id: "night", label: "黑夜", note: "05 的玻璃黑底" },
+  { id: "soft", label: "柔和", note: "04 的暖纸底" },
+];
+
+function shareTemplateForUiTheme(theme: UiTheme | undefined): ShareTemplateId {
+  if (theme === "day") return "mono";
+  if (theme === "soft") return "receipt";
+  return "glass";
+}
 
 interface PureSvgManifest {
   stages: Array<{
@@ -445,6 +457,20 @@ if (viewMode === "pet") {
           </section>
 
           <section class="settings-section">
+            <h4>视觉风格</h4>
+            <div class="theme-switcher" id="themeSwitcher" aria-label="视觉风格">
+              ${UI_THEMES.map(
+                (theme) => `
+                  <button type="button" data-ui-theme="${theme.id}">
+                    <span>${theme.label}</span>
+                    <small>${theme.note}</small>
+                  </button>
+                `,
+              ).join("")}
+            </div>
+          </section>
+
+          <section class="settings-section">
             <h4 data-i18n="languageTitle">语言</h4>
             <label class="scale-select">
               <span data-i18n="languageLabel">界面语言</span>
@@ -579,6 +605,7 @@ const checkUpdateButton = document.querySelector<HTMLButtonElement>("#checkUpdat
 const installUpdateButton = document.querySelector<HTMLButtonElement>("#installUpdateButton");
 const releasePageButton = document.querySelector<HTMLButtonElement>("#releasePageButton");
 const languageSelect = document.querySelector<HTMLSelectElement>("#languageSelect");
+const themeSwitcher = document.querySelector<HTMLElement>("#themeSwitcher");
 const badgeFrontMetricSelect = document.querySelector<HTMLSelectElement>("#badgeFrontMetricSelect");
 const badgeBackMetricSelect = document.querySelector<HTMLSelectElement>("#badgeBackMetricSelect");
 const totalDisplayUnitSelect = document.querySelector<HTMLSelectElement>("#totalDisplayUnitSelect");
@@ -657,12 +684,21 @@ function languageLocale(): string {
   return currentLanguage();
 }
 
+function currentUiTheme(): UiTheme {
+  return normalizeUiTheme(ledger?.settings.uiTheme);
+}
+
+function normalizeUiTheme(value: unknown): UiTheme {
+  return value === "day" || value === "soft" || value === "night" ? value : "night";
+}
+
 function t(key: string): string {
   return UI_TEXT[currentLanguage()][key] ?? UI_TEXT["zh-CN"][key] ?? key;
 }
 
 function applyI18n() {
   document.documentElement.lang = languageLocale();
+  document.documentElement.dataset.uiTheme = currentUiTheme();
   document.title = t("appTitle");
   document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((element) => {
     const key = element.dataset.i18n;
@@ -943,6 +979,16 @@ function bindEvents() {
     appLanguage = ledger.settings.language;
     lastHistoryChartKey = "";
     applyI18n();
+    render();
+  });
+
+  themeSwitcher?.addEventListener("click", async (event) => {
+    if (!ledger) return;
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-ui-theme]");
+    if (!button) return;
+    const uiTheme = normalizeUiTheme(button.dataset.uiTheme);
+    if (uiTheme === ledger.settings.uiTheme) return;
+    ledger = await window.bonsai.updateSettings({ uiTheme });
     render();
   });
 
@@ -1257,6 +1303,11 @@ async function exportShareImage() {
 function openShareExportPreview(report: ShareReportData) {
   document.querySelector(".share-export-overlay")?.remove();
 
+  const initialTemplateId = shareTemplateForUiTheme(ledger?.settings.uiTheme);
+  let activeIndex = Math.max(
+    0,
+    SHARE_TEMPLATES.findIndex((template) => template.id === initialTemplateId),
+  );
   const overlay = document.createElement("div");
   overlay.className = "share-export-overlay";
   overlay.innerHTML = `
@@ -1269,24 +1320,37 @@ function openShareExportPreview(report: ShareReportData) {
         </div>
         <button class="icon-button share-export-close" type="button" aria-label="关闭">×</button>
       </header>
-      <div class="share-template-grid">
+      <div class="share-template-carousel" aria-live="polite">
+        <button class="share-carousel-nav prev" type="button" aria-label="上一张分享图">‹</button>
+        <div class="share-carousel-stage">
         ${SHARE_TEMPLATES.map(
-          (template) => `
-            <article class="share-template-option">
-              <div class="share-template-title">
-                <strong>${escapeHtml(template.title)}</strong>
-                <span>${escapeHtml(template.note)}</span>
-              </div>
+          (template, index) => `
+            <article class="share-template-option" data-share-card data-template-index="${index}" data-share-template="${template.id}">
               <div class="share-template-preview">
                 ${shareReportHtml(report, SHARE_PREVIEW_SIZE.width, SHARE_PREVIEW_SIZE.height, template.id)}
               </div>
-              <button class="primary-button share-template-export" type="button" data-share-template="${template.id}">
-                导出这张
-              </button>
             </article>
           `,
         ).join("")}
+        </div>
+        <button class="share-carousel-nav next" type="button" aria-label="下一张分享图">›</button>
       </div>
+      <footer class="share-carousel-footer">
+        <div class="share-template-title">
+          <strong id="shareSelectedTitle"></strong>
+          <span id="shareSelectedNote"></span>
+        </div>
+        <div class="share-carousel-dots" aria-label="分享图模板">
+          ${SHARE_TEMPLATES.map(
+            (template, index) => `
+              <button type="button" data-share-dot="${index}" aria-label="${escapeHtml(template.title)}"></button>
+            `,
+          ).join("")}
+        </div>
+        <button class="primary-button share-template-export" id="shareTemplateExportButton" type="button">
+          导出这张
+        </button>
+      </footer>
     </section>
   `;
 
@@ -1294,16 +1358,57 @@ function openShareExportPreview(report: ShareReportData) {
   const close = () => overlay.remove();
   overlay.querySelector(".share-export-backdrop")?.addEventListener("click", close);
   overlay.querySelector(".share-export-close")?.addEventListener("click", close);
-  overlay.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") close();
-  });
-  overlay.querySelectorAll<HTMLButtonElement>("[data-share-template]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const templateId = button.dataset.shareTemplate as ShareTemplateId | undefined;
-      if (templateId) void exportSelectedShareImage(report, templateId, button, close);
+  const cards = Array.from(overlay.querySelectorAll<HTMLElement>("[data-share-card]"));
+  const dots = Array.from(overlay.querySelectorAll<HTMLButtonElement>("[data-share-dot]"));
+  const exportButton = overlay.querySelector<HTMLButtonElement>("#shareTemplateExportButton");
+  const selectedTitle = overlay.querySelector<HTMLElement>("#shareSelectedTitle");
+  const selectedNote = overlay.querySelector<HTMLElement>("#shareSelectedNote");
+
+  const setActiveTemplate = (nextIndex: number) => {
+    activeIndex = (nextIndex + SHARE_TEMPLATES.length) % SHARE_TEMPLATES.length;
+    const activeTemplate = SHARE_TEMPLATES[activeIndex];
+    cards.forEach((card, index) => {
+      const offset = (index - activeIndex + SHARE_TEMPLATES.length) % SHARE_TEMPLATES.length;
+      const position = offset === 0 ? "active" : offset === 1 ? "next" : "prev";
+      card.dataset.position = position;
+      card.setAttribute("aria-hidden", String(position !== "active"));
+      card.tabIndex = position === "active" ? 0 : -1;
+    });
+    dots.forEach((dot, index) => {
+      const active = index === activeIndex;
+      dot.classList.toggle("active", active);
+      dot.setAttribute("aria-current", active ? "true" : "false");
+    });
+    if (selectedTitle) selectedTitle.textContent = activeTemplate.title;
+    if (selectedNote) selectedNote.textContent = activeTemplate.note;
+    if (exportButton) exportButton.dataset.shareTemplate = activeTemplate.id;
+  };
+
+  const step = (direction: 1 | -1) => setActiveTemplate(activeIndex + direction);
+  overlay.querySelector<HTMLButtonElement>(".share-carousel-nav.prev")?.addEventListener("click", () => step(-1));
+  overlay.querySelector<HTMLButtonElement>(".share-carousel-nav.next")?.addEventListener("click", () => step(1));
+  cards.forEach((card, index) => {
+    card.addEventListener("click", () => {
+      if (index !== activeIndex) setActiveTemplate(index);
     });
   });
-  overlay.querySelector<HTMLButtonElement>("[data-share-template]")?.focus();
+  dots.forEach((dot) => {
+    dot.addEventListener("click", () => {
+      const nextIndex = Number(dot.dataset.shareDot);
+      if (Number.isFinite(nextIndex)) setActiveTemplate(nextIndex);
+    });
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+    if (event.key === "ArrowLeft") step(-1);
+    if (event.key === "ArrowRight") step(1);
+  });
+  exportButton?.addEventListener("click", () => {
+    const templateId = exportButton.dataset.shareTemplate as ShareTemplateId | undefined;
+    if (templateId) void exportSelectedShareImage(report, templateId, exportButton, close);
+  });
+  setActiveTemplate(activeIndex);
+  exportButton?.focus();
 }
 
 async function exportSelectedShareImage(
@@ -1992,6 +2097,8 @@ function render() {
   root.dataset.scale = String(ledger.settings.scale).replace(".", "-");
   root.dataset.stage = stats.stage.id;
   root.dataset.tab = dashboardTab;
+  root.dataset.uiTheme = ledger.settings.uiTheme;
+  document.documentElement.dataset.uiTheme = ledger.settings.uiTheme;
 
   if (treeImage) {
     treeImage.src = assetUrl(stats.stage.image);
@@ -2032,6 +2139,11 @@ function render() {
   if (lockInput) lockInput.checked = ledger.settings.locked;
   if (scaleSelect) scaleSelect.value = String(ledger.settings.scale);
   if (languageSelect) languageSelect.value = ledger.settings.language;
+  themeSwitcher?.querySelectorAll<HTMLButtonElement>("[data-ui-theme]").forEach((button) => {
+    const active = button.dataset.uiTheme === ledger?.settings.uiTheme;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
   if (launchOnStartupInput) launchOnStartupInput.checked = ledger.settings.launchOnStartup;
   if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
   if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;

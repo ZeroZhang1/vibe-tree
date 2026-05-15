@@ -14,6 +14,7 @@ export interface LedgerEntry {
 }
 
 export type AppLanguage = "zh-CN" | "en-US";
+export type UiTheme = "day" | "night" | "soft";
 
 export type LeaderboardRange = "today" | "7d" | "30d" | "all";
 
@@ -55,6 +56,7 @@ export interface Settings {
   locked: boolean;
   alwaysOnTop: boolean;
   language: AppLanguage;
+  uiTheme: UiTheme;
   scale: 0.5 | 1 | 1.5 | 2 | number;
   badgeFrontMetric: "level" | "total" | "rate";
   badgeBackMetric: "level" | "total" | "rate";
