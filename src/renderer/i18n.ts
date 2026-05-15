@@ -346,7 +346,7 @@ export const ACHIEVEMENT_TEXT_EN: Record<string, AchievementCopy> = {
   },
   holiday_hero: {
     name: "Holiday Guardian",
-    description: "Tokens on New Year's Day or Lunar New Year",
+    description: "Tokens on New Year's Day or during Lunar New Year",
     flavor: "While others light fireworks, you light up tokens. Happy holidays, champion.",
   },
   resurrection: {

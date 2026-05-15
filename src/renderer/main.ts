@@ -117,6 +117,31 @@ const AUTO_BADGE_FLIP_MS = 30_000;
 const BADGE_TOKEN_HOLD_MS = 2_500;
 const badgeFlipTimers = new Map<string, number>();
 let badgeAutoFlipTimer: number | undefined;
+const LUNAR_NEW_YEAR_PERIOD_DAYS = 7;
+const LUNAR_NEW_YEAR_DATES: Record<number, string> = {
+  2015: "2015-02-19",
+  2016: "2016-02-08",
+  2017: "2017-01-28",
+  2018: "2018-02-16",
+  2019: "2019-02-05",
+  2020: "2020-01-25",
+  2021: "2021-02-12",
+  2022: "2022-02-01",
+  2023: "2023-01-22",
+  2024: "2024-02-10",
+  2025: "2025-01-29",
+  2026: "2026-02-17",
+  2027: "2027-02-06",
+  2028: "2028-01-26",
+  2029: "2029-02-13",
+  2030: "2030-02-03",
+  2031: "2031-01-23",
+  2032: "2032-02-11",
+  2033: "2033-01-31",
+  2034: "2034-02-19",
+  2035: "2035-02-08",
+  2036: "2036-01-28",
+};
 let historyFilter: HistoryFilter = "all";
 let lastHistoryChartKey = "";
 let sourceScope: SourceScope = "today";
@@ -1412,16 +1437,24 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
   const hourSet = new Set<number>();
   const weekendDays = new Map<string, Set<number>>();
   const hourKeys = new Set<number>();
+  const dayEntries = new Map<string, number>();
+  const dayHours = new Map<string, Set<number>>();
   let hasFibonacciSession = false;
 
   for (const entry of entries) {
     const xp = xpForEntry(entry, enabledSources);
     if (xp <= 0) continue;
-    countedEntries.push(entry);
     const createdAt = new Date(entry.createdAt);
+    if (!Number.isFinite(createdAt.getTime())) continue;
+    countedEntries.push(entry);
     const key = dateKey(createdAt);
+    const hour = createdAt.getHours();
     dayXp.set(key, (dayXp.get(key) ?? 0) + xp);
-    hourSet.add(createdAt.getHours());
+    dayEntries.set(key, (dayEntries.get(key) ?? 0) + 1);
+    const hours = dayHours.get(key) ?? new Set<number>();
+    hours.add(hour);
+    dayHours.set(key, hours);
+    hourSet.add(hour);
     hourKeys.add(Math.floor(createdAt.getTime() / 3_600_000));
     if (isFibonacci(xp)) hasFibonacciSession = true;
 
@@ -1450,29 +1483,27 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
   const maxSourcesOneDay = Math.max(0, ...[...daySources.values()].map((sources) => sources.size));
   const stageIndex = tree ? tree.stages.findIndex((stage) => stage.id === stats.stage.id) : 0;
 
-  const uniqueModels = new Set(entries.map((e) => e.model).filter(Boolean)).size;
+  const uniqueModels = new Set(
+    countedEntries
+      .map((entry) => entry.model?.trim())
+      .filter((model): model is string => typeof model === "string" && model.length > 0),
+  ).size;
   const totalSourceXp = Object.values(sourceXp).reduce((a, b) => a + b, 0);
   const dominantSourceRatio = totalSourceXp > 0 ? Math.max(...Object.values(sourceXp)) / totalSourceXp : 0;
-  const dayEntries = new Map<string, number>();
-  for (const entry of entries) {
-    const key = dateKey(new Date(entry.createdAt));
-    dayEntries.set(key, (dayEntries.get(key) ?? 0) + 1);
-  }
   const maxEntriesOneDay = Math.max(0, ...dayEntries.values());
 
-  let longestDayGap = 0;
+  let longestInactiveDays = 0;
   for (let i = 1; i < activeDayKeys.length; i++) {
     const prev = Date.parse(`${activeDayKeys[i - 1]}T00:00:00`);
     const curr = Date.parse(`${activeDayKeys[i]}T00:00:00`);
     if (Number.isFinite(prev) && Number.isFinite(curr)) {
-      longestDayGap = Math.max(longestDayGap, Math.round((curr - prev) / 86_400_000));
+      const dayGap = Math.round((curr - prev) / 86_400_000);
+      longestInactiveDays = Math.max(longestInactiveDays, Math.max(0, dayGap - 1));
     }
   }
 
-  const hasHolidayCoding = activeDayKeys.some((key) => {
-    const m = key.slice(5, 7), d = key.slice(8, 10);
-    return (m === "01" && d === "01") || (m === "01" && parseInt(d) >= 21 && parseInt(d) <= 31) || (m === "02" && parseInt(d) >= 1 && parseInt(d) <= 14);
-  });
+  const hasHolidayCoding = activeDayKeys.some(isNewYearOrLunarNewYearPeriod);
+  const has5amTo9amStreak = [...dayHours.values()].some((hours) => [5, 6, 7, 8].every((hour) => hours.has(hour)));
 
   return {
     stats,
@@ -1493,9 +1524,9 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
     uniqueModels,
     dominantSourceRatio,
     hasNoonPeak: hourSet.has(12),
-    has5amTo9amStreak: [5, 6, 7, 8].every((h) => hourSet.has(h)),
-    longestDayGap,
-    totalEntries: entries.length,
+    has5amTo9amStreak,
+    longestInactiveDays,
+    totalEntries: countedEntries.length,
     maxEntriesOneDay,
     hasHolidayCoding,
   };
@@ -1595,6 +1626,20 @@ function hasReturnAfterInactiveGap(keys: string[], gapDays: number) {
     }
   }
   return false;
+}
+
+function isNewYearOrLunarNewYearPeriod(key: string) {
+  if (key.slice(5) === "01-01") return true;
+
+  const year = Number(key.slice(0, 4));
+  const lunarNewYear = LUNAR_NEW_YEAR_DATES[year];
+  if (!lunarNewYear) return false;
+
+  const current = Date.parse(`${key}T00:00:00`);
+  const start = Date.parse(`${lunarNewYear}T00:00:00`);
+  if (!Number.isFinite(current) || !Number.isFinite(start)) return false;
+
+  return current >= start && current < start + LUNAR_NEW_YEAR_PERIOD_DAYS * 86_400_000;
 }
 
 function hasConsecutiveHourActivity(hourKeys: Set<number>, target: number) {
@@ -2285,6 +2330,15 @@ function achievementsRenderSignature(stats?: Stats, context?: AchievementContext
           touchGrassReturn: context.touchGrassReturn,
           coffeeOverdose: context.coffeeOverdose,
           hasFibonacciSession: context.hasFibonacciSession,
+          totalActiveDays: context.totalActiveDays,
+          uniqueModels: context.uniqueModels,
+          dominantSourceRatio: context.dominantSourceRatio,
+          hasNoonPeak: context.hasNoonPeak,
+          has5amTo9amStreak: context.has5amTo9amStreak,
+          longestInactiveDays: context.longestInactiveDays,
+          totalEntries: context.totalEntries,
+          maxEntriesOneDay: context.maxEntriesOneDay,
+          hasHolidayCoding: context.hasHolidayCoding,
         }
       : undefined,
     unlocked: achievementState.unlocked.map((item) => [item.id, item.unlockedAt]),

@@ -43,7 +43,7 @@ export interface AchievementContext {
   dominantSourceRatio: number;
   hasNoonPeak: boolean;
   has5amTo9amStreak: boolean;
-  longestDayGap: number;
+  longestInactiveDays: number;
   totalEntries: number;
   maxEntriesOneDay: number;
   hasHolidayCoding: boolean;
@@ -628,7 +628,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     category: "time",
     rarity: "rare",
     name: "节日守护者",
-    description: "在元旦或春节当天有 Token",
+    description: "在元旦或春节期间有 Token",
     flavor: "当别人在放烟花，你在放 token。节日快乐，勇士。",
     condition: ({ hasHolidayCoding }) => hasHolidayCoding,
   },
@@ -643,7 +643,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     name: "灵魂治愈者",
     description: "中断超过 14 天后回归",
     flavor: "你在墓地跑了很久的尸，但最终还是复活了。",
-    condition: ({ longestDayGap }) => longestDayGap >= 14,
+    condition: ({ longestInactiveDays }) => longestInactiveDays >= 14,
   },
   {
     id: "thousand_cuts",
