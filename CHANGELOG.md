@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-05-17 (v0.5.2)
+
+- Added Gemini CLI JSONL session-log support, including standalone Gemini logs under `.gemini/tmp/*/chats`.
+- Fixed Gemini standalone accounting so cached input is deducted from `input` while OpenCode Gemini keeps its separate-cache accounting.
+- Counted cache-write tokens for all providers so custom Claude/OpenClaw providers are not undercounted when provider names are proxied or renamed.
+- Fixed Codex cached-input accounting and reconciled affected achievements after the corrected totals are applied.
+- Refreshed README screenshots and share export docs, and added the QR-enhanced share-image export flow.
+
 ## 2026-05-15 (v0.5.1)
 
 - Hardened terminal updates with git/npm timeouts so stalled fetches or dependency installs fail cleanly instead of leaving the UI stuck.
