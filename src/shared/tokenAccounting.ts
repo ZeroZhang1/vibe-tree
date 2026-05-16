@@ -8,10 +8,7 @@ export function countedTokensForEntry(entry: LedgerEntry) {
   const billableInputTokens = usesInclusiveCacheReadInput(entry)
     ? Math.max(0, inputTokens - safeTokens(entry.cacheReadTokens ?? 0))
     : inputTokens;
-  const baseTokens = billableInputTokens + outputTokens;
-  if (!usesSplitAnthropicCacheAccounting(entry)) return baseTokens;
-
-  return baseTokens + safeTokens(entry.cacheWriteTokens ?? 0);
+  return billableInputTokens + outputTokens + safeTokens(entry.cacheWriteTokens ?? 0);
 }
 
 function hasTokenBreakdown(entry: LedgerEntry) {
@@ -23,12 +20,8 @@ function hasTokenBreakdown(entry: LedgerEntry) {
   );
 }
 
-function usesSplitAnthropicCacheAccounting(entry: LedgerEntry) {
-  return entry.provider === "anthropic" || entry.source === "claude-session";
-}
-
 function usesInclusiveCacheReadInput(entry: LedgerEntry) {
-  return entry.source === "codex-session" || entry.agent === "codex-desktop";
+  return entry.source === "codex-session" || entry.agent === "codex-desktop" || entry.source === "gemini-session";
 }
 
 function safeTokens(value: number) {
