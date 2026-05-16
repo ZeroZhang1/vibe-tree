@@ -607,46 +607,67 @@ function parseOpenCodeFile(filePath: string): UsageEvent | undefined {
 
 function parseGeminiFile(filePath: string): UsageEvent[] | undefined {
   if (!basename(filePath).startsWith("session-")) return undefined;
-  const parsed = readJsonFile(filePath);
-  if (!parsed) return undefined;
-
-  const messages = Array.isArray(parsed.messages) ? parsed.messages : undefined;
-  if (!messages) return undefined;
-
-  const sessionId = stringValue(parsed.sessionId) || hash(filePath);
+  const content = readFileSync(filePath, "utf8");
   const events: UsageEvent[] = [];
-  messages.forEach((item, index) => {
-    const message = asRecord(item);
-    if (!message || message.type !== "gemini") return;
 
-    const tokens = asRecord(message.tokens);
-    if (!tokens) return;
+  // Try parsing as a single JSON object (legacy/other tools)
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed && Array.isArray(parsed.messages)) {
+      const sessionId = stringValue(parsed.sessionId) || hash(filePath);
+      parsed.messages.forEach((item: unknown, index: number) => {
+        const event = parseGeminiMessage(item, sessionId, index);
+        if (event) events.push(event);
+      });
+      return events.length > 0 ? events : undefined;
+    }
+  } catch {
+    // Not a single JSON object, continue to JSONL
+  }
 
-    const inputTokens = numberValue(tokens.input);
-    const outputTokens = numberValue(tokens.output) + numberValue(tokens.thoughts);
-    const cacheReadTokens = numberValue(tokens.cached);
-    const totalTokens = inputTokens + outputTokens;
-    if (totalTokens + cacheReadTokens <= 0) return;
-
-    const messageId = stringValue(message.id) || String(index);
-    const model = stringValue(message.model);
-    events.push({
-      id: `gemini-session:${hash(`${sessionId}:${messageId}`)}`,
-      createdAt: stringValue(message.timestamp) || new Date().toISOString(),
-      source: "gemini-session",
-      agent: "gemini",
-      provider: "google",
-      model,
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheWriteTokens: 0,
-      totalTokens,
-      streaming: true,
-    });
+  // Try parsing as JSONL
+  const lines = content.split("\n");
+  let sessionId: string | undefined;
+  lines.forEach((line, index) => {
+    const parsed = parseJson(line);
+    if (!parsed) return;
+    if (parsed.sessionId) sessionId = stringValue(parsed.sessionId);
+    const event = parseGeminiMessage(parsed, sessionId || hash(filePath), index);
+    if (event) events.push(event);
   });
 
-  return events;
+  return events.length > 0 ? events : undefined;
+}
+
+function parseGeminiMessage(item: unknown, sessionId: string, index: number): UsageEvent | undefined {
+  const message = asRecord(item);
+  if (!message || message.type !== "gemini") return undefined;
+
+  const tokens = asRecord(message.tokens);
+  if (!tokens) return undefined;
+
+  const inputTokens = numberValue(tokens.input);
+  const outputTokens = numberValue(tokens.output) + numberValue(tokens.thoughts);
+  const cacheReadTokens = numberValue(tokens.cached);
+  const totalTokens = inputTokens + outputTokens;
+  if (totalTokens + cacheReadTokens <= 0) return undefined;
+
+  const messageId = stringValue(message.id) || String(index);
+  const model = stringValue(message.model);
+  return {
+    id: `gemini-session:${hash(`${sessionId}:${messageId}`)}`,
+    createdAt: stringValue(message.timestamp) || new Date().toISOString(),
+    source: "gemini-session",
+    agent: "gemini",
+    provider: "google",
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens: 0,
+    totalTokens,
+    streaming: true,
+  };
 }
 
 function parseStandardUsage(usage: Record<string, unknown> | undefined) {
@@ -791,7 +812,7 @@ function listJsonFiles(root: string) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         visit(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith(".json")) {
+      } else if (entry.isFile() && (entry.name.endsWith(".json") || entry.name.endsWith(".jsonl"))) {
         result.push(fullPath);
       }
     }
