@@ -3,7 +3,12 @@ import type { LedgerEntry } from "./types.js";
 export function countedTokensForEntry(entry: LedgerEntry) {
   if (!hasTokenBreakdown(entry)) return safeTokens(entry.tokens);
 
-  const baseTokens = safeTokens(entry.inputTokens ?? 0) + safeTokens(entry.outputTokens ?? 0);
+  const inputTokens = safeTokens(entry.inputTokens ?? 0);
+  const outputTokens = safeTokens(entry.outputTokens ?? 0);
+  const billableInputTokens = usesInclusiveCacheReadInput(entry)
+    ? Math.max(0, inputTokens - safeTokens(entry.cacheReadTokens ?? 0))
+    : inputTokens;
+  const baseTokens = billableInputTokens + outputTokens;
   if (!usesSplitAnthropicCacheAccounting(entry)) return baseTokens;
 
   return baseTokens + safeTokens(entry.cacheWriteTokens ?? 0);
@@ -20,6 +25,10 @@ function hasTokenBreakdown(entry: LedgerEntry) {
 
 function usesSplitAnthropicCacheAccounting(entry: LedgerEntry) {
   return entry.provider === "anthropic" || entry.source === "claude-session";
+}
+
+function usesInclusiveCacheReadInput(entry: LedgerEntry) {
+  return entry.source === "codex-session" || entry.agent === "codex-desktop";
 }
 
 function safeTokens(value: number) {
