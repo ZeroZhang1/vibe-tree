@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "tsc -p tsconfig.electron.json && node scripts/copy-preload.mjs && vite build",
+    "edit:achievements": "node scripts/achievement-copy-editor.mjs",
     "smoke:electron": "node scripts/smoke-electron.mjs",
     "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.json --noEmit",
     "start": "npm run build && electron dist/electron/main.js"

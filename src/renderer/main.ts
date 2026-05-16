@@ -163,6 +163,7 @@ let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
 let levelUpTimer: number | undefined;
 let achievementSyncInFlight = false;
+let achievementReconcileInFlight = false;
 let achievementToastTimer: number | undefined;
 let lockedAchievementHintTimer: number | undefined;
 const achievementToastQueue: AchievementDef[] = [];
@@ -176,6 +177,32 @@ const BADGE_TOKEN_HOLD_MS = 2_500;
 const badgeFlipTimers = new Map<string, number>();
 let badgeAutoFlipTimer: number | undefined;
 const LUNAR_NEW_YEAR_PERIOD_DAYS = 7;
+const ACHIEVEMENT_STATE_VERSION = 2;
+const ACCOUNTING_RECONCILED_ACHIEVEMENTS = new Set([
+  "sprout",
+  "sapling",
+  "big_tree",
+  "xp_10k",
+  "xp_100k",
+  "xp_1m",
+  "xp_10m",
+  "xp_100m",
+  "xp_1b",
+  "daily_1k",
+  "daily_10k",
+  "daily_50k",
+  "daily_1m",
+  "daily_10m",
+  "daily_100m",
+  "raid_boss_5m",
+  "raid_boss_50m",
+  "burst_60",
+  "burst_10k",
+  "burst_100k",
+  "burst_1m",
+  "faction_loyalist",
+  "fibonacci",
+]);
 const LUNAR_NEW_YEAR_DATES: Record<number, string> = {
   2015: "2015-02-19",
   2016: "2016-02-08",
@@ -2193,6 +2220,9 @@ function render() {
   }
   if (pendingLevelUp) triggerLevelUpAnimation(pendingLevelUp);
 
+  const achievementContext = viewMode === "toast" ? undefined : getAchievementContext(stats, visibility.enabled);
+  if (achievementContext) reconcileAchievementsIfNeeded(achievementContext);
+
   if (viewMode === "manager") {
     renderScopedSourceBreakdown(visibility);
 
@@ -2248,10 +2278,9 @@ function render() {
       t,
       escapeHtml,
     });
-    const achievementContext = getAchievementContext(stats, visibility.enabled);
     renderAchievements(stats, achievementContext);
     renderDashboardTabs();
-    syncAchievementsIfNeeded(stats, achievementContext);
+    if (achievementContext) syncAchievementsIfNeeded(stats, achievementContext);
   }
 }
 
@@ -2549,7 +2578,7 @@ function achievementProgress(def: AchievementDef, stats?: Stats, context?: Achie
   }
   if (burstMatch) {
     const target = targetByKey[burstMatch[1]];
-    const peak = peakStat("peakXpPerMinute", stats.weather.tokensPerMinute);
+    const peak = context?.peakTokensPerMinute ?? peakStat("peakXpPerMinute", stats.weather.tokensPerMinute);
     return {
       percent: clamp((peak / target) * 100, 0, 100),
       label: `${formatCompact(peak)} / ${formatCompact(target)} token/min`,
@@ -2592,7 +2621,7 @@ let statsSyncInFlight = false;
 function syncPeakStats(stats: Stats, context: AchievementContext) {
   if (statsSyncInFlight) return;
   const peaks: Record<string, number> = {
-    peakXpPerMinute: stats.weather.tokensPerMinute,
+    peakXpPerMinute: Math.max(stats.weather.tokensPerMinute, context.peakTokensPerMinute),
     peakDailyXp: context.maxDailyXp,
   };
   const existing = achievementState.stats ?? {};
@@ -2615,8 +2644,40 @@ function syncPeakStats(stats: Stats, context: AchievementContext) {
     });
 }
 
+function reconcileAchievementsIfNeeded(context: AchievementContext) {
+  if (achievementReconcileInFlight || (achievementState.version ?? 0) >= ACHIEVEMENT_STATE_VERSION) return;
+  const unlockedIds = achievementState.unlocked
+    .filter((item) => {
+      if (!ACCOUNTING_RECONCILED_ACHIEVEMENTS.has(item.id)) return true;
+      const def = ACHIEVEMENTS.find((achievement) => achievement.id === item.id);
+      return Boolean(def && def.condition(context));
+    })
+    .map((item) => item.id);
+  achievementReconcileInFlight = true;
+  void window.bonsai
+    .reconcileAchievements({
+      version: ACHIEVEMENT_STATE_VERSION,
+      unlockedIds,
+      stats: {
+        peakXpPerMinute: Math.max(context.stats.weather.tokensPerMinute, context.peakTokensPerMinute),
+        peakDailyXp: context.maxDailyXp,
+      },
+    })
+    .then((state) => {
+      achievementState = state;
+      const unlocked = achievementUnlockedIds();
+      seenAchievementIds = new Set([...seenAchievementIds].filter((id) => unlocked.has(id)));
+      persistSeenAchievements();
+      achievementRenderKey = "";
+    })
+    .finally(() => {
+      achievementReconcileInFlight = false;
+    });
+}
+
 function syncAchievements(stats: Stats, context: AchievementContext) {
   if (!ledger || !tree || achievementSyncInFlight) return;
+  reconcileAchievementsIfNeeded(context);
   syncPeakStats(stats, context);
   const unlockedIds = achievementUnlockedIds();
   const items = ACHIEVEMENTS.filter((def) => !def.planned && !unlockedIds.has(def.id) && def.condition(context)).map(
@@ -2686,14 +2747,17 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
   const hourKeys = new Set<number>();
   const dayEntries = new Map<string, number>();
   const dayHours = new Map<string, Set<number>>();
+  const peakEvents: Array<{ time: number; xp: number }> = [];
   let hasFibonacciSession = false;
 
   for (const entry of entries) {
     const xp = xpForEntry(entry, enabledSources);
     if (xp <= 0) continue;
     const createdAt = new Date(entry.createdAt);
-    if (!Number.isFinite(createdAt.getTime())) continue;
+    const createdAtMs = createdAt.getTime();
+    if (!Number.isFinite(createdAtMs)) continue;
     countedEntries.push(entry);
+    peakEvents.push({ time: createdAtMs, xp });
     const key = dateKey(createdAt);
     const hour = createdAt.getHours();
     dayXp.set(key, (dayXp.get(key) ?? 0) + xp);
@@ -2727,6 +2791,7 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
 
   const activeDayKeys = [...dayXp.keys()].sort();
   const maxDailyXp = Math.max(0, ...dayXp.values());
+  const peakTokensPerMinute = maxTokensPerMinute(peakEvents, gameBalance?.weather.rateWindowSeconds ?? 60);
   const maxSourcesOneDay = Math.max(0, ...[...daySources.values()].map((sources) => sources.size));
   const stageIndex = tree ? tree.stages.findIndex((stage) => stage.id === stats.stage.id) : 0;
 
@@ -2756,6 +2821,7 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
     stats,
     entries: countedEntries,
     stageIndex,
+    peakTokensPerMinute,
     maxDailyXp,
     consecutiveDays: longestConsecutiveDays(activeDayKeys),
     activeSources,
@@ -2899,6 +2965,23 @@ function hasConsecutiveHourActivity(hourKeys: Set<number>, target: number) {
     previous = key;
   }
   return false;
+}
+
+function maxTokensPerMinute(events: Array<{ time: number; xp: number }>, windowSeconds: number) {
+  const sorted = [...events].sort((a, b) => a.time - b.time);
+  const windowMs = Math.max(1, windowSeconds) * 1000;
+  let left = 0;
+  let windowXp = 0;
+  let peak = 0;
+  for (let right = 0; right < sorted.length; right += 1) {
+    windowXp += sorted[right].xp;
+    while (sorted[left] && sorted[left].time < sorted[right].time - windowMs) {
+      windowXp -= sorted[left].xp;
+      left += 1;
+    }
+    peak = Math.max(peak, (windowXp / Math.max(1, windowSeconds)) * 60);
+  }
+  return peak;
 }
 
 function hasAgentSwitchWithin(entries: LedgerEntry[], windowMs: number) {
@@ -3643,6 +3726,7 @@ function achievementsRenderSignature(stats?: Stats, context?: AchievementContext
     context: context
       ? {
           maxDailyXp: context.maxDailyXp,
+          peakTokensPerMinute: Math.floor(context.peakTokensPerMinute),
           consecutiveDays: context.consecutiveDays,
           activeSources: [...context.activeSources].sort(),
           maxSourcesOneDay: context.maxSourcesOneDay,
@@ -3663,6 +3747,7 @@ function achievementsRenderSignature(stats?: Stats, context?: AchievementContext
         }
       : undefined,
     unlocked: achievementState.unlocked.map((item) => [item.id, item.unlockedAt]),
+    achievementVersion: achievementState.version ?? 0,
     achievementStats: achievementState.stats ?? {},
     seen: [...seenAchievementIds].sort(),
   });
