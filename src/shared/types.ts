@@ -121,6 +121,7 @@ export interface AchievementUnlock {
 }
 
 export interface AchievementState {
+  version?: number;
   unlocked: AchievementUnlock[];
   stats?: Record<string, unknown>;
 }

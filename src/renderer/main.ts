@@ -73,6 +73,7 @@ import type {
 } from "./types";
 import { weatherBackHtml, weatherFrontHtml } from "./weatherArt";
 import { toBlob } from "html-to-image";
+import * as QRCode from "qrcode";
 import "./styles.css";
 
 type ShareTemplateId = "receipt" | "glass" | "mono";
@@ -89,6 +90,7 @@ interface ShareReportData {
   activeDays: number;
   currentStreak: number;
   heatLevels: number[];
+  qrCodeImage: string;
   favoritePeriod: {
     label: string;
     range: string;
@@ -101,6 +103,8 @@ const SHARE_TEMPLATES: Array<{ id: ShareTemplateId; titleKey: string; noteKey: s
   { id: "mono", titleKey: "shareTemplateMonoTitle", noteKey: "shareTemplateMonoNote" },
 ];
 const SHARE_PREVIEW_SIZE = { width: 284, height: 442 };
+const SHARE_EXPORT_SIZE = { width: 2160, height: 3360 };
+const SHARE_QR_TARGET_URL = "https://github.com/Olorinm/vibe-tree";
 
 function shareTemplateForUiTheme(theme: UiTheme | undefined): ShareTemplateId {
   if (theme === "day") return "mono";
@@ -159,6 +163,7 @@ let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
 let levelUpTimer: number | undefined;
 let achievementSyncInFlight = false;
+let achievementReconcileInFlight = false;
 let achievementToastTimer: number | undefined;
 let lockedAchievementHintTimer: number | undefined;
 const achievementToastQueue: AchievementDef[] = [];
@@ -172,6 +177,32 @@ const BADGE_TOKEN_HOLD_MS = 2_500;
 const badgeFlipTimers = new Map<string, number>();
 let badgeAutoFlipTimer: number | undefined;
 const LUNAR_NEW_YEAR_PERIOD_DAYS = 7;
+const ACHIEVEMENT_STATE_VERSION = 2;
+const ACCOUNTING_RECONCILED_ACHIEVEMENTS = new Set([
+  "sprout",
+  "sapling",
+  "big_tree",
+  "xp_10k",
+  "xp_100k",
+  "xp_1m",
+  "xp_10m",
+  "xp_100m",
+  "xp_1b",
+  "daily_1k",
+  "daily_10k",
+  "daily_50k",
+  "daily_1m",
+  "daily_10m",
+  "daily_100m",
+  "raid_boss_5m",
+  "raid_boss_50m",
+  "burst_60",
+  "burst_10k",
+  "burst_100k",
+  "burst_1m",
+  "faction_loyalist",
+  "fibonacci",
+]);
 const LUNAR_NEW_YEAR_DATES: Record<number, string> = {
   2015: "2015-02-19",
   2016: "2016-02-08",
@@ -1419,8 +1450,7 @@ async function exportSelectedShareImage(
   button.textContent = t("generating");
 
   try {
-    const width = 1080;
-    const height = 1680;
+    const { width, height } = SHARE_EXPORT_SIZE;
     const pngBase64 = await renderShareReportPng(report, width, height, templateId);
     const result = await window.bonsai.saveShareImage({
       filename: `vibe-tree-share-${templateId}-${dateKey(report.generatedAt)}.png`,
@@ -1457,6 +1487,10 @@ async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promi
     Math.round(hourly.maxHourTokens / 60),
     Math.round(peakStat("peakXpPerMinute", stats.weather.tokensPerMinute)),
   );
+  const [treeImage, qrCodeImage] = await Promise.all([
+    imageToDataUrl(stats.stage.image),
+    qrCodeDataUrl(SHARE_QR_TARGET_URL),
+  ]);
 
   return {
     generatedAt,
@@ -1465,11 +1499,12 @@ async function buildShareReportData(entries: LedgerEntry[], stats: Stats): Promi
     peakTokensPerMinute,
     level: stats.level,
     stageLabel: stageLabel(stats.stage.id, stats.stage.label),
-    treeImage: await imageToDataUrl(stats.stage.image),
+    treeImage,
     mostUsedAgent: mostUsedAgentLabel(entries, enabledSources),
     activeDays: hourly.activeDays,
     currentStreak: currentActiveDayStreak(entries, generatedAt, enabledSources),
     heatLevels: hourly.heatLevels,
+    qrCodeImage,
     favoritePeriod: hourly.favoritePeriod,
   };
 }
@@ -1571,6 +1606,20 @@ async function imageToDataUrl(path: string) {
   return blobToDataUrl(blob);
 }
 
+async function qrCodeDataUrl(value: string) {
+  const svg = await QRCode.toString(value, {
+    type: "svg",
+    margin: 1,
+    width: 512,
+    errorCorrectionLevel: "H",
+    color: {
+      dark: "#11120eff",
+      light: "#ffffff00",
+    },
+  });
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 async function renderShareReportPng(report: ShareReportData, width: number, height: number, templateId: ShareTemplateId) {
   const host = document.createElement("div");
   host.setAttribute("aria-hidden", "true");
@@ -1643,6 +1692,8 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
   const baseHeight = 668;
   const scaleX = width / baseWidth;
   const scaleY = height / baseHeight;
+  const scopeClass = `share-card-${templateId}-${width}x${height}`;
+  const scope = `.share-card.${scopeClass}`;
   const themeBackground = shareTemplateBackground(templateId);
   const heatCells = report.heatLevels.map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
   const heatScale = [0, 1, 2, 3, 4].map((level) => `<i style="--c:var(--heat${level})"></i>`).join("");
@@ -1652,18 +1703,18 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
       : `这 7 天，你最常在<mark>${escapeHtml(report.favoritePeriod.label)}</mark>进入 coding 状态。`;
 
   return `
-    <div xmlns="http://www.w3.org/1999/xhtml" class="share-card" style="width:${width}px;height:${height}px">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="share-card ${scopeClass}" style="width:${width}px;height:${height}px">
       <style>
-        .share-card,
-        .share-card * { box-sizing: border-box; }
-        .share-card {
+        ${scope},
+        ${scope} * { box-sizing: border-box; }
+        ${scope} {
           position: relative;
           overflow: hidden;
           background: ${themeBackground};
           border-radius: ${Math.round(22 * scaleX)}px;
           font-family: "Cascadia Mono", "Fira Code", Consolas, "Microsoft YaHei", monospace;
         }
-        .share-card .poster {
+        ${scope} .poster {
           --bg: #fbf7ec;
           --panel: rgba(28, 32, 25, 0.05);
           --line: rgba(28, 32, 25, 0.18);
@@ -1671,6 +1722,9 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           --muted: rgba(45, 52, 42, 0.6);
           --leaf: #2c9c52;
           --accent: #c58a24;
+          --qr-bg: #fbf7ec;
+          --qr-size: 52px;
+          --qr-padding: 5px;
           --heat0: #ebe5d8;
           --heat1: #d2dfbd;
           --heat2: #9bd27f;
@@ -1691,7 +1745,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           transform: scale(${scaleX}, ${scaleY});
           transform-origin: 0 0;
         }
-        .share-card .poster.glass {
+        ${scope} .poster.glass {
           --bg: #161922;
           --panel: rgba(255, 255, 255, 0.1);
           --line: rgba(255, 255, 255, 0.2);
@@ -1699,6 +1753,9 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           --muted: rgba(244, 241, 233, 0.56);
           --leaf: #c7f66c;
           --accent: #ffcf7a;
+          --qr-bg: #f4f1e9;
+          --qr-size: 48px;
+          --qr-padding: 3px;
           --heat0: #2b2d32;
           --heat1: #4a5832;
           --heat2: #7a9d44;
@@ -1709,7 +1766,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
             linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 48%),
             var(--bg);
         }
-        .share-card .poster.mono {
+        ${scope} .poster.mono {
           --bg: #f8f8f5;
           --panel: rgba(20, 20, 16, 0.04);
           --line: rgba(20, 20, 16, 0.14);
@@ -1717,13 +1774,16 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           --muted: rgba(17, 18, 14, 0.56);
           --leaf: #11120e;
           --accent: #4f8f55;
+          --qr-bg: #ffffff;
+          --qr-size: 52px;
+          --qr-padding: 5px;
           --heat0: #e3e3dd;
           --heat1: #b8c5b4;
           --heat2: #8aaa84;
           --heat3: #4f8f55;
           --heat4: #11120e;
         }
-        .share-card .poster::before {
+        ${scope} .poster::before {
           content: "";
           position: absolute;
           inset: 0;
@@ -1735,53 +1795,53 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           background-size: 28px 28px;
           mask-image: radial-gradient(circle at 50% 32%, black, transparent 74%);
         }
-        .share-card .top,
-        .share-card .hero,
-        .share-card .metrics,
-        .share-card .heat-card,
-        .share-card .cta {
+        ${scope} .top,
+        ${scope} .hero,
+        ${scope} .metrics,
+        ${scope} .heat-card,
+        ${scope} .cta {
           position: relative;
           z-index: 1;
         }
-        .share-card .top {
+        ${scope} .top {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
         }
-        .share-card .brand {
+        ${scope} .brand {
           display: grid;
           gap: 5px;
         }
-        .share-card .eyebrow {
+        ${scope} .eyebrow {
           color: var(--leaf);
           font-size: 12px;
           font-weight: 1000;
           letter-spacing: 1.7px;
         }
-        .share-card .brand b {
+        ${scope} .brand b {
           font-size: 21px;
         }
-        .share-card .weather {
+        ${scope} .weather {
           display: grid;
           gap: 6px;
           justify-items: end;
           color: var(--accent);
         }
-        .share-card .weather b {
+        ${scope} .weather b {
           font-size: 21px;
         }
-        .share-card .weather span {
+        ${scope} .weather span {
           color: var(--muted);
           font-size: 11px;
         }
-        .share-card .hero {
+        ${scope} .hero {
           display: grid;
           grid-template-columns: 166px 1fr;
           gap: 18px;
           align-items: center;
           margin-top: 18px;
         }
-        .share-card .tree-frame {
+        ${scope} .tree-frame {
           position: relative;
           display: grid;
           place-items: center;
@@ -1790,7 +1850,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           border-radius: 20px;
           background: var(--panel);
         }
-        .share-card .tree-frame::before {
+        ${scope} .tree-frame::before {
           content: "";
           position: absolute;
           width: 126px;
@@ -1799,7 +1859,7 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           background: color-mix(in srgb, var(--leaf) 20%, transparent);
           filter: blur(18px);
         }
-        .share-card .tree {
+        ${scope} .tree {
           position: relative;
           width: 134px;
           height: 134px;
@@ -1807,28 +1867,28 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           image-rendering: pixelated;
           filter: drop-shadow(0 16px 22px rgba(0, 0, 0, 0.24));
         }
-        .share-card h2 {
+        ${scope} h2 {
           margin: 0;
           font-size: 32px;
           line-height: 1.04;
         }
-        .share-card h2 span {
+        ${scope} h2 span {
           color: var(--leaf);
         }
-        .share-card .level {
+        ${scope} .level {
           margin-top: 12px;
           color: var(--accent);
           font-size: 31px;
           font-weight: 1000;
           line-height: 1;
         }
-        .share-card .metrics {
+        ${scope} .metrics {
           display: grid;
           grid-template-columns: 0.92fr 1.16fr 0.92fr;
           gap: 10px;
           margin-top: 12px;
         }
-        .share-card .metric {
+        ${scope} .metric {
           display: grid;
           gap: 5px;
           min-height: 72px;
@@ -1837,50 +1897,50 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           border-radius: 16px;
           background: var(--panel);
         }
-        .share-card .metric small {
+        ${scope} .metric small {
           color: var(--muted);
           font-size: 11px;
           line-height: 1.25;
         }
-        .share-card .metric b {
+        ${scope} .metric b {
           font-size: 18px;
           white-space: nowrap;
         }
-        .share-card .metric.featured {
+        ${scope} .metric.featured {
           min-height: 82px;
           padding: 13px;
           border-color: color-mix(in srgb, var(--leaf) 36%, var(--line));
           background: color-mix(in srgb, var(--panel) 72%, var(--leaf) 10%);
         }
-        .share-card .metric.featured small {
+        ${scope} .metric.featured small {
           color: var(--leaf);
           font-weight: 900;
         }
-        .share-card .metric.featured b {
+        ${scope} .metric.featured b {
           font-size: 24px;
         }
-        .share-card .heat-card {
+        ${scope} .heat-card {
           margin-top: 12px;
           padding: 14px;
           border: 1px solid var(--line);
           border-radius: 18px;
           background: color-mix(in srgb, var(--bg) 76%, #000 24%);
         }
-        .share-card .heat-head {
+        ${scope} .heat-head {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
           margin-bottom: 8px;
         }
-        .share-card .heat-head strong {
+        ${scope} .heat-head strong {
           display: block;
           font-size: 16px;
         }
-        .share-card .heat-head mark {
+        ${scope} .heat-head mark {
           color: var(--leaf);
           background: transparent;
         }
-        .share-card .heat-meta {
+        ${scope} .heat-meta {
           display: grid;
           grid-template-columns: repeat(2, auto);
           gap: 8px;
@@ -1888,15 +1948,15 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           font-size: 9px;
           text-align: right;
         }
-        .share-card .heat-meta b {
+        ${scope} .heat-meta b {
           color: var(--ink);
           font-size: 10px;
         }
-        .share-card .heat-meta span {
+        ${scope} .heat-meta span {
           display: grid;
           gap: 2px;
         }
-        .share-card .heat-foot {
+        ${scope} .heat-foot {
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
@@ -1908,53 +1968,53 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           font-size: 9.5px;
           line-height: 1.45;
         }
-        .share-card .heat-foot b {
+        ${scope} .heat-foot b {
           color: var(--accent);
           font-size: 10px;
         }
-        .share-card .heat-foot mark {
+        ${scope} .heat-foot mark {
           color: var(--accent);
           background: transparent;
           font-weight: 900;
         }
-        .share-card .heat-story {
+        ${scope} .heat-story {
           display: grid;
           gap: 2px;
         }
-        .share-card .heat-scale {
+        ${scope} .heat-scale {
           display: flex;
           align-items: center;
           gap: 4px;
           min-width: 86px;
           text-align: right;
         }
-        .share-card .heat-scale span {
+        ${scope} .heat-scale span {
           white-space: nowrap;
         }
-        .share-card .scale-row {
+        ${scope} .scale-row {
           display: flex;
           align-items: center;
           justify-content: flex-end;
           gap: 3px;
         }
-        .share-card .scale-row i {
+        ${scope} .scale-row i {
           width: 9px;
           height: 9px;
           border-radius: 2px;
           background: var(--c);
         }
-        .share-card .heat {
+        ${scope} .heat {
           display: grid;
           grid-template-columns: repeat(24, 1fr);
           gap: 2px;
         }
-        .share-card .heat i {
+        ${scope} .heat i {
           display: block;
           aspect-ratio: 1 / 1;
           border-radius: 3px;
           background: var(--c);
         }
-        .share-card .cta {
+        ${scope} .cta {
           position: absolute;
           left: 26px;
           right: 26px;
@@ -1966,38 +2026,59 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
           color: var(--muted);
           font-size: 13px;
         }
-        .share-card .pill {
+        ${scope} .pill {
           display: grid;
           gap: 10px;
           color: var(--muted);
         }
-        .share-card .pill b {
+        ${scope} .pill b {
           color: var(--muted);
           font-size: 13px;
           font-weight: 500;
           line-height: 1.4;
         }
-        .share-card .pill span {
+        ${scope} .pill span {
           display: inline-flex;
           align-items: center;
           gap: 7px;
         }
-        .share-card .pill span::before {
+        ${scope} .pill span::before {
           content: "";
           width: 10px;
           height: 10px;
           border-radius: 3px;
           background: var(--leaf);
         }
-        .share-card .qr {
-          width: 48px;
-          height: 48px;
+        ${scope} .qr {
+          position: relative;
+          width: var(--qr-size);
+          height: var(--qr-size);
           display: grid;
           place-items: center;
+          padding: var(--qr-padding);
           border: 2px dashed currentColor;
           border-radius: 11px;
-          font-size: 11px;
-          font-weight: 900;
+          background: var(--qr-bg);
+        }
+        ${scope} .qr img {
+          display: block;
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          image-rendering: pixelated;
+        }
+        ${scope} .qr-github {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 15px;
+          height: 15px;
+          padding: 2px;
+          border-radius: 50%;
+          color: #11120e;
+          background: var(--qr-bg);
+          box-shadow: 0 0 0 1px var(--qr-bg);
+          transform: translate(-50%, -50%);
         }
       </style>
       <section class="poster ${templateId}">
@@ -2053,7 +2134,12 @@ function shareReportHtml(report: ShareReportData, width: number, height: number,
             <b>这一周，我把 AI coding 养成了一棵树。</b>
             <span>扫码领取桌面小树</span>
           </div>
-          <div class="qr">QR</div>
+          <div class="qr">
+            <img src="${escapeHtml(report.qrCodeImage)}" alt="GitHub QR" />
+            <svg class="qr-github" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M12 0.7C5.8 0.7 0.8 5.7 0.8 11.9c0 4.9 3.2 9.1 7.6 10.6 0.6 0.1 0.8-0.2 0.8-0.5v-2c-3.1 0.7-3.8-1.3-3.8-1.3-0.5-1.3-1.2-1.6-1.2-1.6-1-0.7 0.1-0.7 0.1-0.7 1.1 0.1 1.7 1.2 1.7 1.2 1 1.7 2.6 1.2 3.2 0.9 0.1-0.7 0.4-1.2 0.7-1.5-2.5-0.3-5.1-1.2-5.1-5.5 0-1.2 0.4-2.2 1.1-3-0.1-0.3-0.5-1.4 0.1-3 0 0 0.9-0.3 3.1 1.1 0.9-0.2 1.8-0.4 2.8-0.4s1.9 0.1 2.8 0.4c2.1-1.4 3.1-1.1 3.1-1.1 0.6 1.5 0.2 2.7 0.1 3 0.7 0.8 1.1 1.8 1.1 3 0 4.3-2.6 5.2-5.1 5.5 0.4 0.3 0.8 1 0.8 2.1V22c0 0.3 0.2 0.6 0.8 0.5 4.4-1.5 7.6-5.7 7.6-10.6C23.2 5.7 18.2 0.7 12 0.7Z"/>
+            </svg>
+          </div>
         </div>
       </section>
     </div>
@@ -2134,6 +2220,9 @@ function render() {
   }
   if (pendingLevelUp) triggerLevelUpAnimation(pendingLevelUp);
 
+  const achievementContext = viewMode === "toast" ? undefined : getAchievementContext(stats, visibility.enabled);
+  if (achievementContext) reconcileAchievementsIfNeeded(achievementContext);
+
   if (viewMode === "manager") {
     renderScopedSourceBreakdown(visibility);
 
@@ -2189,10 +2278,9 @@ function render() {
       t,
       escapeHtml,
     });
-    const achievementContext = getAchievementContext(stats, visibility.enabled);
     renderAchievements(stats, achievementContext);
     renderDashboardTabs();
-    syncAchievementsIfNeeded(stats, achievementContext);
+    if (achievementContext) syncAchievementsIfNeeded(stats, achievementContext);
   }
 }
 
@@ -2490,7 +2578,7 @@ function achievementProgress(def: AchievementDef, stats?: Stats, context?: Achie
   }
   if (burstMatch) {
     const target = targetByKey[burstMatch[1]];
-    const peak = peakStat("peakXpPerMinute", stats.weather.tokensPerMinute);
+    const peak = context?.peakTokensPerMinute ?? peakStat("peakXpPerMinute", stats.weather.tokensPerMinute);
     return {
       percent: clamp((peak / target) * 100, 0, 100),
       label: `${formatCompact(peak)} / ${formatCompact(target)} token/min`,
@@ -2533,7 +2621,7 @@ let statsSyncInFlight = false;
 function syncPeakStats(stats: Stats, context: AchievementContext) {
   if (statsSyncInFlight) return;
   const peaks: Record<string, number> = {
-    peakXpPerMinute: stats.weather.tokensPerMinute,
+    peakXpPerMinute: Math.max(stats.weather.tokensPerMinute, context.peakTokensPerMinute),
     peakDailyXp: context.maxDailyXp,
   };
   const existing = achievementState.stats ?? {};
@@ -2556,8 +2644,40 @@ function syncPeakStats(stats: Stats, context: AchievementContext) {
     });
 }
 
+function reconcileAchievementsIfNeeded(context: AchievementContext) {
+  if (achievementReconcileInFlight || (achievementState.version ?? 0) >= ACHIEVEMENT_STATE_VERSION) return;
+  const unlockedIds = achievementState.unlocked
+    .filter((item) => {
+      if (!ACCOUNTING_RECONCILED_ACHIEVEMENTS.has(item.id)) return true;
+      const def = ACHIEVEMENTS.find((achievement) => achievement.id === item.id);
+      return Boolean(def && def.condition(context));
+    })
+    .map((item) => item.id);
+  achievementReconcileInFlight = true;
+  void window.bonsai
+    .reconcileAchievements({
+      version: ACHIEVEMENT_STATE_VERSION,
+      unlockedIds,
+      stats: {
+        peakXpPerMinute: Math.max(context.stats.weather.tokensPerMinute, context.peakTokensPerMinute),
+        peakDailyXp: context.maxDailyXp,
+      },
+    })
+    .then((state) => {
+      achievementState = state;
+      const unlocked = achievementUnlockedIds();
+      seenAchievementIds = new Set([...seenAchievementIds].filter((id) => unlocked.has(id)));
+      persistSeenAchievements();
+      achievementRenderKey = "";
+    })
+    .finally(() => {
+      achievementReconcileInFlight = false;
+    });
+}
+
 function syncAchievements(stats: Stats, context: AchievementContext) {
   if (!ledger || !tree || achievementSyncInFlight) return;
+  reconcileAchievementsIfNeeded(context);
   syncPeakStats(stats, context);
   const unlockedIds = achievementUnlockedIds();
   const items = ACHIEVEMENTS.filter((def) => !def.planned && !unlockedIds.has(def.id) && def.condition(context)).map(
@@ -2627,14 +2747,17 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
   const hourKeys = new Set<number>();
   const dayEntries = new Map<string, number>();
   const dayHours = new Map<string, Set<number>>();
+  const peakEvents: Array<{ time: number; xp: number }> = [];
   let hasFibonacciSession = false;
 
   for (const entry of entries) {
     const xp = xpForEntry(entry, enabledSources);
     if (xp <= 0) continue;
     const createdAt = new Date(entry.createdAt);
-    if (!Number.isFinite(createdAt.getTime())) continue;
+    const createdAtMs = createdAt.getTime();
+    if (!Number.isFinite(createdAtMs)) continue;
     countedEntries.push(entry);
+    peakEvents.push({ time: createdAtMs, xp });
     const key = dateKey(createdAt);
     const hour = createdAt.getHours();
     dayXp.set(key, (dayXp.get(key) ?? 0) + xp);
@@ -2668,6 +2791,7 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
 
   const activeDayKeys = [...dayXp.keys()].sort();
   const maxDailyXp = Math.max(0, ...dayXp.values());
+  const peakTokensPerMinute = maxTokensPerMinute(peakEvents, gameBalance?.weather.rateWindowSeconds ?? 60);
   const maxSourcesOneDay = Math.max(0, ...[...daySources.values()].map((sources) => sources.size));
   const stageIndex = tree ? tree.stages.findIndex((stage) => stage.id === stats.stage.id) : 0;
 
@@ -2697,6 +2821,7 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
     stats,
     entries: countedEntries,
     stageIndex,
+    peakTokensPerMinute,
     maxDailyXp,
     consecutiveDays: longestConsecutiveDays(activeDayKeys),
     activeSources,
@@ -2840,6 +2965,23 @@ function hasConsecutiveHourActivity(hourKeys: Set<number>, target: number) {
     previous = key;
   }
   return false;
+}
+
+function maxTokensPerMinute(events: Array<{ time: number; xp: number }>, windowSeconds: number) {
+  const sorted = [...events].sort((a, b) => a.time - b.time);
+  const windowMs = Math.max(1, windowSeconds) * 1000;
+  let left = 0;
+  let windowXp = 0;
+  let peak = 0;
+  for (let right = 0; right < sorted.length; right += 1) {
+    windowXp += sorted[right].xp;
+    while (sorted[left] && sorted[left].time < sorted[right].time - windowMs) {
+      windowXp -= sorted[left].xp;
+      left += 1;
+    }
+    peak = Math.max(peak, (windowXp / Math.max(1, windowSeconds)) * 60);
+  }
+  return peak;
 }
 
 function hasAgentSwitchWithin(entries: LedgerEntry[], windowMs: number) {
@@ -3584,6 +3726,7 @@ function achievementsRenderSignature(stats?: Stats, context?: AchievementContext
     context: context
       ? {
           maxDailyXp: context.maxDailyXp,
+          peakTokensPerMinute: Math.floor(context.peakTokensPerMinute),
           consecutiveDays: context.consecutiveDays,
           activeSources: [...context.activeSources].sort(),
           maxSourcesOneDay: context.maxSourcesOneDay,
@@ -3604,6 +3747,7 @@ function achievementsRenderSignature(stats?: Stats, context?: AchievementContext
         }
       : undefined,
     unlocked: achievementState.unlocked.map((item) => [item.id, item.unlockedAt]),
+    achievementVersion: achievementState.version ?? 0,
     achievementStats: achievementState.stats ?? {},
     seen: [...seenAchievementIds].sort(),
   });

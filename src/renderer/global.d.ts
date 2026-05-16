@@ -39,6 +39,7 @@ declare global {
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;
       previewAchievementToast: (id: string) => Promise<boolean>;
       updateAchievementStats: (stats: Record<string, unknown>) => Promise<AchievementState>;
+      reconcileAchievements: (input: { version: number; unlockedIds: string[]; stats?: Record<string, unknown> }) => Promise<AchievementState>;
       saveShareImage: (input: { filename: string; pngBase64: string }) => Promise<{ canceled: boolean; filePath?: string }>;
       notifyAchievementToastReady: () => void;
       notifyAchievementToastDrained: () => void;

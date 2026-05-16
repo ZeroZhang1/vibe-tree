@@ -27,6 +27,7 @@ export interface AchievementContext {
   stats: AchievementStatsSnapshot;
   entries: LedgerEntry[];
   stageIndex: number;
+  peakTokensPerMinute: number;
   maxDailyXp: number;
   consecutiveDays: number;
   activeSources: Set<HistorySourceId>;
@@ -237,7 +238,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     name: "灵感爆发",
     description: "Token/min 达到 60",
     flavor: "灵感来了挡都挡不住。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 60,
+    condition: ({ peakTokensPerMinute }) => peakTokensPerMinute >= 60,
   },
   {
     id: "burst_10k",
@@ -246,7 +247,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     name: "手速起飞",
     description: "Token/min 达到 10,000",
     flavor: "你的键盘正在请求加薪。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 10_000,
+    condition: ({ peakTokensPerMinute }) => peakTokensPerMinute >= 10_000,
   },
   {
     id: "burst_100k",
@@ -255,7 +256,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     name: "雨云生成器",
     description: "Token/min 达到 100,000",
     flavor: "云层越来越厚，暴风雨即将来临。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 100_000,
+    condition: ({ peakTokensPerMinute }) => peakTokensPerMinute >= 100_000,
   },
   {
     id: "burst_1m",
@@ -264,7 +265,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     name: "风暴召唤师",
     description: "Token/min 达到 1,000,000",
     flavor: "这不是 coding，这是召唤天气奇观。",
-    condition: ({ stats }) => stats.weather.tokensPerMinute >= 1_000_000,
+    condition: ({ peakTokensPerMinute }) => peakTokensPerMinute >= 1_000_000,
   },
   {
     id: "long_session",

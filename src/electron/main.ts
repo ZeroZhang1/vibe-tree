@@ -409,6 +409,8 @@ function normalizeAchievementState(state: Partial<AchievementState> | undefined)
       })
     : [];
   return {
+    version:
+      typeof state?.version === "number" && Number.isFinite(state.version) ? Math.max(0, Math.round(state.version)) : undefined,
     unlocked,
     stats: state?.stats && typeof state.stats === "object" ? state.stats : undefined,
   };
@@ -441,6 +443,32 @@ function unlockAchievements(items: Array<{ id: string; trigger?: Record<string, 
   broadcast("bonsai:achievements", achievementState, unlocked);
   showAchievementToastOverlay(unlocked.map((item) => item.id));
   return { state: achievementState, unlocked };
+}
+
+function reconcileAchievementState(input: {
+  version?: unknown;
+  unlockedIds?: unknown;
+  stats?: Record<string, unknown>;
+}): AchievementState {
+  const version = typeof input?.version === "number" && Number.isFinite(input.version)
+    ? Math.max(0, Math.round(input.version))
+    : achievementState.version;
+  const unlockedIds = new Set(
+    Array.isArray(input?.unlockedIds) ? input.unlockedIds.filter((id): id is string => typeof id === "string") : [],
+  );
+  const stats = input?.stats && typeof input.stats === "object" ? input.stats : achievementState.stats;
+  const nextState = normalizeAchievementState({
+    version,
+    unlocked: achievementState.unlocked.filter((item) => unlockedIds.has(item.id)),
+    stats,
+  });
+  const changed = JSON.stringify(nextState) !== JSON.stringify(achievementState);
+  if (!changed) return achievementState;
+
+  achievementState = nextState;
+  writeAchievementState();
+  broadcast("bonsai:achievements", achievementState, []);
+  return achievementState;
 }
 
 function normalizeSettings(settings: Partial<Settings>): Settings {
@@ -2143,6 +2171,11 @@ ipcMain.handle("achievements:update-stats", (_event, stats: Record<string, unkno
   writeAchievementState();
   return achievementState;
 });
+ipcMain.handle(
+  "achievements:reconcile",
+  (_event, input: { version?: unknown; unlockedIds?: unknown; stats?: Record<string, unknown> }) =>
+    reconcileAchievementState(input),
+);
 ipcMain.handle(
   "share:save-image",
   async (_event, input: { filename?: unknown; pngBase64?: unknown }) => {

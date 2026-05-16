@@ -4,17 +4,42 @@
 
 **你的 coding agent 每消耗一个 token，桌面上的小树就长一点。**
 
-Vibe Tree 是一个桌面常驻的 token 天气树——把 vibe coding 的消耗、节奏和活跃度，变成一棵可以养成的像素盆栽。
+Vibe Tree 是一个桌面常驻的 token 天气树。它会读取本地 AI coding agent 的使用记录，把 token 消耗、活跃节奏、模型偏好和连续使用，变成一棵可以养成的像素小树。
 
-<p align="center">
-  <img src="previews/weather-showcase.png" width="900" alt="Vibe Tree 四种天气组图" />
-</p>
+它不是传统的 token dashboard，而是把「我今天到底写了多少、什么时候最上头、主要靠哪个 agent」变成一个能看见、能分享、也能轻轻炫耀的桌面体验。
 
-<p align="center">
-  <img src="previews/manager-window.png" width="900" alt="Vibe Tree 主页管理面板" />
-</p>
+## 产品截图
 
----
+### 实时成长面板
+
+查看累计 Token、今日成长、等级进度、数据来源和最近 7 天使用趋势。
+
+![Vibe Tree dashboard](docs/images/vibe-tree-dashboard.png)
+
+### 分享成长图
+
+一键生成 3 套分享卡片，展示等级、累计 Token、最常用 Agent、7 × 24 小时热力图和 GitHub 二维码。
+
+![Vibe Tree share export](docs/images/vibe-tree-share-export.png)
+
+### 全球排行榜
+
+可选加入排行榜。默认只公开聚合后的 token 排名；如果用户开启使用偏好公开，才展示最常用 Agent、常用模型、偏爱时段和 token 峰值。
+
+![Vibe Tree leaderboard](docs/images/vibe-tree-leaderboard.png)
+
+## 核心功能
+
+- **桌面像素树**：常驻桌面，支持置顶、拖动、缩放、锁定位置和静默启动。
+- **实时 token 天气**：累计 Token 决定成长等级，当前 token/min 决定天气状态。
+- **多 Agent 数据源**：支持 Codex、Claude Code、OpenClaw、OpenCode、Gemini 和 Hermes。
+- **来源与模型统计**：按 agent 查看 input / output / cache，展开后可查看模型占比。
+- **最近 7 天图表**：按来源筛选近期 token 使用趋势。
+- **成就系统**：记录累计消耗、峰值时刻、连续活跃、时间偏好和 agent 使用里程碑。
+- **分享图导出**：从 3 套视觉模板里选择，一键导出高清 PNG。
+- **三套 UI 主题**：白天、黑夜、柔和，和分享卡片视觉保持一致。
+- **排行榜与隐私控制**：GitHub 登录后可加入全球排行榜，使用偏好公开始终由用户主动开启。
+- **中英文界面**：设置面板中可一键切换语言。
 
 ## 快速开始
 
@@ -23,7 +48,18 @@ npm ci
 npm start
 ```
 
-> 支持 macOS / Windows / Linux。开发模式：`npm run dev`
+开发模式：
+
+```bash
+npm run dev
+```
+
+构建检查：
+
+```bash
+npm run typecheck
+npm run build
+```
 
 如果 Electron 二进制从 GitHub 下载较慢，可以临时使用国内镜像：
 
@@ -33,78 +69,50 @@ npm_config_electron_mirror=https://npmmirror.com/mirrors/electron/ \
 npm ci
 ```
 
-也可以写进本地 `.npmrc`，以后不用每次手敲：
+也可以写入本地 `.npmrc`：
 
 ```ini
 electron_mirror=https://npmmirror.com/mirrors/electron/
 ```
 
----
-
-## 为什么用 Vibe Tree？
-
-### 🌱 让编程有生命感
-透明悬浮窗常驻桌面，小树随着 token 消耗实时生长。累计 Token 决定等级，最近活跃度决定天气——编码越多，树越茂盛。
-
-### 📊 看见你的 token 去向
-管理面板展示来源统计、模型占比、最近 7 天图表。支持按 agent 拆分或查看单个 agent 的 input / output / cache 明细。
-
-### 🏅 解锁传说成就
-内置成就系统会记录你的连续活跃、累计消耗和使用节奏，关键时刻用像素弹窗给你一点小小的反馈。
-
-### 🏆 和全球 vibe coder 比一比
-可选的全球排行榜，GitHub 登录即可加入。默认仅上传每日 token 消耗总量，不上传任何代码或会话内容；也可以选择公开聚合后的使用偏好。
-
----
-
 ## 支持的 Agent
 
-| Agent | 状态 | 数据来源 |
-|-------|------|----------|
-| Claude Code | ✅ | `~/.claude/projects/**/*.jsonl` |
+| Agent | 状态 | 默认数据来源 |
+| --- | --- | --- |
 | Codex | ✅ | `~/.codex/sessions/**/*.jsonl` |
+| Claude Code | ✅ | `~/.claude/projects/**/*.jsonl` |
 | OpenClaw | ✅ | `~/.openclaw/agents/**/sessions/*.jsonl` |
 | OpenCode | ✅ | `~/.local/share/opencode/storage/message/**/*.json` |
+| Gemini | ✅ | 本地 Gemini 会话目录 |
+| Hermes | ✅ | 本地 Hermes 会话目录 |
 
-安装后自动检测，零配置即可开始。来源路径也可在设置中自定义。
+安装后会自动检测默认路径。也可以在设置面板里自定义每个 agent 的数据路径，或关闭不想统计的来源。
 
----
+## 数据与隐私
 
-## 功能一览
+Vibe Tree 优先做本地统计。默认不会上传代码、提示词、文件名、路径、会话内容或完整小时热力图。
 
-- **桌面宠物窗口** — 透明、置顶、可拖动、可锁定
-- **管理面板** — 等级、天气、活跃会话、来源统计、7 天图表
-- **等级牌** — 3D 翻牌动效，可配置显示等级 / 累计 token / token/s
-- **全球排行榜** — GitHub 登录，可随时加入或退出
-- **自动更新** — 启动后检测 GitHub 最新版本，支持终端一键更新
-- **中英文切换** — 设置面板一键切换语言
-- **开机启动 & 静默模式** — 安静地陪你写代码
+加入排行榜时，默认只同步每日 token 总量和本地首次使用日期，用于计算今日、7 天、30 天和全部榜单。开启「公开使用偏好」后，才会额外上传聚合后的四项信息：
 
----
+- 最常用 Agent
+- 常用模型
+- 偏爱时段
+- token 峰值
 
-## 更新记录
+这些信息只用于排行榜展示。
 
-查看 [CHANGELOG.md](CHANGELOG.md)。
+## Token 规则
 
----
-
-<details>
-<summary><strong>📖 Token 规则</strong></summary>
-
-```
-计入 Token = inputTokens + outputTokens；对 Anthropic 来源，还会加上单独上报的 cacheWriteTokens。
+```text
+计入 Token = inputTokens + outputTokens
+Anthropic / Claude Code 额外计入 cacheWriteTokens
 ```
 
-部分 provider 会把缓存输入包含在 `inputTokens` 里；Anthropic 会单独上报 cache read/write。Vibe Tree 会把 Claude Code 的 cache write 视为本次新创建的输入并计入累计 Token，cache read 则作为复用上下文展示，不计入成长总量。
+部分 provider 会把缓存输入包含在 `inputTokens` 里；Anthropic 会单独上报 cache read / write。Vibe Tree 会把 `cacheWriteTokens` 视为本次新创建的输入并计入成长总量，`cacheReadTokens` 只作为复用上下文展示，不计入成长。
 
-默认从安装当天开始统计，安装日前的历史不会计入。
+默认从安装当天开始统计，安装日前的历史不会计入，除非通过环境变量显式导入历史。
 
-</details>
-
-<details>
-<summary><strong>🔧 高级配置</strong></summary>
-
-### 导入历史数据
+## 导入历史数据
 
 macOS / Linux:
 
@@ -126,52 +134,33 @@ $env:VIBE_OPENCODE_IMPORT_HISTORY="today"
 npm start
 ```
 
-### 排行榜服务
+## 排行榜服务
 
-排行榜默认关闭。线上版本使用已部署的 Worker，本地调试可覆盖：
+线上版本默认使用项目配置的 Cloudflare Worker。自托管或本地调试时可以覆盖：
 
 ```bash
 VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm start
 ```
 
-后端模板：`server/leaderboard-worker/`
+后端模板在：
 
-隐私保证：默认同步只发送滚动近 30 日每日 token 总量，以及用于清理排行榜脏数据的本地首次使用日期；服务端会保留此前已同步过的每日总量用于“全部”榜。开启“公开使用偏好”后，会额外上传当前排行榜范围可展示的聚合信息：最常用 Agent、常用模型、偏爱时段和 token 峰值。不上传提示词、文件、路径、会话记录或完整热力图。
-
-</details>
-
-<details>
-<summary><strong>🎮 Game Balance</strong></summary>
-
-成长、天气和活跃窗口由此文件配置：
-
+```text
+server/leaderboard-worker/
 ```
+
+## Game Balance
+
+成长、天气和活跃窗口由这里配置：
+
+```text
 public/assets/trees/vibe-bonsai/config/game-balance.json
 ```
 
-包含：Token 等级曲线、天气阈值、成长阶段阈值、活跃窗口参数。
+包含 Token 等级曲线、天气阈值、成长阶段阈值和活跃窗口参数。
 
-</details>
+## 更新记录
 
-<details>
-<summary><strong>💾 数据持久化</strong></summary>
-
-Electron 数据目录保存：
-
-- `usage-events.jsonl` — append-only 事件库
-- `usage-meta.json` — 安装日期等元信息
-- `device-settings.json` — 本机设置
-- `*-session-watcher.json` — 各 agent 的 watcher 状态
-
-</details>
-
----
-
-## 产品方向
-
-Vibe Tree 不是单纯的 token dashboard。目标是让 vibe coding 的消耗和节奏通过桌面宠物可感知——先把本地多 agent 读取做稳，再持续打磨桌宠表现、天气反馈和养成数值。
-
----
+查看 [CHANGELOG.md](CHANGELOG.md)。
 
 ## License
 

@@ -45,6 +45,8 @@ const api = {
   previewAchievementToast: (id: string) => ipcRenderer.invoke("achievements:preview-toast", id) as Promise<boolean>,
   updateAchievementStats: (stats: Record<string, unknown>) =>
     ipcRenderer.invoke("achievements:update-stats", stats) as Promise<AchievementState>,
+  reconcileAchievements: (input: { version: number; unlockedIds: string[]; stats?: Record<string, unknown> }) =>
+    ipcRenderer.invoke("achievements:reconcile", input) as Promise<AchievementState>,
   saveShareImage: (input: { filename: string; pngBase64: string }) =>
     ipcRenderer.invoke("share:save-image", input) as Promise<{ canceled: boolean; filePath?: string }>,
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
