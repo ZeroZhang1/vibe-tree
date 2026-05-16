@@ -57,6 +57,7 @@ interface JsonAgentConfig {
   importHistoryEnv: string;
   stateFileName: string;
   pollIntervalMs: number;
+  fileExtensions: string[];
   parseFile: (filePath: string) => UsageEvent | UsageEvent[] | undefined;
 }
 
@@ -113,6 +114,7 @@ export function startOpenCodeSessionWatcher(options: SessionWatcherOptions) {
     importHistoryEnv: "VIBE_OPENCODE_IMPORT_HISTORY",
     stateFileName: "opencode-session-watcher.json",
     pollIntervalMs: 10_000,
+    fileExtensions: [".json"],
     parseFile: parseOpenCodeFile,
   });
 }
@@ -125,6 +127,7 @@ export function startGeminiSessionWatcher(options: SessionWatcherOptions) {
     importHistoryEnv: "VIBE_GEMINI_IMPORT_HISTORY",
     stateFileName: "gemini-session-watcher.json",
     pollIntervalMs: 10_000,
+    fileExtensions: [".json", ".jsonl"],
     parseFile: parseGeminiFile,
   });
 }
@@ -291,7 +294,7 @@ function startJsonAgentSessionWatcher(options: SessionWatcherOptions, config: Js
       return;
     }
 
-    const files = listJsonFiles(config.sessionsRoot);
+    const files = listJsonFiles(config.sessionsRoot, config.fileExtensions);
     status.filesWatched = files.length;
     for (const filePath of files) {
       const imported = scanJsonFile(
@@ -607,46 +610,71 @@ function parseOpenCodeFile(filePath: string): UsageEvent | undefined {
 
 function parseGeminiFile(filePath: string): UsageEvent[] | undefined {
   if (!basename(filePath).startsWith("session-")) return undefined;
-  const parsed = readJsonFile(filePath);
-  if (!parsed) return undefined;
+  const content = readTextFile(filePath);
+  if (!content) return undefined;
 
+  if (filePath.endsWith(".jsonl")) {
+    return parseGeminiJsonl(content, filePath);
+  }
+
+  const parsed = parseJson(content);
+  if (!parsed) return undefined;
   const messages = Array.isArray(parsed.messages) ? parsed.messages : undefined;
   if (!messages) return undefined;
 
   const sessionId = stringValue(parsed.sessionId) || hash(filePath);
   const events: UsageEvent[] = [];
   messages.forEach((item, index) => {
-    const message = asRecord(item);
-    if (!message || message.type !== "gemini") return;
-
-    const tokens = asRecord(message.tokens);
-    if (!tokens) return;
-
-    const inputTokens = numberValue(tokens.input);
-    const outputTokens = numberValue(tokens.output) + numberValue(tokens.thoughts);
-    const cacheReadTokens = numberValue(tokens.cached);
-    const totalTokens = inputTokens + outputTokens;
-    if (totalTokens + cacheReadTokens <= 0) return;
-
-    const messageId = stringValue(message.id) || String(index);
-    const model = stringValue(message.model);
-    events.push({
-      id: `gemini-session:${hash(`${sessionId}:${messageId}`)}`,
-      createdAt: stringValue(message.timestamp) || new Date().toISOString(),
-      source: "gemini-session",
-      agent: "gemini",
-      provider: "google",
-      model,
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheWriteTokens: 0,
-      totalTokens,
-      streaming: true,
-    });
+    const event = parseGeminiMessage(item, sessionId, index);
+    if (event) events.push(event);
   });
 
-  return events;
+  return events.length > 0 ? events : undefined;
+}
+
+function parseGeminiJsonl(content: string, filePath: string): UsageEvent[] | undefined {
+  const rows = content
+    .split("\n")
+    .map((line) => parseJson(line))
+    .filter((row): row is Record<string, unknown> => Boolean(row));
+  const sessionId = rows.map((row) => stringValue(row.sessionId)).find(Boolean) || hash(filePath);
+  const events: UsageEvent[] = [];
+  rows.forEach((row, index) => {
+    const event = parseGeminiMessage(row, sessionId, index);
+    if (event) events.push(event);
+  });
+  return events.length > 0 ? events : undefined;
+}
+
+function parseGeminiMessage(item: unknown, sessionId: string, index: number): UsageEvent | undefined {
+  const message = asRecord(item);
+  if (!message || message.type !== "gemini") return undefined;
+
+  const tokens = asRecord(message.tokens);
+  if (!tokens) return undefined;
+
+  const inputTokens = numberValue(tokens.input);
+  const outputTokens = numberValue(tokens.output) + numberValue(tokens.thoughts);
+  const cacheReadTokens = numberValue(tokens.cached);
+  const totalTokens = inputTokens + outputTokens;
+  if (totalTokens + cacheReadTokens <= 0) return undefined;
+
+  const messageId = stringValue(message.id) || String(index);
+  const model = stringValue(message.model);
+  return {
+    id: `gemini-session:${hash(`${sessionId}:${messageId}`)}`,
+    createdAt: stringValue(message.timestamp) || new Date().toISOString(),
+    source: "gemini-session",
+    agent: "gemini",
+    provider: "google",
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens: 0,
+    totalTokens,
+    streaming: true,
+  };
 }
 
 function parseStandardUsage(usage: Record<string, unknown> | undefined) {
@@ -768,6 +796,14 @@ function readJsonFile(path: string) {
   }
 }
 
+function readTextFile(path: string) {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 function listJsonlFiles(root: string) {
   const result: string[] = [];
   const visit = (dir: string) => {
@@ -784,14 +820,14 @@ function listJsonlFiles(root: string) {
   return result;
 }
 
-function listJsonFiles(root: string) {
+function listJsonFiles(root: string, fileExtensions: string[]) {
   const result: string[] = [];
   const visit = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         visit(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith(".json")) {
+      } else if (entry.isFile() && fileExtensions.some((extension) => entry.name.endsWith(extension))) {
         result.push(fullPath);
       }
     }
