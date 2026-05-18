@@ -75,10 +75,17 @@ interface HermesSessionRow {
   reasoning_tokens?: number;
 }
 
+interface OpenCodeMessageRow {
+  id: string;
+  session_id: string;
+  time_created: number;
+  data: string;
+}
+
 const READ_CHUNK_SIZE = 64 * 1024;
 const DEFAULT_CLAUDE_ROOT = join(homedir(), ".claude", "projects");
 const DEFAULT_OPENCLAW_ROOT = join(homedir(), ".openclaw", "agents");
-const DEFAULT_OPENCODE_MESSAGES_ROOT = defaultOpenCodeMessagesRoot();
+const DEFAULT_OPENCODE_DB = defaultOpenCodeDbPath();
 const DEFAULT_GEMINI_ROOT = join(homedir(), ".gemini", "tmp");
 const DEFAULT_HERMES_STATE_DB = join(homedir(), ".hermes", "state.db");
 
@@ -107,16 +114,66 @@ export function startOpenClawSessionWatcher(options: SessionWatcherOptions) {
 }
 
 export function startOpenCodeSessionWatcher(options: SessionWatcherOptions) {
-  return startJsonAgentSessionWatcher(options, {
-    source: "opencode-session",
-    agent: "opencode",
-    sessionsRoot: options.sessionsRoot || process.env.VIBE_OPENCODE_SESSIONS_DIR || DEFAULT_OPENCODE_MESSAGES_ROOT,
-    importHistoryEnv: "VIBE_OPENCODE_IMPORT_HISTORY",
-    stateFileName: "opencode-session-watcher.json",
-    pollIntervalMs: 10_000,
-    fileExtensions: [".json"],
-    parseFile: parseOpenCodeFile,
-  });
+  const dbPath = options.sessionsRoot || process.env.VIBE_OPENCODE_SESSIONS_DIR || DEFAULT_OPENCODE_DB;
+  const historyStartAtMs = timestampMs(options.historyStartAt);
+  const importHistory = process.env.VIBE_OPENCODE_IMPORT_HISTORY === "today" || Boolean(historyStartAtMs);
+  const statePath = join(options.userDataPath, "opencode-session-watcher.json");
+  const state = readState(statePath);
+  if (state.historyStartAt !== options.historyStartAt) {
+    state.files = {};
+    state.events = {};
+    state.historyStartAt = options.historyStartAt;
+  }
+  const watcherStartedAt = Date.now();
+  const status: SessionMonitorStatus = {
+    running: true,
+    sessionsRoot: dbPath,
+    exists: existsSync(dbPath),
+    filesWatched: 0,
+    eventsImported: 0,
+    importHistory,
+    historyStartAt: options.historyStartAt,
+  };
+
+  let closed = false;
+
+  const poll = () => {
+    if (closed) return;
+    status.exists = existsSync(dbPath);
+    status.filesWatched = status.exists ? 1 : 0;
+    status.lastScanAt = new Date().toISOString();
+    if (!status.exists) {
+      options.onStatus?.(status);
+      return;
+    }
+
+    const imported = scanOpenCodeDb(
+      dbPath,
+      state,
+      statePath,
+      { importHistory, watcherStartedAt, historyStartAtMs },
+      options.onUsage,
+    );
+    if (imported > 0) {
+      status.eventsImported += imported;
+      status.lastEventAt = new Date().toISOString();
+    }
+    options.onStatus?.(status);
+  };
+
+  poll();
+  const timer = setInterval(poll, 10_000);
+
+  return {
+    close: () => {
+      closed = true;
+      status.running = false;
+      clearInterval(timer);
+      writeState(statePath, state);
+      options.onStatus?.(status);
+    },
+    getStatus: () => status,
+  };
 }
 
 export function startGeminiSessionWatcher(options: SessionWatcherOptions) {
@@ -464,6 +521,108 @@ function scanHermesStateDb(
 
   writeState(statePath, state);
   return imported;
+}
+
+function scanOpenCodeDb(
+  dbPath: string,
+  state: WatchState,
+  statePath: string,
+  settings: { importHistory: boolean; watcherStartedAt: number; historyStartAtMs?: number },
+  onUsage: (event: UsageEvent) => void,
+) {
+  const stats = statSync(dbPath);
+  const previousMtime = state.files[dbPath];
+  if (previousMtime !== undefined && stats.mtimeMs <= previousMtime) {
+    return 0;
+  }
+
+  const rows = readOpenCodeMessageRows(dbPath);
+  if (!rows) {
+    return 0;
+  }
+  state.files[dbPath] = stats.mtimeMs;
+
+  let imported = 0;
+  for (const row of rows) {
+    const messageId = stringValue(row.id);
+    if (!messageId) continue;
+
+    const parsed = parseJson(row.data);
+    if (!parsed || parsed.role !== "assistant") continue;
+
+    const event = parseOpenCodeMessageData(parsed, row);
+    if (!event || !usageEventHasTokens(event)) continue;
+
+    const createdAt = event.createdAt;
+    const isHistorical = isBeforeHistoryStart(createdAt, settings.historyStartAtMs);
+    if (isHistorical) continue;
+
+    if (state.events[event.id]) continue;
+    state.events[event.id] = true;
+    onUsage(event);
+    imported += 1;
+  }
+
+  writeState(statePath, state);
+  return imported;
+}
+
+function readOpenCodeMessageRows(dbPath: string): OpenCodeMessageRow[] | undefined {
+  const query = `
+    SELECT id, session_id, time_created, data
+    FROM message
+    WHERE json_extract(data, '$.role') = 'assistant'
+      AND (
+        json_extract(data, '$.tokens.input') > 0
+        OR json_extract(data, '$.tokens.output') > 0
+        OR json_extract(data, '$.tokens.reasoning') > 0
+      )
+  `;
+  try {
+    const output = execFileSync("sqlite3", ["-json", dbPath, query], {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(output || "[]");
+    return Array.isArray(parsed) ? (parsed as OpenCodeMessageRow[]) : [];
+  } catch {
+    return undefined;
+  }
+}
+
+function parseOpenCodeMessageData(parsed: Record<string, unknown>, row: OpenCodeMessageRow): UsageEvent | undefined {
+  const tokens = asRecord(parsed.tokens);
+  if (!tokens) return undefined;
+
+  const cache = asRecord(tokens.cache);
+  const inputTokens = numberValue(tokens.input);
+  const outputTokens = numberValue(tokens.output) + numberValue(tokens.reasoning);
+  const cacheReadTokens = numberValue(cache?.read);
+  const cacheWriteTokens = numberValue(cache?.write);
+  const totalTokens = inputTokens + outputTokens;
+  if (totalTokens <= 0) return undefined;
+
+  const messageId = stringValue(parsed.id) || stringValue(row.id);
+  const sessionId = stringValue(parsed.sessionID) || stringValue(parsed.sessionId) || stringValue(row.session_id);
+  const provider = stringValue(parsed.providerID) || stringValue(parsed.providerId) || "opencode";
+  const model = stringValue(parsed.modelID) || stringValue(parsed.modelId);
+  const agentName = stringValue(parsed.agent);
+  const time = asRecord(parsed.time);
+
+  return {
+    id: `opencode-session:${hash(`${sessionId ?? "unknown"}:${messageId}`)}`,
+    createdAt: timestampToIso(time?.completed) || timestampToIso(time?.created) || timestampToIso(row.time_created) || new Date().toISOString(),
+    source: "opencode-session",
+    agent: agentName ? `opencode:${agentName}` : "opencode",
+    provider,
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    streaming: false,
+  };
 }
 
 function scanNewLines(filePath: string, start: number, end: number, onLine: (line: string, lineOffset: number) => number) {
@@ -958,12 +1117,12 @@ function isTodaySessionPath(filePath: string) {
   return false;
 }
 
-function defaultOpenCodeMessagesRoot() {
+function defaultOpenCodeDbPath() {
   if (process.env.XDG_DATA_HOME) {
-    return join(process.env.XDG_DATA_HOME, "opencode", "storage", "message");
+    return join(process.env.XDG_DATA_HOME, "opencode", "opencode.db");
   }
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    return join(process.env.LOCALAPPDATA, "opencode", "storage", "message");
+    return join(process.env.LOCALAPPDATA, "opencode", "opencode.db");
   }
-  return join(homedir(), ".local", "share", "opencode", "storage", "message");
+  return join(homedir(), ".local", "share", "opencode", "opencode.db");
 }
