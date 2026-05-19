@@ -297,6 +297,7 @@ const updateCheckEnabledInput = document.querySelector<HTMLInputElement>("#updat
 const updateStatusText = document.querySelector<HTMLElement>("#updateStatusText");
 const checkUpdateButton = document.querySelector<HTMLButtonElement>("#checkUpdateButton");
 const installUpdateButton = document.querySelector<HTMLButtonElement>("#installUpdateButton");
+const updateNotesButton = document.querySelector<HTMLButtonElement>("#updateNotesButton");
 const releasePageButton = document.querySelector<HTMLButtonElement>("#releasePageButton");
 const languageSelect = document.querySelector<HTMLSelectElement>("#languageSelect");
 const themeSwitcher = document.querySelector<HTMLElement>("#themeSwitcher");
@@ -941,6 +942,10 @@ function bindEvents() {
   installUpdateButton?.addEventListener("click", async () => {
     updateStatus = await window.bonsai.installUpdate();
     renderUpdateStatus();
+  });
+
+  updateNotesButton?.addEventListener("click", () => {
+    showUpdateNotesModal();
   });
 
   releasePageButton?.addEventListener("click", () => {
@@ -3159,6 +3164,71 @@ function renderUpdateStatus() {
       updateStatus.checking || updateStatus.installing || !updateStatus.available || !updateStatus.canTerminalUpdate;
     installUpdateButton.textContent = updateStatus.installing ? t("updating") : t("terminalUpdate");
   }
+  if (updateNotesButton) {
+    const canViewNotes = Boolean(updateStatus.latestVersion && updateStatus.checkedAt && !updateStatus.error);
+    updateNotesButton.hidden = !canViewNotes;
+    updateNotesButton.disabled = !canViewNotes || updateStatus.checking || updateStatus.installing;
+    updateNotesButton.textContent = updateStatus.available ? t("viewUpdateNotes") : t("viewCurrentVersionNotes");
+  }
+}
+
+function showUpdateNotesModal() {
+  if (viewMode !== "manager") return;
+  if (!updateStatus.latestVersion) return;
+  if (document.querySelector(".update-notice-modal")) return;
+
+  const releaseNotes = formatUpdateNoticeNotes(updateStatus.releaseNotes);
+  const currentVersion = updateStatus.currentVersion || t("unknownVersion");
+  const latestVersion = updateStatus.latestVersion;
+  const modalTitle = updateStatus.available ? t("updateNoticeTitle") : t("currentVersionNoticeTitle");
+  const versionHtml = updateStatus.available
+    ? `<span>v${escapeHtml(currentVersion)}</span><strong>v${escapeHtml(latestVersion)}</strong>`
+    : `<strong>v${escapeHtml(latestVersion)}</strong>`;
+  const modal = document.createElement("section");
+  modal.className = "update-notice-modal";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", modalTitle);
+  modal.innerHTML = `
+    <div class="update-notice-backdrop"></div>
+    <article class="update-notice-panel">
+      <header>
+        <p class="eyebrow">${escapeHtml(t("updateNoticeEyebrow"))}</p>
+        <h3>${escapeHtml(modalTitle)}</h3>
+        <button class="icon-button update-notice-close" type="button" aria-label="${escapeHtml(t("close"))}">×</button>
+      </header>
+      <div class="update-notice-version">
+        ${versionHtml}
+      </div>
+      <pre>${escapeHtml(releaseNotes)}</pre>
+      <footer>
+        <button class="secondary-button update-notice-release" type="button">${escapeHtml(t("openReleasePage"))}</button>
+        <button class="primary-button update-notice-done" type="button">${escapeHtml(t("updateNoticeDone"))}</button>
+      </footer>
+    </article>
+  `;
+  document.body.append(modal);
+
+  const dismiss = () => {
+    modal.remove();
+  };
+  modal.querySelector(".update-notice-backdrop")?.addEventListener("click", dismiss);
+  modal.querySelector(".update-notice-close")?.addEventListener("click", dismiss);
+  modal.querySelector(".update-notice-done")?.addEventListener("click", dismiss);
+  modal.querySelector(".update-notice-release")?.addEventListener("click", () => {
+    void window.bonsai.openUpdatePage(updateStatus.releaseUrl);
+  });
+}
+
+function formatUpdateNoticeNotes(notes: string | undefined) {
+  const normalized = notes?.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return t("updateNoticeNoNotes");
+  return normalized
+    .split("\n")
+    .map((line) => line.replace(/^#{1,6}\s+/, "").trimEnd())
+    .filter((line, index, lines) => line.trim() || (index > 0 && index < lines.length - 1))
+    .join("\n")
+    .slice(0, 4_000);
 }
 
 function renderLeaderboardSettings() {

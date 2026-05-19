@@ -347,6 +347,7 @@ export function appShellHtml(viewMode: ViewMode) {
               <div class="update-actions">
                 <button class="secondary-button" id="checkUpdateButton" type="button" data-i18n="checkUpdate">检查更新</button>
                 <button class="primary-button" id="installUpdateButton" type="button" data-i18n="terminalUpdate">终端更新</button>
+                <button class="secondary-button update-notes-button" id="updateNotesButton" type="button" data-i18n="viewUpdateNotes" hidden>查看更新内容</button>
               </div>
             </div>
           </section>
