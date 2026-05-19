@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-05-19 (v0.5.3)
+
+- Added OpenCode SQLite `opencode.db` ingestion, while keeping the legacy `storage/message/**/*.json` reader as a fallback.
+- Made OpenCode SQLite polling WAL-aware and prevented first-run scans from importing the entire historical database unless history import is explicitly enabled.
+- Updated OpenCode path hints and README source documentation for the current SQLite storage location.
+- Fixed English UI button wrapping across side tabs, leaderboard controls, history/source filters, achievement filters, and update actions.
+
 ## 2026-05-17 (v0.5.2)
 
 - Added Gemini CLI JSONL session-log support, including standalone Gemini logs under `.gemini/tmp/*/chats`.
