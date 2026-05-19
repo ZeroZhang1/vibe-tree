@@ -309,6 +309,7 @@ select {
 
 button {
   cursor: pointer;
+  overflow-wrap: normal;
 }
 
 /* ============================
@@ -882,8 +883,13 @@ h4 {
   box-shadow: var(--pixel-shadow);
   font-size: 0.78rem;
   font-weight: 700;
-  overflow-wrap: anywhere;
+  padding: 0 8px;
+  white-space: nowrap;
   transition: all 0.1s;
+}
+
+html[lang^="en"] .side-tabs {
+  grid-template-columns: 1fr;
 }
 
 .side-tabs button.has-new-achievements::after {
@@ -1443,6 +1449,17 @@ input,
   transition: border-color 0.1s;
 }
 
+.secondary-button,
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+}
+
 select,
 input {
   width: 100%;
@@ -1952,6 +1969,7 @@ label {
   box-shadow: var(--pixel-shadow);
   font-size: 0.68rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 .achievement-preview-button:hover {
@@ -2017,6 +2035,7 @@ label {
   background: transparent;
   font-size: 0.68rem;
   font-weight: 700;
+  white-space: nowrap;
   box-shadow: none;
   transition: color 0.1s, background 0.1s;
 }
@@ -2033,6 +2052,7 @@ label {
 
 .leaderboard-card .section-header {
   align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .leaderboard-header-actions {
@@ -2072,6 +2092,7 @@ label {
   background: transparent;
   font-size: 0.7rem;
   font-weight: 800;
+  white-space: nowrap;
   box-shadow: none;
 }
 
@@ -2282,6 +2303,7 @@ label {
   background: var(--bg-light);
   font-size: 0.68rem;
   font-weight: 700;
+  white-space: nowrap;
   box-shadow: none;
   transition: color 0.1s, border-color 0.1s, background 0.1s;
 }
@@ -2888,6 +2910,7 @@ label {
   background: var(--bg-card);
   font-size: 0.66rem;
   font-weight: 800;
+  white-space: nowrap;
   box-shadow: none;
 }
 
@@ -3880,6 +3903,10 @@ label {
   }
 
   .leaderboard-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .update-actions {
     grid-template-columns: 1fr;
   }
 
