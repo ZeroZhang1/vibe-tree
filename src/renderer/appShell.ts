@@ -380,7 +380,7 @@ export function appShellHtml(viewMode: ViewMode) {
                   <input type="checkbox" data-stats-source="opencode" />
                   <span data-i18n="opencodePath">OpenCode 路径</span>
                 </label>
-                <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/storage/message" aria-label="OpenCode path" />
+                <input id="opencodeSessionsDirInput" type="text" placeholder="~/.local/share/opencode/opencode.db" aria-label="OpenCode path" />
               </div>
               <div class="agent-source-row">
                 <label class="agent-source-toggle">

@@ -82,7 +82,7 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 | Codex | ✅ | `~/.codex/sessions/**/*.jsonl` |
 | Claude Code | ✅ | `~/.claude/projects/**/*.jsonl` |
 | OpenClaw | ✅ | `~/.openclaw/agents/**/sessions/*.jsonl` |
-| OpenCode | ✅ | `~/.local/share/opencode/storage/message/**/*.json` |
+| OpenCode | ✅ | `~/.local/share/opencode/opencode.db`（兼容旧版 `storage/message/**/*.json`） |
 | Gemini | ✅ | 本地 Gemini 会话目录 |
 | Hermes | ✅ | 本地 Hermes 会话目录 |
 
