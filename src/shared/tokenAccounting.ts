@@ -3,12 +3,17 @@ import type { LedgerEntry } from "./types.js";
 export function countedTokensForEntry(entry: LedgerEntry) {
   if (!hasTokenBreakdown(entry)) return safeTokens(entry.tokens);
 
-  const inputTokens = safeTokens(entry.inputTokens ?? 0);
+  const inputTokens = countedInputTokensForEntry(entry);
   const outputTokens = safeTokens(entry.outputTokens ?? 0);
-  const billableInputTokens = usesInclusiveCacheReadInput(entry)
-    ? Math.max(0, inputTokens - safeTokens(entry.cacheReadTokens ?? 0))
-    : inputTokens;
-  return billableInputTokens + outputTokens + safeTokens(entry.cacheWriteTokens ?? 0);
+  const cacheReadTokens = safeTokens(entry.cacheReadTokens ?? 0);
+  const cacheWriteTokens = safeTokens(entry.cacheWriteTokens ?? 0);
+  return inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
+}
+
+export function countedInputTokensForEntry(entry: LedgerEntry) {
+  const inputTokens = safeTokens(entry.inputTokens ?? 0);
+  const cacheReadTokens = safeTokens(entry.cacheReadTokens ?? 0);
+  return inputTokensIncludeCacheRead(entry) ? Math.max(0, inputTokens - cacheReadTokens) : inputTokens;
 }
 
 function hasTokenBreakdown(entry: LedgerEntry) {
@@ -20,7 +25,7 @@ function hasTokenBreakdown(entry: LedgerEntry) {
   );
 }
 
-function usesInclusiveCacheReadInput(entry: LedgerEntry) {
+function inputTokensIncludeCacheRead(entry: LedgerEntry) {
   return entry.source === "codex-session" || entry.agent === "codex-desktop" || entry.source === "gemini-session";
 }
 

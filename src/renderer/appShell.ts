@@ -110,7 +110,7 @@ export function appShellHtml(viewMode: ViewMode) {
           <div class="progress-meta">
             <span class="next-level-help">
               <span id="nextLevelText">距离 Lv.2</span>
-              <span class="help-tip" tabindex="0" aria-label="Token = input + output；Claude 另加 cache write" data-tooltip="Token = input + output；Claude 另加 cache write" data-i18n-tooltip="tokenHelp">?</span>
+              <span class="help-tip" tabindex="0" aria-label="Token = input + output + cache read + cache write" data-tooltip="Token = input + output + cache read + cache write" data-i18n-tooltip="tokenHelp">?</span>
             </span>
             <span id="progressText">0 / 800 token</span>
           </div>

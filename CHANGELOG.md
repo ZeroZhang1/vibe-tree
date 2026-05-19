@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Count cache-read tokens in total token growth while still counting providers with cached input included in `input` only once.
+
 ## 2026-05-17 (v0.5.2)
 
 - Added Gemini CLI JSONL session-log support, including standalone Gemini logs under `.gemini/tmp/*/chats`.
