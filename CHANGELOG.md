@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-05-19 (v0.5.4)
+
+- 修正 Token 统计口径：总成长会计入 cache read，同时避免已经把缓存计入 input 的来源被重复计算。
+- 更新数据来源、历史图表和设置文案里的 Token 说明，让不同 Agent 的统计口径保持一致。
+- 在设置的更新区域新增「查看更新内容」入口：发现新版本时可查看更新公告，已是最新版时也可以回看当前版本内容。
+- 更新检查现在会读取 GitHub Release 正文；如果 Release 不可用，会回退读取本地 changelog，方便内置更新直接展示本次公告。
+
 ## 2026-05-19 (v0.5.3)
 
 - Added OpenCode SQLite `opencode.db` ingestion, while keeping the legacy `storage/message/**/*.json` reader as a fallback.

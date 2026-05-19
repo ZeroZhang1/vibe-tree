@@ -1452,6 +1452,7 @@ function appendUsageEvent(event: UsageEvent) {
     cacheReadTokens: event.cacheReadTokens,
     cacheWriteTokens: event.cacheWriteTokens,
   };
+  entry.tokens = countedTokensForEntry(entry);
   ledger.entries.unshift(entry);
   appendUsageEntryToStore(entry);
   broadcast("bonsai:ledger", ledger);

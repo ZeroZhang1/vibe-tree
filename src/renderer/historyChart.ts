@@ -44,7 +44,7 @@ export function renderHistoryChart(options: RenderHistoryChartOptions) {
 
   historyBars.innerHTML = rows
     .map((row) => {
-      const segmentTotal = filter === "all" ? row.tokens : row.tokens + row.cacheReadTokens + row.cacheWriteTokens;
+      const segmentTotal = row.tokens;
       const height = row.tokens > 0 ? scaledHistoryHeight(row.tokens, max) : 0;
       const segments =
         filter === "all"

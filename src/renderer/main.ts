@@ -14,6 +14,7 @@ import type {
   UsageStatus,
   WindowBounds,
 } from "../shared/types";
+import { countedInputTokensForEntry } from "../shared/tokenAccounting";
 import { ACHIEVEMENTS, CATEGORY_ORDER, rarityOrder } from "./achievements";
 import type { AchievementContext, AchievementDef } from "./achievements";
 import { appShellHtml } from "./appShell";
@@ -3630,7 +3631,7 @@ function getModelBreakdown(sourceKey: string, enabledSources = enabledStatsSourc
         cacheWriteTokens: 0,
       };
     existing.xp += xpForEntry(entry, enabledSources);
-    existing.inputTokens += safeTokens(entry.inputTokens ?? 0);
+    existing.inputTokens += countedInputTokensForEntry(entry);
     existing.outputTokens += safeTokens(entry.outputTokens ?? 0);
     existing.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
     existing.cacheWriteTokens += safeTokens(entry.cacheWriteTokens ?? 0);
