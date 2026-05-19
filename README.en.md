@@ -82,7 +82,7 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 | Codex | ✅ | `~/.codex/sessions/**/*.jsonl` |
 | Claude Code | ✅ | `~/.claude/projects/**/*.jsonl` |
 | OpenClaw | ✅ | `~/.openclaw/agents/**/sessions/*.jsonl` |
-| OpenCode | ✅ | `~/.local/share/opencode/storage/message/**/*.json` |
+| OpenCode | ✅ | `~/.local/share/opencode/opencode.db` (legacy `storage/message/**/*.json` remains supported) |
 | Gemini | ✅ | local Gemini session directory |
 | Hermes | ✅ | local Hermes session directory |
 

@@ -75,9 +75,31 @@ interface HermesSessionRow {
   reasoning_tokens?: number;
 }
 
+interface OpenCodeMessageRow {
+  id: string;
+  session_id: string;
+  time_created: number;
+  data_id?: string;
+  data_session_id?: string;
+  data_session_id_legacy?: string;
+  provider_id?: string;
+  provider_id_legacy?: string;
+  model_id?: string;
+  model_id_legacy?: string;
+  agent?: string;
+  created_at?: string | number;
+  completed_at?: string | number;
+  input_tokens?: number;
+  output_tokens?: number;
+  reasoning_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+}
+
 const READ_CHUNK_SIZE = 64 * 1024;
 const DEFAULT_CLAUDE_ROOT = join(homedir(), ".claude", "projects");
 const DEFAULT_OPENCLAW_ROOT = join(homedir(), ".openclaw", "agents");
+const DEFAULT_OPENCODE_DB = defaultOpenCodeDbPath();
 const DEFAULT_OPENCODE_MESSAGES_ROOT = defaultOpenCodeMessagesRoot();
 const DEFAULT_GEMINI_ROOT = join(homedir(), ".gemini", "tmp");
 const DEFAULT_HERMES_STATE_DB = join(homedir(), ".hermes", "state.db");
@@ -107,16 +129,76 @@ export function startOpenClawSessionWatcher(options: SessionWatcherOptions) {
 }
 
 export function startOpenCodeSessionWatcher(options: SessionWatcherOptions) {
-  return startJsonAgentSessionWatcher(options, {
-    source: "opencode-session",
-    agent: "opencode",
-    sessionsRoot: options.sessionsRoot || process.env.VIBE_OPENCODE_SESSIONS_DIR || DEFAULT_OPENCODE_MESSAGES_ROOT,
-    importHistoryEnv: "VIBE_OPENCODE_IMPORT_HISTORY",
-    stateFileName: "opencode-session-watcher.json",
-    pollIntervalMs: 10_000,
-    fileExtensions: [".json"],
-    parseFile: parseOpenCodeFile,
-  });
+  const target = openCodeWatcherTarget(options.sessionsRoot || process.env.VIBE_OPENCODE_SESSIONS_DIR);
+  if (target.kind === "json") {
+    return startJsonAgentSessionWatcher(options, {
+      source: "opencode-session",
+      agent: "opencode",
+      sessionsRoot: target.path,
+      importHistoryEnv: "VIBE_OPENCODE_IMPORT_HISTORY",
+      stateFileName: "opencode-session-watcher.json",
+      pollIntervalMs: 10_000,
+      fileExtensions: [".json"],
+      parseFile: parseOpenCodeFile,
+    });
+  }
+  return startOpenCodeDbSessionWatcher(options, target.path);
+}
+
+function startOpenCodeDbSessionWatcher(options: SessionWatcherOptions, dbPath: string) {
+  const historyStartAtMs = timestampMs(options.historyStartAt);
+  const importHistory = process.env.VIBE_OPENCODE_IMPORT_HISTORY === "today" || Boolean(historyStartAtMs);
+  const statePath = join(options.userDataPath, "opencode-session-watcher.json");
+  const state = readState(statePath);
+  if (state.historyStartAt !== options.historyStartAt) {
+    state.files = {};
+    state.events = {};
+    state.historyStartAt = options.historyStartAt;
+  }
+  const watcherStartedAt = Date.now();
+  const status: SessionMonitorStatus = {
+    running: true,
+    sessionsRoot: dbPath,
+    exists: existsSync(dbPath),
+    filesWatched: 0,
+    eventsImported: 0,
+    importHistory,
+    historyStartAt: options.historyStartAt,
+  };
+
+  let closed = false;
+
+  const poll = () => {
+    if (closed) return;
+    status.exists = existsSync(dbPath);
+    status.filesWatched = status.exists ? 1 : 0;
+    status.lastScanAt = new Date().toISOString();
+    if (!status.exists) {
+      options.onStatus?.(status);
+      return;
+    }
+
+    const imported = scanOpenCodeDb(dbPath, state, statePath, { importHistory, watcherStartedAt, historyStartAtMs }, options.onUsage);
+    if (imported > 0) {
+      status.eventsImported += imported;
+      status.lastEventAt = new Date().toISOString();
+    }
+    options.onStatus?.(status);
+  };
+
+  poll();
+  const timer = setInterval(poll, 10_000);
+
+  return {
+    close: () => {
+      closed = true;
+      status.running = false;
+      clearInterval(timer);
+      writeState(statePath, state);
+      options.onStatus?.(status);
+    },
+    getStatus: () => status,
+  };
 }
 
 export function startGeminiSessionWatcher(options: SessionWatcherOptions) {
@@ -464,6 +546,130 @@ function scanHermesStateDb(
 
   writeState(statePath, state);
   return imported;
+}
+
+function scanOpenCodeDb(
+  dbPath: string,
+  state: WatchState,
+  statePath: string,
+  settings: { importHistory: boolean; watcherStartedAt: number; historyStartAtMs?: number },
+  onUsage: (event: UsageEvent) => void,
+) {
+  const currentMtime = sqliteDbScanMtime(dbPath);
+  const previousMtime = state.files[dbPath];
+  if (previousMtime !== undefined && currentMtime <= previousMtime) {
+    return 0;
+  }
+
+  const rows = readOpenCodeMessageRows(dbPath);
+  if (!rows) {
+    return 0;
+  }
+  state.files[dbPath] = currentMtime;
+
+  let imported = 0;
+  for (const row of rows) {
+    const event = parseOpenCodeMessageRow(row);
+    if (!event || !usageEventHasTokens(event)) continue;
+
+    if (state.events[event.id]) continue;
+    state.events[event.id] = true;
+    if (!shouldImportOpenCodeDbEvent(event.createdAt, previousMtime === undefined, settings)) continue;
+    onUsage(event);
+    imported += 1;
+  }
+
+  writeState(statePath, state);
+  return imported;
+}
+
+function readOpenCodeMessageRows(dbPath: string): OpenCodeMessageRow[] | undefined {
+  const query = `
+    SELECT
+      id,
+      session_id,
+      time_created,
+      json_extract(data, '$.id') AS data_id,
+      json_extract(data, '$.sessionId') AS data_session_id,
+      json_extract(data, '$.sessionID') AS data_session_id_legacy,
+      json_extract(data, '$.providerId') AS provider_id,
+      json_extract(data, '$.providerID') AS provider_id_legacy,
+      json_extract(data, '$.modelId') AS model_id,
+      json_extract(data, '$.modelID') AS model_id_legacy,
+      json_extract(data, '$.agent') AS agent,
+      json_extract(data, '$.time.created') AS created_at,
+      json_extract(data, '$.time.completed') AS completed_at,
+      json_extract(data, '$.tokens.input') AS input_tokens,
+      json_extract(data, '$.tokens.output') AS output_tokens,
+      json_extract(data, '$.tokens.reasoning') AS reasoning_tokens,
+      json_extract(data, '$.tokens.cache.read') AS cache_read_tokens,
+      json_extract(data, '$.tokens.cache.write') AS cache_write_tokens
+    FROM message
+    WHERE json_extract(data, '$.role') = 'assistant'
+      AND (
+        json_extract(data, '$.tokens.input') > 0
+        OR json_extract(data, '$.tokens.output') > 0
+        OR json_extract(data, '$.tokens.reasoning') > 0
+        OR json_extract(data, '$.tokens.cache.read') > 0
+        OR json_extract(data, '$.tokens.cache.write') > 0
+      )
+    ORDER BY time_created ASC, id ASC
+  `;
+  try {
+    const output = execFileSync("sqlite3", ["-json", dbPath, query], {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(output || "[]");
+    return Array.isArray(parsed) ? (parsed as OpenCodeMessageRow[]) : [];
+  } catch {
+    return undefined;
+  }
+}
+
+function parseOpenCodeMessageRow(row: OpenCodeMessageRow): UsageEvent | undefined {
+  const inputTokens = numberValue(row.input_tokens);
+  const outputTokens = numberValue(row.output_tokens) + numberValue(row.reasoning_tokens);
+  const cacheReadTokens = numberValue(row.cache_read_tokens);
+  const cacheWriteTokens = numberValue(row.cache_write_tokens);
+  const totalTokens = inputTokens + outputTokens;
+  if (totalTokens + cacheReadTokens + cacheWriteTokens <= 0) return undefined;
+
+  const messageId = stringValue(row.data_id) || stringValue(row.id);
+  const sessionId = stringValue(row.data_session_id) || stringValue(row.data_session_id_legacy) || stringValue(row.session_id);
+  const provider = stringValue(row.provider_id) || stringValue(row.provider_id_legacy) || "opencode";
+  const model = stringValue(row.model_id) || stringValue(row.model_id_legacy);
+  const agentName = stringValue(row.agent);
+
+  return {
+    id: `opencode-session:${hash(`${sessionId ?? "unknown"}:${messageId}`)}`,
+    createdAt: timestampToIso(row.completed_at) || timestampToIso(row.created_at) || timestampToIso(row.time_created) || new Date().toISOString(),
+    source: "opencode-session",
+    agent: agentName ? `opencode:${agentName}` : "opencode",
+    provider,
+    model,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    streaming: false,
+  };
+}
+
+function shouldImportOpenCodeDbEvent(
+  createdAt: string,
+  isInitialScan: boolean,
+  settings: { importHistory: boolean; watcherStartedAt: number; historyStartAtMs?: number },
+) {
+  if (isBeforeHistoryStart(createdAt, settings.historyStartAtMs)) return false;
+  if (!isInitialScan) return true;
+
+  const createdAtMs = timestampMs(createdAt);
+  if (!createdAtMs) return false;
+  if (settings.historyStartAtMs) return createdAtMs >= settings.historyStartAtMs - 5_000;
+  if (settings.importHistory) return isTodayTimestamp(createdAtMs);
+  return createdAtMs >= settings.watcherStartedAt - 5_000;
 }
 
 function scanNewLines(filePath: string, start: number, end: number, onLine: (line: string, lineOffset: number) => number) {
@@ -956,6 +1162,55 @@ function isTodaySessionPath(filePath: string) {
     }
   }
   return false;
+}
+
+function openCodeWatcherTarget(configuredPath: string | undefined): { kind: "sqlite" | "json"; path: string } {
+  if (configuredPath) {
+    const directoryDbPath = join(configuredPath, "opencode.db");
+    if (isSqliteDbPath(configuredPath) || isFile(configuredPath)) {
+      return { kind: "sqlite", path: configuredPath };
+    }
+    if (existsSync(directoryDbPath)) {
+      return { kind: "sqlite", path: directoryDbPath };
+    }
+    return { kind: "json", path: configuredPath };
+  }
+
+  if (existsSync(DEFAULT_OPENCODE_DB) || !existsSync(DEFAULT_OPENCODE_MESSAGES_ROOT)) {
+    return { kind: "sqlite", path: DEFAULT_OPENCODE_DB };
+  }
+  return { kind: "json", path: DEFAULT_OPENCODE_MESSAGES_ROOT };
+}
+
+function sqliteDbScanMtime(dbPath: string) {
+  let mtimeMs = statSync(dbPath).mtimeMs;
+  for (const siblingPath of [`${dbPath}-wal`, `${dbPath}-shm`]) {
+    if (!existsSync(siblingPath)) continue;
+    mtimeMs = Math.max(mtimeMs, statSync(siblingPath).mtimeMs);
+  }
+  return mtimeMs;
+}
+
+function isSqliteDbPath(path: string) {
+  return /\.db(?:3|)$/i.test(path);
+}
+
+function isFile(path: string) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function defaultOpenCodeDbPath() {
+  if (process.env.XDG_DATA_HOME) {
+    return join(process.env.XDG_DATA_HOME, "opencode", "opencode.db");
+  }
+  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    return join(process.env.LOCALAPPDATA, "opencode", "opencode.db");
+  }
+  return join(homedir(), ".local", "share", "opencode", "opencode.db");
 }
 
 function defaultOpenCodeMessagesRoot() {
