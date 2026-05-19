@@ -104,11 +104,10 @@ These fields are used only for leaderboard display.
 ## Token Accounting
 
 ```text
-Counted Token = inputTokens + outputTokens
-Anthropic / Claude Code also counts cacheWriteTokens
+Counted Token = inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens
 ```
 
-Some providers include cached input in `inputTokens`; Anthropic reports cache read / write separately. Vibe Tree counts `cacheWriteTokens` as newly created input and shows `cacheReadTokens` as reused context without adding it to growth.
+Some providers include cached input in `inputTokens`; Anthropic reports cache read / write separately. Vibe Tree counts total token consumption per request and counts cached input only once when it is already included in `inputTokens`.
 
 By default, statistics start from the installation day. Older history is ignored unless explicitly imported with environment variables.
 

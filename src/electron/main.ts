@@ -1452,6 +1452,7 @@ function appendUsageEvent(event: UsageEvent) {
     cacheReadTokens: event.cacheReadTokens,
     cacheWriteTokens: event.cacheWriteTokens,
   };
+  entry.tokens = countedTokensForEntry(entry);
   ledger.entries.unshift(entry);
   appendUsageEntryToStore(entry);
   broadcast("bonsai:ledger", ledger);
@@ -1537,6 +1538,7 @@ async function checkForUpdates(options: { manual?: boolean; remind?: boolean; re
       currentVersion,
       latestVersion: latest.version,
       releaseUrl: latest.releaseUrl,
+      releaseNotes: latest.releaseNotes,
       checkedAt,
       error: undefined,
     };
@@ -1585,6 +1587,7 @@ async function fetchLatestUpdate() {
           typeof (release as { html_url?: unknown })?.html_url === "string"
             ? (release as { html_url: string }).html_url
             : UPDATE_PAGE_URL,
+        releaseNotes: normalizeReleaseNotes((release as { body?: unknown })?.body),
       };
     }
   } catch {
@@ -1607,7 +1610,30 @@ async function fetchLatestUpdate() {
   return {
     version: latest.version,
     releaseUrl: UPDATE_PAGE_URL,
+    releaseNotes: releaseNotesFromChangelog(latest.version),
   };
+}
+
+function normalizeReleaseNotes(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const notes = value
+    .replace(/\r\n/g, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .trim();
+  return notes ? notes.slice(0, 8_000) : undefined;
+}
+
+function releaseNotesFromChangelog(version: string) {
+  try {
+    const changelog = readFileSync(join(terminalUpdateRoot() ?? process.cwd(), "CHANGELOG.md"), "utf8");
+    const lines = changelog.split(/\r?\n/);
+    const start = lines.findIndex((line) => /^##\s+/.test(line) && line.includes(`v${version}`));
+    if (start < 0) return undefined;
+    const end = lines.findIndex((line, index) => index > start && /^##\s+/.test(line));
+    return normalizeReleaseNotes(lines.slice(start + 1, end > start ? end : undefined).join("\n"));
+  } catch {
+    return undefined;
+  }
 }
 
 function fetchJson(url: string): Promise<unknown> {
@@ -1755,13 +1781,16 @@ async function installUpdate(): Promise<UpdateStatus> {
     await runUpdateStep(mainText("buildApp"), npmCommand(), ["run", "build"], cwd, UPDATE_BUILD_TIMEOUT_MS);
     await runUpdateStep(mainText("verifyUpdate"), npmCommand(), ["run", "smoke:electron"], cwd, UPDATE_SMOKE_TIMEOUT_MS);
 
+    const installedVersion = currentAppVersion();
+    const installedAt = new Date().toISOString();
+
     updateStatus = {
       ...updateStatus,
       installing: false,
       available: false,
-      currentVersion: currentAppVersion(),
+      currentVersion: installedVersion,
       checkedAt: new Date().toISOString(),
-      installedAt: new Date().toISOString(),
+      installedAt,
       installLog: mainText("updateDone"),
       installError: undefined,
       needsRestart: true,
@@ -2109,6 +2138,10 @@ app.whenReady().then(async () => {
   }
   Menu.setApplicationMenu(null);
   ledger = readLedger();
+  updateStatus = {
+    ...updateStatus,
+    currentVersion: currentAppVersion(),
+  };
   await configureNetworkProxy(ledger.settings.proxyUrl);
   achievementState = readAchievementState();
   leaderboardService.readAuth();

@@ -139,6 +139,7 @@ export interface UpdateStatus {
   currentVersion: string;
   latestVersion?: string;
   releaseUrl?: string;
+  releaseNotes?: string;
   checkedAt?: string;
   error?: string;
   installLog?: string;

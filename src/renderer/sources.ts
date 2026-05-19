@@ -1,5 +1,5 @@
 import type { LedgerEntry, UsageStatus } from "../shared/types";
-import { countedTokensForEntry } from "../shared/tokenAccounting";
+import { countedInputTokensForEntry, countedTokensForEntry } from "../shared/tokenAccounting";
 import type { AgentSource, HistorySourceId, SourceBreakdown, SourceVisibility } from "./types";
 
 export const AGENT_SOURCES = [
@@ -91,7 +91,7 @@ export function getSourceBreakdown(
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
       };
-    existing.inputTokens += safeTokens(entry.inputTokens ?? 0);
+    existing.inputTokens += countedInputTokensForEntry(entry);
     existing.outputTokens += safeTokens(entry.outputTokens ?? 0);
     existing.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
     existing.cacheWriteTokens += safeTokens(entry.cacheWriteTokens ?? 0);
