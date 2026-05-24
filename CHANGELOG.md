@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-05-24 (v0.5.5)
+
+- 新增 Pi Agent Token 统计，自动读取 `~/.pi/agent/sessions/**/*.jsonl` 会话记录。
+- 设置页、数据来源、历史图表、来源统计、托盘状态、成就和排行榜偏好已支持 Pi Agent。
+- 更新 README 中的多 Agent 来源说明，并补充 Pi Agent 默认数据路径。
+
 ## 2026-05-19 (v0.5.4)
 
 - 修正 Token 统计口径：总成长会计入 cache read，同时避免已经把缓存计入 input 的来源被重复计算。
