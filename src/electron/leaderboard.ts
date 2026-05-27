@@ -2,6 +2,9 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { createHash, randomBytes } from "node:crypto";
 import type {
+  AchievementState,
+  AchievementUnlock,
+  CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
   LeaderboardCollection,
@@ -25,6 +28,21 @@ interface LeaderboardAuthSessionResponse {
   token?: string;
 }
 
+interface CloudSyncFile {
+  syncedEntryIds?: string[];
+  syncedAchievementIds?: string[];
+  lastUploadedCount?: number;
+  lastDownloadedCount?: number;
+}
+
+interface CloudTreeResponse {
+  entries?: unknown[];
+  achievements?: unknown[];
+  summary?: {
+    hasRemoteTree?: boolean;
+  };
+}
+
 export interface LeaderboardRequestJsonOptions {
   method?: string;
   token?: string;
@@ -44,8 +62,13 @@ interface LeaderboardServiceOptions {
   authTimeoutMs: number;
   callbackPath: string;
   authPath: () => string;
+  cloudSyncPath: () => string;
+  deviceId: () => string;
   getLedger: () => LedgerFile;
+  getAchievements: () => AchievementState;
   updateSettings: (partial: Partial<Settings>) => void;
+  appendRemoteEntries: (entries: LedgerEntry[]) => number;
+  mergeRemoteAchievements: (unlocked: AchievementUnlock[]) => number;
   xpForEntry: (entry: LedgerEntry) => number;
   dateKey: (date: Date) => string;
   currentAppVersion: () => string;
@@ -64,7 +87,11 @@ export interface LeaderboardSyncOptions {
 export function createLeaderboardService(options: LeaderboardServiceOptions) {
   let auth: LeaderboardAuthFile = {};
   let syncTimer: ReturnType<typeof setTimeout> | null = null;
+  let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
   let syncing = false;
+  let cloudSyncing = false;
+  let lastCloudUploadedCount = 0;
+  let lastCloudDownloadedCount = 0;
   let authServer: http.Server | null = null;
   let lastSyncAttemptAt: string | undefined;
 
@@ -109,12 +136,15 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
 
   function startSync() {
     scheduleNextSync();
+    scheduleCloudSyncSoon();
     broadcast();
   }
 
   function stop() {
     if (syncTimer) clearTimeout(syncTimer);
+    if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
     syncTimer = null;
+    cloudSyncTimer = null;
     authServer?.close();
     authServer = null;
   }
@@ -133,6 +163,37 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     }, nextSyncDelay());
   }
 
+  function scheduleCloudSyncSoon(delayMs = 3_000) {
+    if (cloudSyncTimer) {
+      clearTimeout(cloudSyncTimer);
+      cloudSyncTimer = null;
+    }
+    if (!configured || !auth.token || !ledger().settings.cloudSyncEnabled) return;
+    cloudSyncTimer = setTimeout(() => {
+      cloudSyncTimer = null;
+      void syncCloudTree();
+    }, delayMs);
+  }
+
+  function cloudStatus(error?: string): CloudSyncStatus {
+    const authenticated = Boolean(auth.token && auth.profile);
+    const state = readCloudSyncState();
+    return {
+      configured,
+      authenticated,
+      enabled: Boolean(ledger().settings.cloudSyncEnabled && authenticated),
+      syncing: cloudSyncing,
+      hasRemoteTree: state.syncedEntryIds?.length ? true : undefined,
+      deviceId: ledger().settings.cloudSyncDeviceId,
+      profile: authenticated ? auth.profile : ledger().settings.leaderboardProfile,
+      lastSyncedAt: ledger().settings.cloudSyncLastSyncedAt,
+      lastPulledAt: ledger().settings.cloudSyncLastPulledAt,
+      lastUploadedCount: lastCloudUploadedCount || state.lastUploadedCount,
+      lastDownloadedCount: lastCloudDownloadedCount || state.lastDownloadedCount,
+      error,
+    };
+  }
+
   function nextSyncDelay() {
     const lastSyncedAt = ledger().settings.leaderboardLastSyncedAt ?? lastSyncAttemptAt;
     if (!lastSyncedAt) return Math.min(3_000, options.syncIntervalMs);
@@ -145,13 +206,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     if (!configured) return status(text("leaderboardServiceNotConfigured"));
 
     try {
-      const token = await waitForToken();
-      const profile = await fetchProfile(token);
-      writeAuth({
-        token,
-        profile,
-        createdAt: new Date().toISOString(),
-      });
+      const profile = await authenticate();
       options.updateSettings({
         leaderboardEnabled: true,
         leaderboardProfile: profile,
@@ -161,6 +216,21 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     } catch (error) {
       return status(error instanceof Error ? error.message : text("leaderboardLoginFailed"));
     }
+  }
+
+  async function authenticate() {
+    if (auth.token && auth.profile) return auth.profile;
+    const token = await waitForToken();
+    const profile = await fetchProfile(token);
+    writeAuth({
+      token,
+      profile,
+      createdAt: new Date().toISOString(),
+    });
+    options.updateSettings({
+      leaderboardProfile: profile,
+    });
+    return profile;
   }
 
   async function setEnabled(enabled: boolean): Promise<LeaderboardStatus> {
@@ -189,6 +259,9 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       leaderboardEnabled: false,
       leaderboardProfile: undefined,
       leaderboardLastSyncedAt: undefined,
+      cloudSyncEnabled: false,
+      cloudSyncLastSyncedAt: undefined,
+      cloudSyncLastPulledAt: undefined,
     });
     return status(text("leaderboardLoggedOut"));
   }
@@ -232,6 +305,122 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       const message = error instanceof Error ? error.message : text("leaderboardSyncFailed");
       broadcast(message);
       return status(message);
+    }
+  }
+
+  async function enableCloudSync(): Promise<CloudSyncStatus> {
+    if (!configured) return cloudStatus(text("leaderboardServiceNotConfigured"));
+    try {
+      const profile = await authenticate();
+      const deviceId = options.deviceId();
+      options.updateSettings({
+        cloudSyncEnabled: true,
+        cloudSyncDeviceId: deviceId,
+        leaderboardProfile: profile,
+        treeStartMode: ledger().settings.treeStartMode ?? "new",
+      });
+      return await syncCloudTree({ force: true });
+    } catch (error) {
+      return cloudStatus(error instanceof Error ? error.message : text("leaderboardLoginFailed"));
+    }
+  }
+
+  async function joinCloudTree(): Promise<CloudSyncStatus> {
+    if (!configured) return cloudStatus(text("leaderboardServiceNotConfigured"));
+    try {
+      const profile = await authenticate();
+      options.updateSettings({
+        cloudSyncEnabled: true,
+        cloudSyncDeviceId: options.deviceId(),
+        leaderboardProfile: profile,
+        treeStartMode: "cloud",
+      });
+      return await syncCloudTree({ force: true, pullFirst: true });
+    } catch (error) {
+      return cloudStatus(error instanceof Error ? error.message : text("leaderboardLoginFailed"));
+    }
+  }
+
+  async function syncCloudTree(syncOptions: { force?: boolean; pullFirst?: boolean } = {}): Promise<CloudSyncStatus> {
+    if (!configured) return cloudStatus(text("leaderboardServiceNotConfigured"));
+    if (!auth.token || !auth.profile) return cloudStatus(text("leaderboardLoginRequired"));
+    if (!ledger().settings.cloudSyncEnabled) return cloudStatus();
+    if (cloudSyncing) return cloudStatus();
+
+    cloudSyncing = true;
+    let state = readCloudSyncState();
+    let uploadedCount = 0;
+    let downloadedCount = 0;
+
+    try {
+      if (syncOptions.pullFirst) {
+        const pulled = await pullCloudTree();
+        downloadedCount += pulled.downloaded;
+        state = mergeCloudState(state, pulled.entries, pulled.achievements);
+      }
+
+      const syncedEntryIds = new Set(syncOptions.force ? [] : state.syncedEntryIds ?? []);
+      const localEntries = ledger().entries.filter((entry) => !syncedEntryIds.has(entry.id));
+      for (const chunk of chunkArray(localEntries, 500)) {
+        if (!chunk.length) continue;
+        await requestJson(apiUrl("/api/tree/events"), {
+          method: "POST",
+          token: auth.token,
+          body: {
+            deviceId: options.deviceId(),
+            entries: chunk.map((entry) => cloudEntry(entry, options.deviceId())),
+            appVersion: options.currentAppVersion(),
+          },
+        });
+        uploadedCount += chunk.length;
+        for (const entry of chunk) syncedEntryIds.add(entry.id);
+      }
+
+      const syncedAchievementIds = new Set(syncOptions.force ? [] : state.syncedAchievementIds ?? []);
+      const localAchievements = options.getAchievements().unlocked.filter((item) => !syncedAchievementIds.has(item.id));
+      if (localAchievements.length) {
+        await requestJson(apiUrl("/api/tree/achievements"), {
+          method: "POST",
+          token: auth.token,
+          body: {
+            achievements: localAchievements.map(cloudAchievement),
+            appVersion: options.currentAppVersion(),
+          },
+        });
+        for (const achievement of localAchievements) syncedAchievementIds.add(achievement.id);
+      }
+
+      const pulled = await pullCloudTree();
+      downloadedCount += pulled.downloaded;
+      state = mergeCloudState(
+        {
+          ...state,
+          syncedEntryIds: [...syncedEntryIds],
+          syncedAchievementIds: [...syncedAchievementIds],
+        },
+        pulled.entries,
+        pulled.achievements,
+      );
+
+      lastCloudUploadedCount = uploadedCount;
+      lastCloudDownloadedCount = downloadedCount;
+      writeCloudSyncState({
+        ...state,
+        lastUploadedCount: uploadedCount,
+        lastDownloadedCount: downloadedCount,
+      });
+      options.updateSettings({
+        cloudSyncEnabled: true,
+        cloudSyncDeviceId: options.deviceId(),
+        cloudSyncLastSyncedAt: new Date().toISOString(),
+        cloudSyncLastPulledAt: new Date().toISOString(),
+      });
+      cloudSyncing = false;
+      return cloudStatus();
+    } catch (error) {
+      cloudSyncing = false;
+      scheduleCloudSyncSoon(30_000);
+      return cloudStatus(error instanceof Error ? error.message : text("leaderboardSyncFailed"));
     }
   }
 
@@ -281,6 +470,50 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       LeaderboardData
     >;
     return { ranges };
+  }
+
+  async function pullCloudTree() {
+    const data = await requestJson<CloudTreeResponse>(apiUrl("/api/tree"), { token: auth.token });
+    const entries = normalizeCloudEntries(data.entries ?? []);
+    const achievements = normalizeCloudAchievements(data.achievements ?? []);
+    const downloaded = options.appendRemoteEntries(entries);
+    options.mergeRemoteAchievements(achievements);
+    return { entries, achievements, downloaded };
+  }
+
+  function readCloudSyncState(): CloudSyncFile {
+    const state = options.readJsonFile<CloudSyncFile>(options.cloudSyncPath());
+    return {
+      syncedEntryIds: Array.isArray(state?.syncedEntryIds)
+        ? state.syncedEntryIds.filter((id): id is string => typeof id === "string")
+        : [],
+      syncedAchievementIds: Array.isArray(state?.syncedAchievementIds)
+        ? state.syncedAchievementIds.filter((id): id is string => typeof id === "string")
+        : [],
+      lastUploadedCount: positiveInteger(state?.lastUploadedCount),
+      lastDownloadedCount: positiveInteger(state?.lastDownloadedCount),
+    };
+  }
+
+  function writeCloudSyncState(state: CloudSyncFile) {
+    options.writeJsonAtomic(options.cloudSyncPath(), {
+      syncedEntryIds: [...new Set(state.syncedEntryIds ?? [])],
+      syncedAchievementIds: [...new Set(state.syncedAchievementIds ?? [])],
+      lastUploadedCount: positiveInteger(state.lastUploadedCount) ?? 0,
+      lastDownloadedCount: positiveInteger(state.lastDownloadedCount) ?? 0,
+    });
+  }
+
+  function mergeCloudState(state: CloudSyncFile, entries: LedgerEntry[], achievements: AchievementUnlock[]) {
+    return {
+      ...state,
+      syncedEntryIds: [
+        ...new Set([...(state.syncedEntryIds ?? []), ...entries.map((entry) => entry.id)]),
+      ],
+      syncedAchievementIds: [
+        ...new Set([...(state.syncedAchievementIds ?? []), ...achievements.map((item) => item.id)]),
+      ],
+    };
   }
 
   function waitForToken(): Promise<string> {
@@ -551,6 +784,11 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     logout,
     setEnabled,
     syncUsage,
+    cloudStatus,
+    enableCloudSync,
+    joinCloudTree,
+    syncCloudTree,
+    scheduleCloudSyncSoon,
     getLeaderboard,
     getLeaderboards,
   };
@@ -573,6 +811,94 @@ function normalizeProfile(value: unknown): LeaderboardProfile | undefined {
   const avatarUrl =
     typeof profile?.avatarUrl === "string" && profile.avatarUrl.trim() ? profile.avatarUrl.trim() : undefined;
   return { id, username, avatarUrl };
+}
+
+function cloudEntry(entry: LedgerEntry, deviceId: string) {
+  return {
+    id: entry.id,
+    createdAt: entry.createdAt,
+    source: entry.source,
+    tokens: Math.max(0, Math.round(entry.tokens)),
+    note: cleanOptionalString(entry.note, 180),
+    agent: cleanOptionalString(entry.agent, 80),
+    provider: cleanOptionalString(entry.provider, 80),
+    model: cleanOptionalString(entry.model, 120),
+    inputTokens: optionalCount(entry.inputTokens),
+    outputTokens: optionalCount(entry.outputTokens),
+    cacheReadTokens: optionalCount(entry.cacheReadTokens),
+    cacheWriteTokens: optionalCount(entry.cacheWriteTokens),
+    deviceId: entry.deviceId || deviceId,
+  };
+}
+
+function cloudAchievement(item: AchievementUnlock) {
+  return {
+    id: item.id,
+    unlockedAt: item.unlockedAt,
+    trigger: item.trigger,
+  };
+}
+
+function normalizeCloudEntries(values: unknown[]) {
+  const entries: LedgerEntry[] = [];
+  for (const value of values) {
+    const input = value as Partial<LedgerEntry> | undefined;
+    if (!input || typeof input.id !== "string" || typeof input.createdAt !== "string") continue;
+    if (!Number.isFinite(Date.parse(input.createdAt))) continue;
+    entries.push({
+      id: input.id,
+      createdAt: input.createdAt,
+      source: typeof input.source === "string" && input.source.trim() ? input.source.trim() : "cloud",
+      tokens: optionalCount(input.tokens) ?? 0,
+      note: cleanOptionalString(input.note, 180),
+      agent: cleanOptionalString(input.agent, 80),
+      provider: cleanOptionalString(input.provider, 80),
+      model: cleanOptionalString(input.model, 120),
+      inputTokens: optionalCount(input.inputTokens),
+      outputTokens: optionalCount(input.outputTokens),
+      cacheReadTokens: optionalCount(input.cacheReadTokens),
+      cacheWriteTokens: optionalCount(input.cacheWriteTokens),
+      deviceId: cleanOptionalString(input.deviceId, 80),
+    });
+  }
+  return entries;
+}
+
+function normalizeCloudAchievements(values: unknown[]) {
+  const achievements: AchievementUnlock[] = [];
+  for (const value of values) {
+    const input = value as Partial<AchievementUnlock> | undefined;
+    if (!input || typeof input.id !== "string" || typeof input.unlockedAt !== "string") continue;
+    if (!Number.isFinite(Date.parse(input.unlockedAt))) continue;
+    achievements.push({
+      id: input.id,
+      unlockedAt: input.unlockedAt,
+      trigger: input.trigger && typeof input.trigger === "object" ? input.trigger : undefined,
+    });
+  }
+  return achievements;
+}
+
+function cleanOptionalString(value: unknown, maxLength: number) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+}
+
+function optionalCount(value: unknown) {
+  const number = Math.round(Number(value));
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+function positiveInteger(value: unknown) {
+  const number = Math.round(Number(value));
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function normalizeRange(value: unknown): LeaderboardRange {

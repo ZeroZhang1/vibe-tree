@@ -1060,6 +1060,137 @@ html[lang^="en"] .side-tabs {
   background: color-mix(in srgb, var(--leaf) 12%, transparent);
 }
 
+.tree-start-modal {
+  position: fixed;
+  inset: var(--window-chrome-height) 0 0;
+  z-index: 26;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 74%, transparent), color-mix(in srgb, var(--bg) 88%, transparent)),
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--leaf) 10%, transparent) 0 1px,
+      transparent 1px 9px
+    );
+}
+
+.tree-start-card {
+  width: min(720px, calc(100vw - 40px));
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--ink);
+  background: var(--bg-card);
+  box-shadow: var(--pixel-shadow-lg), 0 0 0 1px color-mix(in srgb, var(--leaf) 12%, transparent);
+}
+
+.tree-start-card h2 {
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  line-height: 1.08;
+}
+
+.tree-start-card > p:not(.eyebrow) {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.tree-start-feedback {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.tree-start-feedback:empty {
+  display: none;
+}
+
+.tree-start-feedback[data-tone="busy"] {
+  border-color: color-mix(in srgb, var(--leaf) 32%, var(--border));
+  color: var(--leaf);
+  background: color-mix(in srgb, var(--leaf) 8%, transparent);
+}
+
+.tree-start-feedback[data-tone="error"] {
+  border-color: color-mix(in srgb, var(--hp-red) 42%, var(--border));
+  color: var(--ink);
+  background: color-mix(in srgb, var(--hp-red) 12%, transparent);
+}
+
+.tree-start-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tree-start-option {
+  min-height: 132px;
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--bg-light) 92%, transparent), var(--bg-card)),
+    var(--bg-card);
+  box-shadow: var(--pixel-shadow);
+  text-align: left;
+}
+
+.tree-start-option::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  border: 2px solid currentColor;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  box-shadow: inset 4px 4px 0 color-mix(in srgb, #ffffff 16%, transparent);
+}
+
+.tree-start-option strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.tree-start-option span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.tree-start-option:hover,
+.tree-start-option:focus-visible {
+  color: var(--leaf);
+  border-color: var(--leaf);
+  transform: translate(-1px, -1px);
+}
+
+.tree-start-option.is-primary {
+  color: var(--leaf);
+  border-color: color-mix(in srgb, var(--leaf) 70%, var(--border-strong));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--leaf) 15%, var(--bg-card)), var(--bg-card)),
+    var(--bg-card);
+}
+
+.tree-start-option.is-disabled {
+  color: var(--muted);
+}
+
 .settings-modal {
   position: fixed;
   inset: 0;
@@ -1403,6 +1534,29 @@ html[lang^="en"] .side-tabs {
 .leaderboard-settings {
   display: grid;
   gap: 8px;
+}
+
+.cloud-sync-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.cloud-sync-settings .leaderboard-status {
+  border-color: color-mix(in srgb, var(--leaf) 34%, var(--border-strong));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--leaf) 10%, transparent), transparent 62%),
+    var(--bg-light);
+}
+
+.cloud-sync-settings .leaderboard-help {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-light) 78%, transparent);
+}
+
+.cloud-sync-settings .leaderboard-actions {
+  grid-template-columns: 1fr;
 }
 
 .leaderboard-user-card,

@@ -11,6 +11,7 @@ export interface LedgerEntry {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  deviceId?: string;
 }
 
 export type AppLanguage = "zh-CN" | "en-US";
@@ -31,6 +32,21 @@ export interface LeaderboardStatus {
   syncing: boolean;
   profile?: LeaderboardProfile;
   lastSyncedAt?: string;
+  error?: string;
+}
+
+export interface CloudSyncStatus {
+  configured: boolean;
+  authenticated: boolean;
+  enabled: boolean;
+  syncing: boolean;
+  hasRemoteTree?: boolean;
+  deviceId?: string;
+  profile?: LeaderboardProfile;
+  lastSyncedAt?: string;
+  lastPulledAt?: string;
+  lastUploadedCount?: number;
+  lastDownloadedCount?: number;
   error?: string;
 }
 
@@ -91,6 +107,11 @@ export interface Settings {
   leaderboardProfile?: LeaderboardProfile;
   leaderboardLastSyncedAt?: string;
   leaderboardPreferencesPublic: boolean;
+  cloudSyncEnabled: boolean;
+  cloudSyncDeviceId?: string;
+  cloudSyncLastSyncedAt?: string;
+  cloudSyncLastPulledAt?: string;
+  treeStartMode?: "new" | "cloud";
   launchOnStartup: boolean;
   silentStartup: boolean;
   proxyUrl?: string;

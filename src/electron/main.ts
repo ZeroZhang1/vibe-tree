@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notificati
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { MenuItemConstructorOptions } from "electron";
 import type {
@@ -9,6 +10,7 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   AppLanguage,
+  CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
   LeaderboardProfile,
@@ -85,6 +87,11 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardProfile: undefined,
   leaderboardLastSyncedAt: undefined,
   leaderboardPreferencesPublic: false,
+  cloudSyncEnabled: false,
+  cloudSyncDeviceId: undefined,
+  cloudSyncLastSyncedAt: undefined,
+  cloudSyncLastPulledAt: undefined,
+  treeStartMode: undefined,
   launchOnStartup: false,
   silentStartup: false,
   proxyUrl: undefined,
@@ -201,8 +208,13 @@ const leaderboardService = createLeaderboardService({
   authTimeoutMs: LEADERBOARD_AUTH_TIMEOUT_MS,
   callbackPath: LEADERBOARD_CALLBACK_PATH,
   authPath: leaderboardAuthPath,
+  cloudSyncPath,
+  deviceId: () => ensureCloudSyncDeviceId(),
   getLedger: () => ledger,
   updateSettings,
+  appendRemoteEntries,
+  getAchievements: () => achievementState,
+  mergeRemoteAchievements,
   xpForEntry,
   dateKey,
   currentAppVersion,
@@ -236,6 +248,10 @@ function achievementsPath() {
 
 function leaderboardAuthPath() {
   return join(app.getPath("userData"), "leaderboard-auth.json");
+}
+
+function cloudSyncPath() {
+  return join(app.getPath("userData"), "cloud-sync.json");
 }
 
 function sanitizeShareImageFilename(value: unknown) {
@@ -328,7 +344,6 @@ function proxyRulesFromValue(rawProxy: string | undefined) {
 function readLedger(): LedgerFile {
   const legacy = readLegacyLedger();
   const installedAt = readInstalledAt(legacy);
-  const settings = readDeviceSettings(legacy?.settings);
   let entries = readUsageEntries();
 
   if (!entries.length && legacy?.entries?.length) {
@@ -337,9 +352,11 @@ function readLedger(): LedgerFile {
       appendUsageEntryToStore(entry);
     }
   }
+  const filteredEntries = entries.filter((entry) => entryTime(entry) >= Date.parse(installedAt));
+  const settings = readDeviceSettings(legacy?.settings, filteredEntries.length > 0);
 
   return {
-    entries: entries.filter((entry) => entryTime(entry) >= Date.parse(installedAt)),
+    entries: filteredEntries,
     settings,
     installedAt,
   };
@@ -381,16 +398,21 @@ function legacyInstallDate() {
   return new Date().toISOString();
 }
 
-function readDeviceSettings(legacySettings: Partial<Settings> | undefined): Settings {
+function readDeviceSettings(legacySettings: Partial<Settings> | undefined, hasLocalTreeData = false): Settings {
   const stored = readJsonFile<Partial<Settings>>(deviceSettingsPath());
   const language = normalizeLanguage(stored?.language ?? legacySettings?.language ?? detectSystemLanguage());
-  const settings = normalizeSettings({
+  let migratedTreeStartMode = false;
+  let settings = normalizeSettings({
     ...DEFAULT_SETTINGS,
     language,
     ...(legacySettings ?? {}),
     ...(stored ?? {}),
   });
-  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined) {
+  if (!settings.treeStartMode && hasLocalTreeData) {
+    settings = normalizeSettings({ ...settings, treeStartMode: "new" });
+    migratedTreeStartMode = true;
+  }
+  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined || migratedTreeStartMode) {
     writeDeviceSettings(settings);
   }
   return settings;
@@ -488,6 +510,14 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     typeof settings.leaderboardLastSyncedAt === "string" && Number.isFinite(Date.parse(settings.leaderboardLastSyncedAt))
       ? settings.leaderboardLastSyncedAt
       : undefined;
+  const cloudSyncLastSyncedAt =
+    typeof settings.cloudSyncLastSyncedAt === "string" && Number.isFinite(Date.parse(settings.cloudSyncLastSyncedAt))
+      ? settings.cloudSyncLastSyncedAt
+      : undefined;
+  const cloudSyncLastPulledAt =
+    typeof settings.cloudSyncLastPulledAt === "string" && Number.isFinite(Date.parse(settings.cloudSyncLastPulledAt))
+      ? settings.cloudSyncLastPulledAt
+      : undefined;
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
@@ -506,6 +536,11 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardProfile,
     leaderboardLastSyncedAt,
     leaderboardPreferencesPublic: Boolean(settings.leaderboardPreferencesPublic),
+    cloudSyncEnabled: Boolean(settings.cloudSyncEnabled && leaderboardProfile),
+    cloudSyncDeviceId: cleanDeviceId(settings.cloudSyncDeviceId),
+    cloudSyncLastSyncedAt,
+    cloudSyncLastPulledAt,
+    treeStartMode: settings.treeStartMode === "new" || settings.treeStartMode === "cloud" ? settings.treeStartMode : undefined,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
     proxyUrl: cleanProxyUrl(settings.proxyUrl),
@@ -523,6 +558,10 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     geminiSessionsDir: cleanPath(settings.geminiSessionsDir),
     hermesSessionsDir: cleanPath(settings.hermesSessionsDir),
   };
+}
+
+function cleanDeviceId(value: unknown) {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{8,80}$/.test(value) ? value : undefined;
 }
 
 function normalizeUiTheme(value: unknown): Settings["uiTheme"] {
@@ -1432,13 +1471,17 @@ function updateSettings(partial: Partial<Settings>) {
   }
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
+    previous.cloudSyncEnabled !== ledger.settings.cloudSyncEnabled ||
     previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id
   ) {
     leaderboardService.startSync();
   } else if (
     partial.leaderboardEnabled !== undefined ||
     partial.leaderboardProfile !== undefined ||
-    partial.leaderboardLastSyncedAt !== undefined
+    partial.leaderboardLastSyncedAt !== undefined ||
+    partial.cloudSyncEnabled !== undefined ||
+    partial.cloudSyncLastSyncedAt !== undefined ||
+    partial.cloudSyncLastPulledAt !== undefined
   ) {
     leaderboardService.broadcast();
   }
@@ -1457,6 +1500,14 @@ function updateSettings(partial: Partial<Settings>) {
   broadcast("bonsai:ledger", ledger);
 }
 
+function ensureCloudSyncDeviceId() {
+  if (ledger.settings.cloudSyncDeviceId) return ledger.settings.cloudSyncDeviceId;
+  const deviceId = `device_${randomUUID().replace(/-/g, "")}`;
+  ledger.settings = normalizeSettings({ ...ledger.settings, cloudSyncDeviceId: deviceId });
+  writeDeviceSettings();
+  return ledger.settings.cloudSyncDeviceId ?? deviceId;
+}
+
 function appendUsageEvent(event: UsageEvent) {
   if (ledger.entries.some((entry) => entry.id === event.id)) return;
 
@@ -1473,12 +1524,53 @@ function appendUsageEvent(event: UsageEvent) {
     outputTokens: event.outputTokens,
     cacheReadTokens: event.cacheReadTokens,
     cacheWriteTokens: event.cacheWriteTokens,
+    deviceId: ensureCloudSyncDeviceId(),
   };
   entry.tokens = countedTokensForEntry(entry);
   ledger.entries.unshift(entry);
   appendUsageEntryToStore(entry);
   broadcast("bonsai:ledger", ledger);
   refreshTrayMenu();
+  leaderboardService.scheduleCloudSyncSoon();
+}
+
+function appendRemoteEntries(entries: LedgerEntry[]) {
+  const existing = new Set(ledger.entries.map((entry) => entry.id));
+  const accepted: LedgerEntry[] = [];
+  for (const entry of entries) {
+    if (!isEntry(entry) || existing.has(entry.id)) continue;
+    existing.add(entry.id);
+    const normalized: LedgerEntry = {
+      ...entry,
+      tokens: countedTokensForEntry(entry),
+    };
+    accepted.push(normalized);
+    appendUsageEntryToStore(normalized);
+  }
+  if (!accepted.length) return 0;
+  ledger.entries = [...accepted, ...ledger.entries].sort((a, b) => entryTime(b) - entryTime(a));
+  broadcast("bonsai:ledger", ledger);
+  refreshTrayMenu();
+  return accepted.length;
+}
+
+function mergeRemoteAchievements(unlocked: AchievementUnlock[]) {
+  const existing = new Set(achievementState.unlocked.map((item) => item.id));
+  const merged = [...achievementState.unlocked];
+  for (const item of unlocked) {
+    if (existing.has(item.id)) continue;
+    existing.add(item.id);
+    merged.push(item);
+  }
+  const added = merged.length - achievementState.unlocked.length;
+  if (!added) return 0;
+  achievementState = normalizeAchievementState({
+    ...achievementState,
+    unlocked: merged,
+  });
+  writeAchievementState();
+  broadcast("bonsai:achievements", achievementState, []);
+  return added;
 }
 
 function broadcast(channel: string, ...args: unknown[]) {
@@ -2221,6 +2313,14 @@ ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
 );
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("leaderboard:get-all", () => leaderboardService.getLeaderboards());
+ipcMain.handle("cloud-sync:get-status", (): CloudSyncStatus => leaderboardService.cloudStatus());
+ipcMain.handle("cloud-sync:start-new", () => {
+  updateSettings({ treeStartMode: "new" });
+  return leaderboardService.cloudStatus();
+});
+ipcMain.handle("cloud-sync:enable", () => leaderboardService.enableCloudSync());
+ipcMain.handle("cloud-sync:join-existing", () => leaderboardService.joinCloudTree());
+ipcMain.handle("cloud-sync:sync", () => leaderboardService.syncCloudTree({ force: true }));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
   unlockAchievements(Array.isArray(items) ? items : []),

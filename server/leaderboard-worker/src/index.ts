@@ -97,6 +97,9 @@ export default {
       if (url.pathname === "/auth/session" && request.method === "POST") return await exchangeAuthSession(request, env);
       if (url.pathname === "/api/me" && request.method === "GET") return await getMe(request, env);
       if (url.pathname === "/api/me" && request.method === "DELETE") return await deleteMe(request, env);
+      if (url.pathname === "/api/tree" && request.method === "GET") return await getCloudTree(request, env);
+      if (url.pathname === "/api/tree/events" && request.method === "POST") return await syncCloudTreeEvents(request, env);
+      if (url.pathname === "/api/tree/achievements" && request.method === "POST") return await syncCloudTreeAchievements(request, env);
       if (url.pathname === "/api/usage/daily" && request.method === "POST") return await syncDailyUsage(request, env);
       if (url.pathname === "/api/leaderboards" && request.method === "GET") return await getLeaderboards(request, env);
       if (url.pathname === "/api/leaderboard" && request.method === "GET") return await getLeaderboard(request, env);
@@ -172,7 +175,14 @@ function rateLimitPolicy(request: Request): { name: RateLimitName; keyPrefix: st
   if (route === "POST /auth/session") {
     return { name: "AUTH_RATE_LIMITER", keyPrefix: "auth:/auth/session" };
   }
-  if (route === "GET /api/me" || route === "DELETE /api/me" || route === "POST /api/usage/daily") {
+  if (
+    route === "GET /api/me" ||
+    route === "DELETE /api/me" ||
+    route === "GET /api/tree" ||
+    route === "POST /api/tree/events" ||
+    route === "POST /api/tree/achievements" ||
+    route === "POST /api/usage/daily"
+  ) {
     return { name: "WRITE_RATE_LIMITER", keyPrefix: `api:${url.pathname}` };
   }
 
@@ -386,8 +396,11 @@ async function getMe(request: Request, env: Env) {
 async function deleteMe(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
+  await ensureCloudTreeTables(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_events WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_achievements WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM auth_codes WHERE user_id = ?").bind(user.userId),
@@ -396,6 +409,89 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM users WHERE user_id = ?").bind(user.userId),
   ]);
   return json({ ok: true }, env);
+}
+
+async function getCloudTree(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  const [eventRows, achievementRows] = await Promise.all([
+    env.DB.prepare(
+      `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source, agent, provider, model,
+              tokens, input_tokens AS inputTokens, output_tokens AS outputTokens,
+              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens, note
+       FROM tree_events
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 50000`,
+    ).bind(user.userId).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      `SELECT achievement_id AS id, unlocked_at AS unlockedAt, trigger_json AS triggerJson
+       FROM tree_achievements
+       WHERE user_id = ?
+       ORDER BY unlocked_at ASC`,
+    ).bind(user.userId).all<Record<string, unknown>>(),
+  ]);
+  const entries = (eventRows.results || []).map((row) => ({
+    id: String(row.id),
+    deviceId: typeof row.deviceId === "string" ? row.deviceId : undefined,
+    createdAt: String(row.createdAt),
+    source: String(row.source || "cloud"),
+    agent: typeof row.agent === "string" ? row.agent : undefined,
+    provider: typeof row.provider === "string" ? row.provider : undefined,
+    model: typeof row.model === "string" ? row.model : undefined,
+    tokens: numberOrZero(row.tokens),
+    inputTokens: optionalNumber(row.inputTokens),
+    outputTokens: optionalNumber(row.outputTokens),
+    cacheReadTokens: optionalNumber(row.cacheReadTokens),
+    cacheWriteTokens: optionalNumber(row.cacheWriteTokens),
+    note: typeof row.note === "string" ? row.note : undefined,
+  }));
+  const achievements = (achievementRows.results || []).map((row) => ({
+    id: String(row.id),
+    unlockedAt: String(row.unlockedAt),
+    trigger: parseTrigger(row.triggerJson),
+  }));
+  return json({
+    entries,
+    achievements,
+    summary: {
+      hasRemoteTree: entries.length > 0 || achievements.length > 0,
+      entryCount: entries.length,
+      achievementCount: achievements.length,
+    },
+  }, env);
+}
+
+async function syncCloudTreeEvents(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  const body = await request.json().catch(() => undefined) as
+    | { deviceId?: string; entries?: unknown[]; appVersion?: string }
+    | undefined;
+  const deviceId = cleanShortText(body?.deviceId, 80);
+  if (!deviceId) throw new HttpError(400, "Device id is required.", {}, "invalid_payload");
+  const appVersion = cleanShortText(body?.appVersion, 32) ?? null;
+  const entries = Array.isArray(body?.entries) ? body.entries.slice(0, 500) : [];
+  const now = new Date().toISOString();
+  const statements = entries.map((raw) => normalizeCloudTreeEvent(raw, user.userId, deviceId, appVersion, now, env)).filter(Boolean);
+  if (statements.length) await env.DB.batch(statements as D1PreparedStatement[]);
+  return json({ ok: true, synced: statements.length }, env);
+}
+
+async function syncCloudTreeAchievements(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  const body = await request.json().catch(() => undefined) as
+    | { achievements?: unknown[]; appVersion?: string }
+    | undefined;
+  const appVersion = cleanShortText(body?.appVersion, 32) ?? null;
+  const achievements = Array.isArray(body?.achievements) ? body.achievements.slice(0, 500) : [];
+  const now = new Date().toISOString();
+  const statements = achievements
+    .map((raw) => normalizeCloudTreeAchievement(raw, user.userId, appVersion, now, env))
+    .filter(Boolean);
+  if (statements.length) await env.DB.batch(statements as D1PreparedStatement[]);
+  return json({ ok: true, synced: statements.length }, env);
 }
 
 async function syncDailyUsage(request: Request, env: Env) {
@@ -532,6 +628,163 @@ async function ensureUsagePreferencesTable(env: Env) {
     ),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_usage_preferences_user ON usage_preferences(user_id)"),
   ]);
+}
+
+async function ensureCloudTreeTables(env: Env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_events (
+        user_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        device_id TEXT,
+        created_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        agent TEXT,
+        provider TEXT,
+        model TEXT,
+        tokens INTEGER NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        note TEXT,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, event_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_achievements (
+        user_id TEXT NOT NULL,
+        achievement_id TEXT NOT NULL,
+        unlocked_at TEXT NOT NULL,
+        trigger_json TEXT,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, achievement_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_user_created ON tree_events(user_id, created_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_device ON tree_events(user_id, device_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_achievements_user ON tree_achievements(user_id)"),
+  ]);
+}
+
+function normalizeCloudTreeEvent(
+  raw: unknown,
+  userId: string,
+  fallbackDeviceId: string,
+  appVersion: string | null,
+  now: string,
+  env: Env,
+) {
+  const input = raw as Record<string, unknown> | undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const eventId = cleanShortText(input.id, 160);
+  const createdAt = typeof input.createdAt === "string" && Number.isFinite(Date.parse(input.createdAt))
+    ? input.createdAt
+    : "";
+  const source = cleanShortText(input.source, 80);
+  const tokens = normalizeTokenCount(input.tokens);
+  if (!eventId || !createdAt || !source || tokens === undefined) return undefined;
+  return env.DB.prepare(
+    `INSERT INTO tree_events (
+       user_id, event_id, device_id, created_at, source, agent, provider, model, tokens,
+       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, note, app_version, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, event_id) DO UPDATE SET
+       device_id = excluded.device_id,
+       created_at = excluded.created_at,
+       source = excluded.source,
+       agent = excluded.agent,
+       provider = excluded.provider,
+       model = excluded.model,
+       tokens = excluded.tokens,
+       input_tokens = excluded.input_tokens,
+       output_tokens = excluded.output_tokens,
+       cache_read_tokens = excluded.cache_read_tokens,
+       cache_write_tokens = excluded.cache_write_tokens,
+       note = excluded.note,
+       app_version = excluded.app_version,
+       updated_at = excluded.updated_at`,
+  ).bind(
+    userId,
+    eventId,
+    cleanShortText(input.deviceId, 80) ?? fallbackDeviceId,
+    createdAt,
+    source,
+    cleanShortText(input.agent, 80) ?? null,
+    cleanShortText(input.provider, 80) ?? null,
+    cleanShortText(input.model, 120) ?? null,
+    tokens,
+    normalizeTokenCount(input.inputTokens) ?? null,
+    normalizeTokenCount(input.outputTokens) ?? null,
+    normalizeTokenCount(input.cacheReadTokens) ?? null,
+    normalizeTokenCount(input.cacheWriteTokens) ?? null,
+    cleanShortText(input.note, 180) ?? null,
+    appVersion,
+    now,
+  );
+}
+
+function normalizeCloudTreeAchievement(
+  raw: unknown,
+  userId: string,
+  appVersion: string | null,
+  now: string,
+  env: Env,
+) {
+  const input = raw as Record<string, unknown> | undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const achievementId = cleanShortText(input.id, 160);
+  const unlockedAt = typeof input.unlockedAt === "string" && Number.isFinite(Date.parse(input.unlockedAt))
+    ? input.unlockedAt
+    : "";
+  if (!achievementId || !unlockedAt) return undefined;
+  return env.DB.prepare(
+    `INSERT INTO tree_achievements (user_id, achievement_id, unlocked_at, trigger_json, app_version, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, achievement_id) DO UPDATE SET
+       unlocked_at = excluded.unlocked_at,
+       trigger_json = excluded.trigger_json,
+       app_version = excluded.app_version,
+       updated_at = excluded.updated_at`,
+  ).bind(userId, achievementId, unlockedAt, safeTriggerJson(input.trigger), appVersion, now);
+}
+
+function normalizeTokenCount(value: unknown) {
+  const number = Math.round(Number(value));
+  return Number.isFinite(number) && number >= 0 && number <= MAX_DAILY_ACCEPTED_TOKENS ? number : undefined;
+}
+
+function numberOrZero(value: unknown) {
+  return normalizeTokenCount(value) ?? 0;
+}
+
+function optionalNumber(value: unknown) {
+  return normalizeTokenCount(value);
+}
+
+function safeTriggerJson(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  try {
+    return JSON.stringify(value).slice(0, 1000);
+  } catch {
+    return null;
+  }
+}
+
+function parseTrigger(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeDailyUsageRows(

@@ -2,6 +2,7 @@ import type {
   AchievementState,
   AchievementUnlock,
   AchievementUnlockResult,
+  CloudSyncStatus,
   LedgerFile,
   LeaderboardCollection,
   LeaderboardData,
@@ -35,6 +36,11 @@ declare global {
       syncLeaderboard: (options?: { force?: boolean }) => Promise<LeaderboardStatus>;
       getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
       getLeaderboards: () => Promise<LeaderboardCollection>;
+      getCloudSyncStatus: () => Promise<CloudSyncStatus>;
+      startNewTree: () => Promise<CloudSyncStatus>;
+      enableCloudSync: () => Promise<CloudSyncStatus>;
+      joinExistingTree: () => Promise<CloudSyncStatus>;
+      syncCloudTree: () => Promise<CloudSyncStatus>;
       getAchievements: () => Promise<AchievementState>;
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;
       previewAchievementToast: (id: string) => Promise<boolean>;

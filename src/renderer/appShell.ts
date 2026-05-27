@@ -77,6 +77,25 @@ export function appShellHtml(viewMode: ViewMode) {
         </button>
       </div>
 
+      <section class="tree-start-modal" id="treeStartModal" hidden>
+        <div class="tree-start-card">
+          <p class="eyebrow" data-i18n="treeStartEyebrow">First run</p>
+          <h2 data-i18n="treeStartTitle">你想怎么开始？</h2>
+          <p data-i18n="treeStartCopy">可以新养一棵树，也可以登录后接着已有的小树继续成长。</p>
+          <div class="tree-start-feedback" id="treeStartFeedback" aria-live="polite"></div>
+          <div class="tree-start-options">
+            <button class="tree-start-option" id="treeStartNewButton" type="button">
+              <strong data-i18n="treeStartNewTitle">新养一棵树</strong>
+              <span data-i18n="treeStartNewCopy">从这台设备的新 token 开始统计。</span>
+            </button>
+            <button class="tree-start-option is-primary" id="treeStartExistingButton" type="button">
+              <strong data-i18n="treeStartExistingTitle">接着养已有小树</strong>
+              <span data-i18n="treeStartExistingCopy">登录同一个账号，拉取云端等级和成就。</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section class="dashboard">
         <header class="dashboard-header">
           <div>
@@ -289,6 +308,22 @@ export function appShellHtml(viewMode: ViewMode) {
                 <option value="en-US" data-i18n="languageEnglish">English</option>
               </select>
             </label>
+          </section>
+
+          <section class="settings-section">
+            <h4 data-i18n="cloudSyncTitle">同养一棵树</h4>
+            <div class="cloud-sync-settings">
+              <div class="leaderboard-status" id="cloudSyncStatusText"></div>
+              <div class="leaderboard-help">
+                <strong data-i18n="cloudSyncPrivacyTitle">同步内容</strong>
+                <p data-i18n="cloudSyncPrivacyCopy">只同步 token 事件、设备 id 和成就状态，不上传提示词、回复、文件内容或本地路径。</p>
+              </div>
+              <div class="leaderboard-actions">
+                <button class="secondary-button" id="cloudSyncEnableButton" type="button" data-i18n="cloudSyncEnable">开启同步</button>
+                <button class="secondary-button" id="cloudSyncJoinButton" type="button" data-i18n="cloudSyncJoin">接着已有小树</button>
+                <button class="secondary-button" id="cloudSyncNowButton" type="button" data-i18n="syncNow">立即同步</button>
+              </div>
+            </div>
           </section>
 
           <section class="settings-section">

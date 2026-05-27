@@ -2,6 +2,7 @@ import type {
   AchievementState,
   AchievementUnlock,
   AppLanguage,
+  CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
   LeaderboardData,
@@ -147,6 +148,12 @@ let leaderboardStatus: LeaderboardStatus = {
   configured: false,
   authenticated: false,
   joined: false,
+  syncing: false,
+};
+let cloudSyncStatus: CloudSyncStatus = {
+  configured: false,
+  authenticated: false,
+  enabled: false,
   syncing: false,
 };
 let leaderboardRange: LeaderboardRange = "7d";
@@ -324,6 +331,14 @@ const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRa
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
 const leaderboardRows = document.querySelector<HTMLElement>("#leaderboardRows");
 const shareExportButton = document.querySelector<HTMLButtonElement>("#shareExportButton");
+const treeStartModal = document.querySelector<HTMLElement>("#treeStartModal");
+const treeStartNewButton = document.querySelector<HTMLButtonElement>("#treeStartNewButton");
+const treeStartExistingButton = document.querySelector<HTMLButtonElement>("#treeStartExistingButton");
+const treeStartFeedback = document.querySelector<HTMLElement>("#treeStartFeedback");
+const cloudSyncStatusText = document.querySelector<HTMLElement>("#cloudSyncStatusText");
+const cloudSyncEnableButton = document.querySelector<HTMLButtonElement>("#cloudSyncEnableButton");
+const cloudSyncJoinButton = document.querySelector<HTMLButtonElement>("#cloudSyncJoinButton");
+const cloudSyncNowButton = document.querySelector<HTMLButtonElement>("#cloudSyncNowButton");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -671,11 +686,12 @@ async function boot() {
   gameBalance = DEFAULT_GAME_BALANCE;
   renderInitialTreePreview();
 
-  const [nextLedger, nextUsageStatus, nextUpdateStatus, nextLeaderboardStatus, nextAchievementState] = await Promise.all([
+  const [nextLedger, nextUsageStatus, nextUpdateStatus, nextLeaderboardStatus, nextCloudSyncStatus, nextAchievementState] = await Promise.all([
     window.bonsai.getLedger(),
     window.bonsai.getUsageStatus(),
     window.bonsai.getUpdateStatus(),
     window.bonsai.getLeaderboardStatus(),
+    window.bonsai.getCloudSyncStatus(),
     window.bonsai.getAchievements(),
   ]);
   ledger = nextLedger;
@@ -683,6 +699,7 @@ async function boot() {
   usageStatus = nextUsageStatus;
   updateStatus = nextUpdateStatus;
   leaderboardStatus = nextLeaderboardStatus;
+  cloudSyncStatus = nextCloudSyncStatus;
   achievementState = nextAchievementState;
   initializeSeenAchievements();
   hydrateLeaderboardCache();
@@ -953,6 +970,57 @@ function bindEvents() {
 
   releasePageButton?.addEventListener("click", () => {
     void window.bonsai.openUpdatePage();
+  });
+
+  treeStartNewButton?.addEventListener("click", async () => {
+    setTreeStartFeedback(t("treeStartSaving"), "busy");
+    treeStartNewButton.disabled = true;
+    cloudSyncStatus = await window.bonsai.startNewTree();
+    ledger = await window.bonsai.getLedger();
+    treeStartNewButton.disabled = false;
+    setTreeStartFeedback("");
+    render();
+  });
+
+  treeStartExistingButton?.addEventListener("click", async () => {
+    setTreeStartFeedback(t("treeStartJoining"), "busy");
+    treeStartExistingButton.disabled = true;
+    cloudSyncStatus = await window.bonsai.joinExistingTree();
+    ledger = await window.bonsai.getLedger();
+    achievementState = await window.bonsai.getAchievements();
+    treeStartExistingButton.disabled = false;
+    if (!ledger.settings.treeStartMode) {
+      setTreeStartFeedback(cloudSyncStatus.error || cloudSyncStatusCopy(), "error");
+    } else {
+      setTreeStartFeedback("");
+    }
+    render();
+  });
+
+  cloudSyncEnableButton?.addEventListener("click", async () => {
+    cloudSyncEnableButton.disabled = true;
+    cloudSyncStatus = await window.bonsai.enableCloudSync();
+    ledger = await window.bonsai.getLedger();
+    cloudSyncEnableButton.disabled = false;
+    render();
+  });
+
+  cloudSyncJoinButton?.addEventListener("click", async () => {
+    cloudSyncJoinButton.disabled = true;
+    cloudSyncStatus = await window.bonsai.joinExistingTree();
+    ledger = await window.bonsai.getLedger();
+    achievementState = await window.bonsai.getAchievements();
+    cloudSyncJoinButton.disabled = false;
+    render();
+  });
+
+  cloudSyncNowButton?.addEventListener("click", async () => {
+    cloudSyncNowButton.disabled = true;
+    cloudSyncStatus = await window.bonsai.syncCloudTree();
+    ledger = await window.bonsai.getLedger();
+    achievementState = await window.bonsai.getAchievements();
+    cloudSyncNowButton.disabled = false;
+    render();
   });
 
   leaderboardMembershipButton?.addEventListener("click", async () => {
@@ -2271,6 +2339,8 @@ function render() {
     syncInputValue(hermesSessionsDirInput, ledger.settings.hermesSessionsDir ?? "");
 
     renderUpdateStatus();
+    renderCloudSyncSettings();
+    renderTreeStartModal();
     renderLeaderboardSettings();
     renderLeaderboard();
     if (historyFilter !== "all" && !visibility.visibleSet.has(historyFilter)) {
@@ -3235,6 +3305,55 @@ function formatUpdateNoticeNotes(notes: string | undefined) {
     .filter((line, index, lines) => line.trim() || (index > 0 && index < lines.length - 1))
     .join("\n")
     .slice(0, 4_000);
+}
+
+function renderTreeStartModal() {
+  if (!treeStartModal || !ledger) return;
+  const visible = !ledger.settings.treeStartMode;
+  treeStartModal.hidden = !visible;
+  if (!visible) setTreeStartFeedback("");
+  if (visible && treeStartExistingButton) {
+    treeStartExistingButton.classList.toggle("is-disabled", !cloudSyncStatus.configured);
+  }
+}
+
+function setTreeStartFeedback(message: string, tone: "busy" | "error" | "" = "") {
+  if (!treeStartFeedback) return;
+  treeStartFeedback.textContent = message;
+  treeStartFeedback.dataset.tone = tone;
+}
+
+function renderCloudSyncSettings() {
+  if (cloudSyncStatusText) {
+    const lines = [
+      `<strong>${escapeHtml(cloudSyncStatus.enabled ? t("cloudSyncEnabled") : t("cloudSyncDisabled"))}</strong>`,
+      `<span>${escapeHtml(cloudSyncStatusCopy())}</span>`,
+    ];
+    cloudSyncStatusText.innerHTML = lines.join("");
+  }
+  if (cloudSyncEnableButton) {
+    cloudSyncEnableButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
+    cloudSyncEnableButton.textContent = cloudSyncStatus.syncing ? t("cloudSyncSyncing") : t("cloudSyncEnable");
+  }
+  if (cloudSyncJoinButton) {
+    cloudSyncJoinButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
+  }
+  if (cloudSyncNowButton) {
+    cloudSyncNowButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.enabled;
+    cloudSyncNowButton.textContent = cloudSyncStatus.syncing ? t("cloudSyncSyncing") : t("syncNow");
+  }
+}
+
+function cloudSyncStatusCopy() {
+  if (!cloudSyncStatus.configured) return t("cloudSyncNotConfigured");
+  if (cloudSyncStatus.error) return cloudSyncStatus.error;
+  if (!cloudSyncStatus.authenticated) return t("cloudSyncLoginRequired");
+  if (!cloudSyncStatus.enabled) return t("cloudSyncOffHint");
+  if (cloudSyncStatus.syncing) return t("cloudSyncSyncing");
+  const pieces = [];
+  if (cloudSyncStatus.lastSyncedAt) pieces.push(`${t("leaderboardLastSynced")} ${formatRelativeTime(cloudSyncStatus.lastSyncedAt)}`);
+  if (cloudSyncStatus.deviceId) pieces.push(`${t("device")} ${cloudSyncStatus.deviceId.slice(-6)}`);
+  return pieces.join(" · ") || t("cloudSyncReady");
 }
 
 function renderLeaderboardSettings() {
