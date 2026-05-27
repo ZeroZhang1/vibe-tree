@@ -922,8 +922,6 @@ async function leaderboardDataForRange(
   env: Env,
   updatedAt: string,
 ) {
-  const today = localDateKey(new Date());
-  const since = rangeStart(range, today);
   const query =
     range === "all"
       ? `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
@@ -944,7 +942,13 @@ async function leaderboardDataForRange(
          HAVING tokens > 0
          ORDER BY tokens DESC
          LIMIT 100`
-      : `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+      : `WITH user_current_date AS (
+           SELECT user_id, MAX(date) AS currentDate
+           FROM daily_usage
+           WHERE date >= ? AND date <= ?
+           GROUP BY user_id
+         )
+         SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
            SUM(d.xp) AS tokens,
            (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
            p.favorite_agent_label AS favoriteAgentLabel,
@@ -955,16 +959,22 @@ async function leaderboardDataForRange(
            p.favorite_period_end AS favoritePeriodEnd,
            p.peak_tokens_per_minute AS peakTokensPerMinute,
            p.updated_at AS preferenceUpdatedAt
-         FROM daily_usage d
+         FROM user_current_date c
+         JOIN daily_usage d ON d.user_id = c.user_id
          JOIN users u ON u.user_id = d.user_id
          LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
-         WHERE d.date >= ?
+         WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
          GROUP BY u.user_id
          HAVING tokens > 0
          ORDER BY tokens DESC
          LIMIT 100`;
+  const currentWindow = currentLocalDateWindow(new Date());
   const result =
-    range === "all" ? await env.DB.prepare(query).bind(range).all() : await env.DB.prepare(query).bind(range, since).all();
+    range === "all"
+      ? await env.DB.prepare(query).bind(range).all()
+      : await env.DB.prepare(query)
+        .bind(currentWindow.earliest, currentWindow.latest, range, rangeDateModifier(range))
+        .all();
   const entries = (result.results || []).map((row, index) => ({
     rank: index + 1,
     userId: String(row.userId),
@@ -1217,11 +1227,19 @@ function normalizePreferenceCount(value: unknown) {
   return Number.isFinite(count) ? Math.max(0, Math.min(MAX_DAILY_ACCEPTED_TOKENS, count)) : undefined;
 }
 
-function rangeStart(range: LeaderboardRange, today: string) {
-  if (range === "today") return today;
-  if (range === "30d") return addDays(today, -29);
-  if (range === "7d") return addDays(today, -6);
-  return "0000-01-01";
+function rangeDateModifier(range: LeaderboardRange) {
+  if (range === "today") return "0 days";
+  if (range === "30d") return "-29 days";
+  if (range === "7d") return "-6 days";
+  return "-99999 days";
+}
+
+function currentLocalDateWindow(now: Date) {
+  const utcToday = localDateKey(now);
+  return {
+    earliest: addDays(utcToday, -1),
+    latest: addDays(utcToday, 1),
+  };
 }
 
 function normalizeUsageStartDate(value: unknown) {

@@ -14,6 +14,8 @@ const now = "2026-05-27T00:00:00.000Z";
 const expiresAt = "2099-01-01T00:00:00.000Z";
 const port = 17_000 + Math.floor(Math.random() * 1_000);
 const baseUrl = `http://127.0.0.1:${port}`;
+const utcToday = dateKey(new Date());
+const eastOfUtcToday = addDays(utcToday, 1);
 let devProcess;
 
 try {
@@ -131,8 +133,11 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
     method: "POST",
     body: {
       appVersion: "0.5.5-test",
-      usageStartDate: "2026-05-27",
-      days: [{ date: "2026-05-27", tokens: 1234 }],
+      usageStartDate: utcToday,
+      days: [
+        { date: utcToday, tokens: 1234 },
+        { date: eastOfUtcToday, tokens: 4321 },
+      ],
       usagePreferencesPublic: true,
       usagePreferences: [
         {
@@ -145,16 +150,26 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
       ],
     },
   });
+  let todayLeaderboard = await requestJson("/api/leaderboard?range=today");
+  assert(
+    todayLeaderboard.entries?.[0]?.tokens === 4321,
+    "leaderboard today should use a user's latest local daily row, not UTC today plus tomorrow",
+  );
 
   await requestJson("/api/usage/daily", {
     method: "POST",
     body: {
       appVersion: "0.5.5-test",
       forceSync: true,
-      usageStartDate: "2026-05-27",
-      days: [{ date: "2026-05-27", tokens: 4321 }],
+      usageStartDate: utcToday,
+      days: [
+        { date: utcToday, tokens: 1234 },
+        { date: eastOfUtcToday, tokens: 5000 },
+      ],
     },
   });
+  todayLeaderboard = await requestJson("/api/leaderboard?range=today");
+  assert(todayLeaderboard.entries?.[0]?.tokens === 5000, "forced leaderboard sync should update the local today row");
 
   await assertRejects(
     () =>
@@ -162,8 +177,8 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
         method: "POST",
         body: {
           appVersion: "0.5.5-test",
-          usageStartDate: "2026-05-27",
-          days: [{ date: "2026-05-27", tokens: 5678 }],
+          usageStartDate: utcToday,
+          days: [{ date: eastOfUtcToday, tokens: 5678 }],
         },
       }),
     "non-forced leaderboard sync should still honor cooldown",
@@ -334,6 +349,16 @@ function terminate(child) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function dateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(value, days) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return dateKey(date);
 }
 
 async function assertRejects(action, message) {
