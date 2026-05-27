@@ -1076,6 +1076,10 @@ html[lang^="en"] .side-tabs {
     );
 }
 
+.tree-start-modal[hidden] {
+  display: none;
+}
+
 .tree-start-card {
   width: min(720px, calc(100vw - 40px));
   display: grid;
@@ -2839,6 +2843,10 @@ label {
   background: #fbbc04;
 }
 
+.history-tooltip-dot.cloud {
+  background: #7dd3fc;
+}
+
 .legend-codex,
 .history-segment.codex {
   background: var(--token-input);
@@ -2872,6 +2880,11 @@ label {
 .legend-hermes,
 .history-segment.hermes {
   background: #fbbc04;
+}
+
+.legend-cloud,
+.history-segment.cloud {
+  background: #7dd3fc;
 }
 
 /* ============================

@@ -20,14 +20,14 @@ export function renderHistoryChart(options: RenderHistoryChartOptions) {
   const visibleSources = visibility.visible;
   const labels = Object.fromEntries([
     ["all", t("historyAllSources")],
-    ...AGENT_SOURCES.map((source) => [source.id, source.label]),
+    ...AGENT_SOURCES.map((source) => [source.id, sourceLabel(source.id, t)]),
   ]) as Record<HistoryFilter, string>;
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
   const max = Math.max(1, ...rows.map((row) => row.tokens));
 
   if (historySummary) historySummary.textContent = `${labels[filter]} · ${formatCompact(total)} token`;
   if (historyLegend) {
-    historyLegend.innerHTML = filter === "all" ? historyAgentLegendHtml(visibility, escapeHtml) : historyTokenLegendHtml();
+    historyLegend.innerHTML = filter === "all" ? historyAgentLegendHtml(visibility, t, escapeHtml) : historyTokenLegendHtml();
   }
 
   historyTabs?.querySelectorAll<HTMLButtonElement>("[data-history-filter]").forEach((button) => {
@@ -67,7 +67,7 @@ export function renderHistoryChart(options: RenderHistoryChartOptions) {
               ${segments}
             </div>
           </div>
-          ${historyTooltipHtml(row, filter, visibility, escapeHtml)}
+          ${historyTooltipHtml(row, filter, visibility, t, escapeHtml)}
           <strong>${formatCompact(row.tokens)}</strong>
           <span>${row.label}</span>
         </article>
@@ -98,12 +98,13 @@ function historyTooltipHtml(
   row: HistoryDayRow,
   filter: HistoryFilter,
   visibility: SourceVisibility,
+  t: (key: string) => string,
   escapeHtml: (value: string) => string,
 ) {
   const items =
     filter === "all"
       ? visibility.visible.map((sourceId) => ({
-          label: AGENT_SOURCES.find((source) => source.id === sourceId)?.label ?? sourceId,
+          label: sourceLabel(sourceId, t),
           value: row.sources[sourceId],
           tone: sourceId,
         }))
@@ -146,13 +147,21 @@ function historyTokenLegendHtml() {
   `;
 }
 
-function historyAgentLegendHtml(visibility: SourceVisibility, escapeHtml: (value: string) => string) {
+function historyAgentLegendHtml(
+  visibility: SourceVisibility,
+  t: (key: string) => string,
+  escapeHtml: (value: string) => string,
+) {
   return visibility.visible
     .map((sourceId) => {
-      const source = AGENT_SOURCES.find((item) => item.id === sourceId);
-      return `<span><i class="legend-${sourceId}"></i>${escapeHtml(source?.label ?? sourceId)}</span>`;
+      return `<span><i class="legend-${sourceId}"></i>${escapeHtml(sourceLabel(sourceId, t))}</span>`;
     })
     .join("");
+}
+
+function sourceLabel(sourceId: string, t: (key: string) => string) {
+  if (sourceId === "cloud") return t("cloudSource");
+  return AGENT_SOURCES.find((source) => source.id === sourceId)?.label ?? sourceId;
 }
 
 function segmentPercent(value: number, total: number) {

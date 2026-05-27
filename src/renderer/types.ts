@@ -3,7 +3,7 @@ import type { AchievementCategory } from "./i18n";
 
 export type WeatherId = "clear" | "breeze" | "drizzle" | "rain" | "thunder" | "storm";
 export type ViewMode = "pet" | "manager" | "toast";
-export type HistorySourceId = "codex" | "openclaw" | "pi" | "opencode" | "claude" | "gemini" | "hermes";
+export type HistorySourceId = "codex" | "openclaw" | "pi" | "opencode" | "claude" | "gemini" | "hermes" | "cloud";
 export type HistoryFilter = "all" | HistorySourceId;
 export type SourceScope = "today" | "total";
 export type BadgeMetric = "level" | "total" | "rate";
@@ -89,7 +89,7 @@ export interface SourceVisibility {
 export interface AgentSource {
   id: HistorySourceId;
   label: string;
-  statusKey: keyof UsageStatus;
+  statusKey?: keyof UsageStatus;
 }
 
 export type BaseStatsSnapshot = Pick<

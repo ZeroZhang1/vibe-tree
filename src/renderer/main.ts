@@ -378,6 +378,7 @@ function setupHistoryCard() {
         <button type="button" data-history-filter="claude">Claude Code</button>
         <button type="button" data-history-filter="gemini">Gemini</button>
         <button type="button" data-history-filter="hermes">Hermes</button>
+        <button type="button" data-history-filter="cloud" data-i18n="cloudSource">云端小树</button>
       </div>
     </div>
     <div class="history-legend" id="historyLegend" aria-label="token 类型" data-i18n-aria="historyTokenAria">
@@ -645,7 +646,18 @@ function sourceMonitorStatus(sourceId: HistorySourceId) {
 }
 
 function sourceVisibility(): SourceVisibility {
-  return buildSourceVisibility(usageStatus, ledger?.settings.enabledSourceIds);
+  const visibility = buildSourceVisibility(usageStatus, ledger?.settings.enabledSourceIds);
+  if (shouldShowCloudSource()) return visibility;
+  const visible = visibility.visible.filter((sourceId) => sourceId !== "cloud");
+  return {
+    ...visibility,
+    visible,
+    visibleSet: new Set(visible),
+  };
+}
+
+function shouldShowCloudSource() {
+  return Boolean(ledger?.settings.cloudSyncEnabled || ledger?.entries.some((entry) => historySourceId(entry) === "cloud"));
 }
 
 function achievementText(def: AchievementDef): Pick<AchievementDef, "name" | "description" | "flavor"> {
@@ -2851,7 +2863,7 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
     if (isFibonacci(xp)) hasFibonacciSession = true;
 
     const source = historySourceId(entry);
-    if (source) {
+    if (source && source !== "cloud") {
       activeSources.add(source);
       sourceXp[source] += xp;
       const sources = daySources.get(key) ?? new Set<HistorySourceId>();
@@ -3068,7 +3080,10 @@ function maxTokensPerMinute(events: Array<{ time: number; xp: number }>, windowS
 function hasAgentSwitchWithin(entries: LedgerEntry[], windowMs: number) {
   const sorted = entries
     .map((entry) => ({ time: new Date(entry.createdAt).getTime(), source: historySourceId(entry) }))
-    .filter((item): item is { time: number; source: HistorySourceId } => Boolean(item.source) && Number.isFinite(item.time))
+    .filter(
+      (item): item is { time: number; source: HistorySourceId } =>
+        Boolean(item.source) && item.source !== "cloud" && Number.isFinite(item.time),
+    )
     .sort((a, b) => a.time - b.time);
   for (let index = 1; index < sorted.length; index += 1) {
     if (sorted[index].source !== sorted[index - 1].source && sorted[index].time - sorted[index - 1].time <= windowMs) {
@@ -3684,6 +3699,16 @@ type SourceRowView = SourceBreakdown & {
 function getMonitorSourceRows(rows: SourceBreakdown[], visibility = sourceVisibility()): SourceRowView[] {
   return AGENT_SOURCES.filter((source) => visibility.visibleSet.has(source.id)).map((monitor) => {
     const matches = rows.filter((row) => sourceMatchesBreakdownRow(row, monitor.id));
+    if (monitor.id === "cloud") {
+      return {
+        ...combineSourceRows(t("cloudSource"), matches),
+        sourceKey: monitor.id,
+        status: t("sourceSynced"),
+        statusClass: "running",
+        meta: t("readingCloudRecords"),
+        compact: false,
+      };
+    }
     return {
       ...combineSourceRows(monitor.label, matches),
       sourceKey: monitor.id,
@@ -3833,7 +3858,7 @@ function ledgerEntriesSignature() {
 function usageStatusSignature() {
   if (!usageStatus) return "no-usage-status";
   return AGENT_SOURCES.map((source) => {
-    const status = usageStatus?.[source.statusKey];
+    const status = source.statusKey ? usageStatus?.[source.statusKey] : undefined;
     return [
       source.id,
       status?.exists ? "1" : "0",

@@ -10,6 +10,7 @@ export const AGENT_SOURCES = [
   { id: "claude", label: "Claude Code", statusKey: "claudeSession" },
   { id: "gemini", label: "Gemini", statusKey: "geminiSession" },
   { id: "hermes", label: "Hermes", statusKey: "hermesSession" },
+  { id: "cloud", label: "Cloud Tree", statusKey: undefined },
 ] as const satisfies ReadonlyArray<AgentSource>;
 
 export const ALL_HISTORY_SOURCE_IDS = AGENT_SOURCES.map((source) => source.id);
@@ -25,7 +26,9 @@ export function isHistorySourceId(value: unknown): value is HistorySourceId {
 
 export function enabledStatsSourceIds(raw: unknown): HistorySourceId[] {
   if (!Array.isArray(raw)) return allStatsSourceIds();
-  return [...new Set(raw)].filter(isHistorySourceId);
+  const normalized = [...new Set(raw)].filter(isHistorySourceId);
+  if (!normalized.includes("cloud")) normalized.push("cloud");
+  return normalized;
 }
 
 export function enabledStatsSourceSet(raw: unknown) {
@@ -34,7 +37,7 @@ export function enabledStatsSourceSet(raw: unknown) {
 
 export function sourceMonitorStatus(usageStatus: UsageStatus | null, sourceId: HistorySourceId) {
   const source = AGENT_SOURCES.find((item) => item.id === sourceId);
-  return source && usageStatus ? usageStatus[source.statusKey] : undefined;
+  return source?.statusKey && usageStatus ? usageStatus[source.statusKey] : undefined;
 }
 
 export function isStatsSourceInstalled(usageStatus: UsageStatus | null, sourceId: HistorySourceId) {
@@ -56,6 +59,7 @@ export function sourceVisibility(usageStatus: UsageStatus | null, enabledSourceI
 }
 
 export function historySourceId(entry: LedgerEntry): HistorySourceId | undefined {
+  if (entry.source === "cloud-sync") return "cloud";
   if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
   if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
   if (entry.source === "pi-session" || entry.agent === "pi-agent") return "pi";
@@ -115,6 +119,7 @@ export function sourceMatchesBreakdownRow(row: SourceBreakdown, sourceId: Histor
   }
   if (sourceId === "gemini") return row.id === "gemini" || row.id === "gemini-session" || row.label === "Gemini";
   if (sourceId === "hermes") return row.id === "hermes" || row.id === "hermes-session" || row.label === "Hermes";
+  if (sourceId === "cloud") return row.id === "cloud-sync" || row.label === "Cloud Tree";
   return false;
 }
 
@@ -142,6 +147,7 @@ export function entryMatchesSourceKey(entry: LedgerEntry, sourceKey: string) {
   }
   if (sourceKey === "gemini") return entry.source === "gemini-session" || entry.agent === "gemini";
   if (sourceKey === "hermes") return entry.source === "hermes-session" || entry.agent === "hermes";
+  if (sourceKey === "cloud") return entry.source === "cloud-sync";
   if (sourceKey.startsWith("source:")) {
     const id = sourceKey.slice("source:".length);
     const entryId = entry.source === "manual" ? "manual" : entry.agent || entry.source;
@@ -161,11 +167,12 @@ export function defaultSourceLabel(id: string, source: string, manualLabel: stri
   if (id === "opencode" || source === "opencode-session") return "OpenCode";
   if (id === "gemini" || source === "gemini-session") return "Gemini";
   if (id === "hermes" || source === "hermes-session") return "Hermes";
+  if (id === "cloud-sync" || source === "cloud-sync") return "Cloud Tree";
   return id;
 }
 
 export function emptySourceTotals(): Record<HistorySourceId, number> {
-  return { codex: 0, openclaw: 0, pi: 0, opencode: 0, claude: 0, gemini: 0, hermes: 0 };
+  return { codex: 0, openclaw: 0, pi: 0, opencode: 0, claude: 0, gemini: 0, hermes: 0, cloud: 0 };
 }
 
 export function safeTokens(value: number) {

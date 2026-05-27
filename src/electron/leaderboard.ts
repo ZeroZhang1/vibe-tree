@@ -183,7 +183,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       authenticated,
       enabled: Boolean(ledger().settings.cloudSyncEnabled && authenticated),
       syncing: cloudSyncing,
-      hasRemoteTree: state.syncedEntryIds?.length ? true : undefined,
+      hasRemoteTree: state.syncedEntryIds?.length || state.syncedAchievementIds?.length ? true : undefined,
       deviceId: ledger().settings.cloudSyncDeviceId,
       profile: authenticated ? auth.profile : ledger().settings.leaderboardProfile,
       lastSyncedAt: ledger().settings.cloudSyncLastSyncedAt,
@@ -249,19 +249,15 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     const token = auth.token;
     if (token && configured) {
       try {
-        await requestJson(apiUrl("/api/me"), { method: "DELETE", token });
+        await requestJson(apiUrl("/api/leaderboard"), { method: "DELETE", token });
       } catch {
-        // Local opt-out should still succeed even if the remote service is unavailable.
+        // Local leaderboard opt-out should still succeed even if the remote service is unavailable.
       }
     }
-    clearAuth();
     options.updateSettings({
       leaderboardEnabled: false,
-      leaderboardProfile: undefined,
       leaderboardLastSyncedAt: undefined,
-      cloudSyncEnabled: false,
-      cloudSyncLastSyncedAt: undefined,
-      cloudSyncLastPulledAt: undefined,
+      leaderboardPreferencesPublic: false,
     });
     return status(text("leaderboardLoggedOut"));
   }
@@ -333,15 +329,21 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         cloudSyncEnabled: true,
         cloudSyncDeviceId: options.deviceId(),
         leaderboardProfile: profile,
-        treeStartMode: "cloud",
       });
-      return await syncCloudTree({ force: true, pullFirst: true });
+      const result = await syncCloudTree({ force: true, pullFirst: true, requireRemote: true });
+      if (result.error) {
+        options.updateSettings({ cloudSyncEnabled: false });
+        return cloudStatus(result.error);
+      }
+      return result;
     } catch (error) {
       return cloudStatus(error instanceof Error ? error.message : text("leaderboardLoginFailed"));
     }
   }
 
-  async function syncCloudTree(syncOptions: { force?: boolean; pullFirst?: boolean } = {}): Promise<CloudSyncStatus> {
+  async function syncCloudTree(
+    syncOptions: { force?: boolean; pullFirst?: boolean; requireRemote?: boolean } = {},
+  ): Promise<CloudSyncStatus> {
     if (!configured) return cloudStatus(text("leaderboardServiceNotConfigured"));
     if (!auth.token || !auth.profile) return cloudStatus(text("leaderboardLoginRequired"));
     if (!ledger().settings.cloudSyncEnabled) return cloudStatus();
@@ -355,12 +357,15 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     try {
       if (syncOptions.pullFirst) {
         const pulled = await pullCloudTree();
+        if (syncOptions.requireRemote && !pulled.hasRemoteTree) {
+          throw new Error(text("cloudSyncNoRemoteTree"));
+        }
         downloadedCount += pulled.downloaded;
         state = mergeCloudState(state, pulled.entries, pulled.achievements);
       }
 
-      const syncedEntryIds = new Set(syncOptions.force ? [] : state.syncedEntryIds ?? []);
-      const localEntries = ledger().entries.filter((entry) => !syncedEntryIds.has(entry.id));
+      const syncedEntryIds = new Set(syncOptions.force && !syncOptions.pullFirst ? [] : state.syncedEntryIds ?? []);
+      const localEntries = ledger().entries.filter((entry) => entry.source !== "cloud-sync" && !syncedEntryIds.has(entry.id));
       for (const chunk of chunkArray(localEntries, 500)) {
         if (!chunk.length) continue;
         await requestJson(apiUrl("/api/tree/events"), {
@@ -419,7 +424,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       return cloudStatus();
     } catch (error) {
       cloudSyncing = false;
-      scheduleCloudSyncSoon(30_000);
+      if (!syncOptions.requireRemote) scheduleCloudSyncSoon(30_000);
       return cloudStatus(error instanceof Error ? error.message : text("leaderboardSyncFailed"));
     }
   }
@@ -478,7 +483,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     const achievements = normalizeCloudAchievements(data.achievements ?? []);
     const downloaded = options.appendRemoteEntries(entries);
     options.mergeRemoteAchievements(achievements);
-    return { entries, achievements, downloaded };
+    const hasRemoteTree = Boolean(data.summary?.hasRemoteTree ?? (entries.length > 0 || achievements.length > 0));
+    return { entries, achievements, downloaded, hasRemoteTree };
   }
 
   function readCloudSyncState(): CloudSyncFile {
@@ -817,12 +823,8 @@ function cloudEntry(entry: LedgerEntry, deviceId: string) {
   return {
     id: entry.id,
     createdAt: entry.createdAt,
-    source: entry.source,
+    source: "cloud-sync",
     tokens: Math.max(0, Math.round(entry.tokens)),
-    note: cleanOptionalString(entry.note, 180),
-    agent: cleanOptionalString(entry.agent, 80),
-    provider: cleanOptionalString(entry.provider, 80),
-    model: cleanOptionalString(entry.model, 120),
     inputTokens: optionalCount(entry.inputTokens),
     outputTokens: optionalCount(entry.outputTokens),
     cacheReadTokens: optionalCount(entry.cacheReadTokens),
@@ -835,7 +837,6 @@ function cloudAchievement(item: AchievementUnlock) {
   return {
     id: item.id,
     unlockedAt: item.unlockedAt,
-    trigger: item.trigger,
   };
 }
 
@@ -848,12 +849,8 @@ function normalizeCloudEntries(values: unknown[]) {
     entries.push({
       id: input.id,
       createdAt: input.createdAt,
-      source: typeof input.source === "string" && input.source.trim() ? input.source.trim() : "cloud",
+      source: "cloud-sync",
       tokens: optionalCount(input.tokens) ?? 0,
-      note: cleanOptionalString(input.note, 180),
-      agent: cleanOptionalString(input.agent, 80),
-      provider: cleanOptionalString(input.provider, 80),
-      model: cleanOptionalString(input.model, 120),
       inputTokens: optionalCount(input.inputTokens),
       outputTokens: optionalCount(input.outputTokens),
       cacheReadTokens: optionalCount(input.cacheReadTokens),
@@ -873,7 +870,6 @@ function normalizeCloudAchievements(values: unknown[]) {
     achievements.push({
       id: input.id,
       unlockedAt: input.unlockedAt,
-      trigger: input.trigger && typeof input.trigger === "object" ? input.trigger : undefined,
     });
   }
   return achievements;
@@ -915,6 +911,7 @@ const AGENT_LABELS: Record<string, string> = {
   claude: "Claude Code",
   gemini: "Gemini",
   hermes: "Hermes",
+  cloud: "Cloud Tree",
 };
 
 const PREFERENCE_PERIODS: Array<{
@@ -969,6 +966,7 @@ function agentLabelForEntry(entry: LedgerEntry) {
 }
 
 function preferenceSourceIdForEntry(entry: LedgerEntry): keyof typeof AGENT_LABELS | undefined {
+  if (entry.source === "cloud-sync") return "cloud";
   if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
   if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
   if (entry.source === "pi-session" || entry.agent === "pi-agent") return "pi";

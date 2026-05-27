@@ -5,6 +5,8 @@ Branch: `codex/multi-device-tree-sync`
 
 This branch is a handoff snapshot for continuing real multi-device Vibe Tree sync on a Mac.
 
+Latest Mac checkpoint: 2026-05-27, after the first privacy and first-run hardening pass.
+
 ## Product Goal
 
 The desired user flow is:
@@ -22,7 +24,7 @@ The synced payload should stay limited to:
 
 ## Current State
 
-This branch adds the first implementation pass for cloud tree sync:
+This branch adds the first implementation pass for cloud tree sync, plus a Mac-side hardening pass:
 
 - `LedgerEntry` now supports `deviceId`.
 - `Settings` now includes:
@@ -47,6 +49,13 @@ This branch adds the first implementation pass for cloud tree sync:
 - D1 schema has new tables:
   - `tree_events`
   - `tree_achievements`
+- First-run usage watchers now wait for the user to choose `Grow a new tree` or `Continue existing tree`, so old local history is not imported before consent.
+- `Grow a new tree` resets `installedAt` to the choice time and only counts new local token events.
+- `Continue existing tree` now requires a non-empty remote tree; otherwise it keeps first-run mode active and shows an error.
+- Cloud tree sync now strips local agent/model/note/trigger details and stores remote events locally as `cloud-sync`.
+- Pulled cloud events show up as `Cloud Tree` in history/source views without counting as a local agent for agent achievements.
+- Leaving the leaderboard now deletes only remote leaderboard daily totals/preferences and keeps the shared cloud tree archive intact.
+- A local contract verification script simulates Windows and Mac sharing one fake cloud tree.
 
 ## Important Files
 
@@ -79,6 +88,15 @@ This branch adds the first implementation pass for cloud tree sync:
 
 - `server/leaderboard-worker/schema.sql`
   Adds cloud tree tables and indexes.
+
+- `server/leaderboard-worker/migrations/20260527_trim_cloud_tree_privacy.sql`
+  Rebuilds existing D1 cloud tree tables without historical `agent`, `provider`, `model`, `note`, or achievement `trigger_json` columns.
+
+- `scripts/verify-cloud-sync.mjs`
+  Verifies two-device merge, de-dupe, empty remote-tree guard, leaderboard leave safety, and the cloud payload privacy whitelist against a fake cloud API.
+
+- `server/leaderboard-worker/scripts/verify-worker-api.mjs`
+  Starts a local Wrangler Worker with local D1 and verifies `/api/tree`, `/api/tree/events`, `/api/tree/achievements`, and leaderboard leave behavior over HTTP.
 
 ## Running On Mac
 
@@ -133,6 +151,7 @@ The desktop side is wired, but real cross-device sync depends on the Worker and 
 cd server/leaderboard-worker
 npm install
 npx wrangler d1 execute vibe-tree-leaderboard --file=./schema.sql
+npx wrangler d1 execute vibe-tree-leaderboard --file=./migrations/20260527_trim_cloud_tree_privacy.sql
 npm run deploy
 ```
 
@@ -153,11 +172,33 @@ VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm run start
 - The current branch is not a finished release. It is a checkpoint for continuing on Mac.
 - The first-run modal previously appeared for an existing Windows user while old dev processes were still serving stale renderer assets. If UI changes do not appear, stop all old Vite/Electron processes and restart from a clean build.
 - `Continue existing tree` requires GitHub auth and a Worker with the new `/api/tree` routes deployed. Without that, the UI should show an error rather than silently doing nothing.
-- `cloudStatus.hasRemoteTree` is still primitive and mostly based on local sync state. A nicer onboarding flow should query remote state before deciding whether `Continue existing tree` is valid.
+- `cloudStatus.hasRemoteTree` is still primitive and mostly based on local sync state. `Continue existing tree` validates the remote tree during join, but a nicer onboarding flow could query remote state before the user clicks.
 - Remote sync currently merges entries by event id and achievements by achievement id. It does not yet provide conflict UI, per-device audit UI, or a reset/relink flow.
 - Cloud tree sync reuses the leaderboard auth/profile. This is convenient but product copy should keep leaderboard publishing separate from private tree sync.
 - The Worker README still describes leaderboard as the main feature. It should be updated if this branch becomes the main sync architecture.
 - The first-run copy should be revisited once the final cloud sync behavior is decided.
+
+## Verification Done On Mac
+
+Commands that passed after the Mac hardening pass:
+
+```bash
+npm run typecheck
+npm run build
+npm run verify:cloud-sync
+npm run verify:worker-api
+npm run smoke:electron
+cd server/leaderboard-worker
+npx wrangler@3.114.0 deploy --dry-run --outdir /tmp/vibe-tree-worker-dry-run
+```
+
+Additional runtime checks:
+
+- Fresh isolated Electron user data showed the first-run modal.
+- No `usage-events.jsonl` was created before the first-run choice.
+- Clicking `Grow a new tree` wrote `treeStartMode: "new"` and reset `usage-meta.json` `installedAt` to the click time.
+- The source/history UI no longer shows `Cloud Tree` for an account with no cloud sync and no cloud entries.
+- The D1 privacy migration was syntax-tested with local `sqlite3`; old private columns were dropped while token/device/achievement data remained.
 
 ## Verification Done On Windows
 
@@ -179,10 +220,10 @@ If a UI appears unchanged after rebuild, stop all project-local `node`, `electro
 
 ## Suggested Mac Next Steps
 
-1. Pull this branch and run `npm run typecheck && npm run build` on macOS.
-2. Deploy or locally run the Worker with the new D1 schema.
-3. Test GitHub login on macOS and confirm `leaderboard-auth.json` is written.
-4. On Windows, click sync and verify `/api/tree/events` receives ledger entries.
-5. On Mac, use `Continue existing tree` and verify entries are pulled into local `usage-events.jsonl`.
+1. Deploy the Worker and run both `schema.sql` and `migrations/20260527_trim_cloud_tree_privacy.sql` against D1.
+2. Test GitHub login on macOS and confirm `leaderboard-auth.json` is written.
+3. On Windows, choose/enable cloud sync and verify `/api/tree/events` receives only token counts, device id, and timestamps.
+4. On Mac, use `Continue existing tree` and verify Windows entries are pulled into local `usage-events.jsonl` as `cloud-sync`.
+5. Generate a new Mac token event, sync, then verify Windows pulls it back without duplicate entries.
 6. Confirm achievements merge without replaying unlock toast storms.
-7. Decide whether `Continue existing tree` should import local Mac historical logs or only count new events after linking. The safer default is new events only.
+7. Decide whether to add remote-tree discovery before the first-run button click; current behavior validates only after click/login.

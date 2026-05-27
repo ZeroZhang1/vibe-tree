@@ -97,6 +97,7 @@ export default {
       if (url.pathname === "/auth/session" && request.method === "POST") return await exchangeAuthSession(request, env);
       if (url.pathname === "/api/me" && request.method === "GET") return await getMe(request, env);
       if (url.pathname === "/api/me" && request.method === "DELETE") return await deleteMe(request, env);
+      if (url.pathname === "/api/leaderboard" && request.method === "DELETE") return await leaveLeaderboard(request, env);
       if (url.pathname === "/api/tree" && request.method === "GET") return await getCloudTree(request, env);
       if (url.pathname === "/api/tree/events" && request.method === "POST") return await syncCloudTreeEvents(request, env);
       if (url.pathname === "/api/tree/achievements" && request.method === "POST") return await syncCloudTreeAchievements(request, env);
@@ -178,6 +179,7 @@ function rateLimitPolicy(request: Request): { name: RateLimitName; keyPrefix: st
   if (
     route === "GET /api/me" ||
     route === "DELETE /api/me" ||
+    route === "DELETE /api/leaderboard" ||
     route === "GET /api/tree" ||
     route === "POST /api/tree/events" ||
     route === "POST /api/tree/achievements" ||
@@ -411,21 +413,32 @@ async function deleteMe(request: Request, env: Env) {
   return json({ ok: true }, env);
 }
 
+async function leaveLeaderboard(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureUsagePreferencesTable(env);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
+  ]);
+  return json({ ok: true }, env);
+}
+
 async function getCloudTree(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureCloudTreeTables(env);
   const [eventRows, achievementRows] = await Promise.all([
     env.DB.prepare(
-      `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source, agent, provider, model,
+      `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source,
               tokens, input_tokens AS inputTokens, output_tokens AS outputTokens,
-              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens, note
+              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens
        FROM tree_events
        WHERE user_id = ?
        ORDER BY created_at DESC
        LIMIT 50000`,
     ).bind(user.userId).all<Record<string, unknown>>(),
     env.DB.prepare(
-      `SELECT achievement_id AS id, unlocked_at AS unlockedAt, trigger_json AS triggerJson
+      `SELECT achievement_id AS id, unlocked_at AS unlockedAt
        FROM tree_achievements
        WHERE user_id = ?
        ORDER BY unlocked_at ASC`,
@@ -436,20 +449,15 @@ async function getCloudTree(request: Request, env: Env) {
     deviceId: typeof row.deviceId === "string" ? row.deviceId : undefined,
     createdAt: String(row.createdAt),
     source: String(row.source || "cloud"),
-    agent: typeof row.agent === "string" ? row.agent : undefined,
-    provider: typeof row.provider === "string" ? row.provider : undefined,
-    model: typeof row.model === "string" ? row.model : undefined,
     tokens: numberOrZero(row.tokens),
     inputTokens: optionalNumber(row.inputTokens),
     outputTokens: optionalNumber(row.outputTokens),
     cacheReadTokens: optionalNumber(row.cacheReadTokens),
     cacheWriteTokens: optionalNumber(row.cacheWriteTokens),
-    note: typeof row.note === "string" ? row.note : undefined,
   }));
   const achievements = (achievementRows.results || []).map((row) => ({
     id: String(row.id),
     unlockedAt: String(row.unlockedAt),
-    trigger: parseTrigger(row.triggerJson),
   }));
   return json({
     entries,
@@ -639,15 +647,11 @@ async function ensureCloudTreeTables(env: Env) {
         device_id TEXT,
         created_at TEXT NOT NULL,
         source TEXT NOT NULL,
-        agent TEXT,
-        provider TEXT,
-        model TEXT,
         tokens INTEGER NOT NULL,
         input_tokens INTEGER,
         output_tokens INTEGER,
         cache_read_tokens INTEGER,
         cache_write_tokens INTEGER,
-        note TEXT,
         app_version TEXT,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (user_id, event_id),
@@ -659,7 +663,6 @@ async function ensureCloudTreeTables(env: Env) {
         user_id TEXT NOT NULL,
         achievement_id TEXT NOT NULL,
         unlocked_at TEXT NOT NULL,
-        trigger_json TEXT,
         app_version TEXT,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (user_id, achievement_id),
@@ -686,28 +689,24 @@ function normalizeCloudTreeEvent(
   const createdAt = typeof input.createdAt === "string" && Number.isFinite(Date.parse(input.createdAt))
     ? input.createdAt
     : "";
-  const source = cleanShortText(input.source, 80);
+  const source = "cloud-sync";
   const tokens = normalizeTokenCount(input.tokens);
   if (!eventId || !createdAt || !source || tokens === undefined) return undefined;
   return env.DB.prepare(
     `INSERT INTO tree_events (
-       user_id, event_id, device_id, created_at, source, agent, provider, model, tokens,
-       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, note, app_version, updated_at
+       user_id, event_id, device_id, created_at, source, tokens,
+       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, app_version, updated_at
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, event_id) DO UPDATE SET
        device_id = excluded.device_id,
        created_at = excluded.created_at,
        source = excluded.source,
-       agent = excluded.agent,
-       provider = excluded.provider,
-       model = excluded.model,
        tokens = excluded.tokens,
        input_tokens = excluded.input_tokens,
        output_tokens = excluded.output_tokens,
        cache_read_tokens = excluded.cache_read_tokens,
        cache_write_tokens = excluded.cache_write_tokens,
-       note = excluded.note,
        app_version = excluded.app_version,
        updated_at = excluded.updated_at`,
   ).bind(
@@ -716,15 +715,11 @@ function normalizeCloudTreeEvent(
     cleanShortText(input.deviceId, 80) ?? fallbackDeviceId,
     createdAt,
     source,
-    cleanShortText(input.agent, 80) ?? null,
-    cleanShortText(input.provider, 80) ?? null,
-    cleanShortText(input.model, 120) ?? null,
     tokens,
     normalizeTokenCount(input.inputTokens) ?? null,
     normalizeTokenCount(input.outputTokens) ?? null,
     normalizeTokenCount(input.cacheReadTokens) ?? null,
     normalizeTokenCount(input.cacheWriteTokens) ?? null,
-    cleanShortText(input.note, 180) ?? null,
     appVersion,
     now,
   );
@@ -745,14 +740,13 @@ function normalizeCloudTreeAchievement(
     : "";
   if (!achievementId || !unlockedAt) return undefined;
   return env.DB.prepare(
-    `INSERT INTO tree_achievements (user_id, achievement_id, unlocked_at, trigger_json, app_version, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO tree_achievements (user_id, achievement_id, unlocked_at, app_version, updated_at)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(user_id, achievement_id) DO UPDATE SET
        unlocked_at = excluded.unlocked_at,
-       trigger_json = excluded.trigger_json,
        app_version = excluded.app_version,
        updated_at = excluded.updated_at`,
-  ).bind(userId, achievementId, unlockedAt, safeTriggerJson(input.trigger), appVersion, now);
+  ).bind(userId, achievementId, unlockedAt, appVersion, now);
 }
 
 function normalizeTokenCount(value: unknown) {
@@ -766,25 +760,6 @@ function numberOrZero(value: unknown) {
 
 function optionalNumber(value: unknown) {
   return normalizeTokenCount(value);
-}
-
-function safeTriggerJson(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  try {
-    return JSON.stringify(value).slice(0, 1000);
-  } catch {
-    return null;
-  }
-}
-
-function parseTrigger(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function normalizeDailyUsageRows(

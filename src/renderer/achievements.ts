@@ -1,7 +1,6 @@
 import type { LedgerEntry } from "../shared/types";
 import type { AchievementCategory, AchievementRarity } from "./i18n";
-
-type HistorySourceId = "codex" | "openclaw" | "pi" | "opencode" | "claude" | "gemini" | "hermes";
+import type { HistorySourceId } from "./types";
 
 interface AchievementStatsSnapshot {
   xp: number;

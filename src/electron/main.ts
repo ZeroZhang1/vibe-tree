@@ -64,7 +64,8 @@ const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
 const APP_ID = "com.vibetree.app";
 const SMOKE_TEST = process.env.VIBE_TREE_SMOKE_TEST === "1";
-const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
+const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes", "cloud"] as const;
+const LOCAL_STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
 const APP_ICON_PATHS = [
   join(__dirname, "../renderer/assets/app-icon.png"),
   join(__dirname, "../renderer/assets/app-icon.ico"),
@@ -352,7 +353,7 @@ function readLedger(): LedgerFile {
       appendUsageEntryToStore(entry);
     }
   }
-  const filteredEntries = entries.filter((entry) => entryTime(entry) >= Date.parse(installedAt));
+  const filteredEntries = entries.filter((entry) => entryBelongsToCurrentTree(entry, installedAt));
   const settings = readDeviceSettings(legacy?.settings, filteredEntries.length > 0);
 
   return {
@@ -360,6 +361,23 @@ function readLedger(): LedgerFile {
     settings,
     installedAt,
   };
+}
+
+function entryBelongsToCurrentTree(entry: LedgerEntry, installedAt: string) {
+  const startedAt = Date.parse(installedAt);
+  if (!Number.isFinite(startedAt)) return true;
+  if (entry.deviceId) return true;
+  return entryTime(entry) >= startedAt;
+}
+
+function setTreeStartMode(mode: "new" | "cloud") {
+  const installedAt = new Date().toISOString();
+  ledger.installedAt = installedAt;
+  writeJsonAtomic(usageMetaPath(), { version: 1, installedAt });
+  ledger.entries = ledger.entries.filter((entry) =>
+    mode === "cloud" ? entryBelongsToCurrentTree(entry, installedAt) : entryTime(entry) >= Date.parse(installedAt),
+  );
+  updateSettings({ treeStartMode: mode });
 }
 
 function readLegacyLedger(): Partial<LedgerFile> | undefined {
@@ -607,10 +625,11 @@ function normalizeEnabledSourceIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [...STAT_SOURCE_IDS];
   const allowed = new Set<string>(STAT_SOURCE_IDS);
   const normalized = [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))];
-  const hadAllLegacySources = ["codex", "openclaw", "opencode", "claude", "gemini", "hermes"].every((source) =>
+  const hadAllLegacySources = LOCAL_STAT_SOURCE_IDS.filter((source) => source !== "pi").every((source) =>
     normalized.includes(source),
   );
   if (hadAllLegacySources && !normalized.includes("pi")) normalized.splice(2, 0, "pi");
+  if (!normalized.includes("cloud")) normalized.push("cloud");
   return normalized;
 }
 
@@ -1392,6 +1411,7 @@ function xpForEntry(entry: LedgerEntry) {
 }
 
 function statSourceIdForEntry(entry: LedgerEntry): string | undefined {
+  if (entry.source === "cloud-sync") return "cloud";
   if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
   if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
   if (entry.source === "pi-session" || entry.agent === "pi-agent") return "pi";
@@ -2137,6 +2157,11 @@ function compareVersions(left: string, right: string) {
 
 function startUsageWatchers() {
   stopUsageWatchers();
+  if (!ledger.settings.treeStartMode) {
+    broadcast("bonsai:usage-status", getUsageStatus());
+    return;
+  }
+
   const common = {
     userDataPath: app.getPath("userData"),
     historyStartAt: ledger.installedAt,
@@ -2315,11 +2340,19 @@ ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardServic
 ipcMain.handle("leaderboard:get-all", () => leaderboardService.getLeaderboards());
 ipcMain.handle("cloud-sync:get-status", (): CloudSyncStatus => leaderboardService.cloudStatus());
 ipcMain.handle("cloud-sync:start-new", () => {
-  updateSettings({ treeStartMode: "new" });
+  setTreeStartMode("new");
+  startUsageWatchers();
   return leaderboardService.cloudStatus();
 });
 ipcMain.handle("cloud-sync:enable", () => leaderboardService.enableCloudSync());
-ipcMain.handle("cloud-sync:join-existing", () => leaderboardService.joinCloudTree());
+ipcMain.handle("cloud-sync:join-existing", async () => {
+  const status = await leaderboardService.joinCloudTree();
+  if (!status.error) {
+    setTreeStartMode("cloud");
+    startUsageWatchers();
+  }
+  return status;
+});
 ipcMain.handle("cloud-sync:sync", () => leaderboardService.syncCloudTree({ force: true }));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
