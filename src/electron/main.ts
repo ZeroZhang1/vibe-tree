@@ -353,7 +353,10 @@ function readLedger(): LedgerFile {
       appendUsageEntryToStore(entry);
     }
   }
-  const filteredEntries = entries.filter((entry) => entryBelongsToCurrentTree(entry, installedAt));
+  const deduped = dedupeCloudMirroredEntries(entries);
+  const dedupedEntries = deduped.entries;
+  if (deduped.removedCount) rewriteUsageEntriesStore(dedupedEntries);
+  const filteredEntries = dedupedEntries.filter((entry) => entryBelongsToCurrentTree(entry, installedAt));
   const settings = readDeviceSettings(legacy?.settings, filteredEntries.length > 0);
 
   return {
@@ -669,21 +672,34 @@ function cleanPath(value: unknown) {
 function readUsageEntries() {
   if (!existsSync(usageEventsPath())) return [];
   const byId = new Map<string, LedgerEntry>();
+  let parsedCount = 0;
   const raw = readFileSync(usageEventsPath(), "utf8");
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const parsed = parseJson(line);
     if (isEntry(parsed)) {
+      parsedCount += 1;
       byId.set(parsed.id, parsed);
     }
   }
-  return [...byId.values()].sort((a, b) => entryTime(b) - entryTime(a));
+  const entries = [...byId.values()].sort((a, b) => entryTime(b) - entryTime(a));
+  if (parsedCount > entries.length) rewriteUsageEntriesStore(entries);
+  return entries;
 }
 
 function appendUsageEntryToStore(entry: LedgerEntry) {
   const path = usageEventsPath();
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
+}
+
+function rewriteUsageEntriesStore(entries: LedgerEntry[]) {
+  const path = usageEventsPath();
+  mkdirSync(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.tmp`;
+  const content = entries.map((entry) => JSON.stringify(entry)).join("\n");
+  writeFileSync(tempPath, content ? `${content}\n` : "", "utf8");
+  renameSync(tempPath, path);
 }
 
 function writeJsonAtomic(path: string, value: unknown) {
@@ -1566,7 +1582,7 @@ function appendRemoteEntries(entries: LedgerEntry[]) {
   const existingById = new Map(ledger.entries.map((entry) => [entry.id, entry]));
   const existingByFingerprint = new Map<string, LedgerEntry>();
   for (const entry of ledger.entries) {
-    const fingerprint = entry.eventFingerprint ?? cloudEventFingerprint(entry);
+    const fingerprint = cloudMirrorDedupeKey(entry);
     if (fingerprint && !existingByFingerprint.has(fingerprint)) existingByFingerprint.set(fingerprint, entry);
   }
   const accepted: LedgerEntry[] = [];
@@ -1584,20 +1600,43 @@ function appendRemoteEntries(entries: LedgerEntry[]) {
       }
       continue;
     }
-    const fingerprint = normalized.eventFingerprint ?? cloudEventFingerprint(normalized);
-    if (fingerprint && existingByFingerprint.has(fingerprint)) continue;
+    const fingerprint = cloudMirrorDedupeKey(normalized);
+    const mirrored = fingerprint ? existingByFingerprint.get(fingerprint) : undefined;
+    if (fingerprint && mirrored) {
+      const eventFingerprint = normalized.eventFingerprint ?? mirrored.eventFingerprint ?? cloudEventFingerprint(normalized) ?? fingerprint;
+      const preferred = preferCloudMirrorDuplicate(mirrored, normalized);
+      const secondary = preferred === mirrored ? normalized : mirrored;
+      const merged = mergeCloudMirrorDuplicate(preferred, secondary, eventFingerprint);
+      if (!entriesEquivalent(mirrored, merged)) {
+        existingById.set(merged.id, merged);
+        existingByFingerprint.set(fingerprint, merged);
+        repaired.push(merged);
+        appendUsageEntryToStore(merged);
+      }
+      continue;
+    }
     existingById.set(normalized.id, normalized);
     if (fingerprint) existingByFingerprint.set(fingerprint, normalized);
     accepted.push(normalized);
     appendUsageEntryToStore(normalized);
   }
-  if (!accepted.length && !repaired.length) return 0;
+  if (!accepted.length && !repaired.length) {
+    const deduped = dedupeCloudMirroredEntries(ledger.entries);
+    if (!deduped.removedCount) return 0;
+    ledger.entries = deduped.entries;
+    rewriteUsageEntriesStore(ledger.entries);
+    broadcast("bonsai:ledger", ledger);
+    refreshTrayMenu();
+    return deduped.removedCount;
+  }
   const repairedIds = new Set(repaired.map((entry) => entry.id));
   const kept = ledger.entries.filter((entry) => !repairedIds.has(entry.id));
-  ledger.entries = [...accepted, ...repaired, ...kept].sort((a, b) => entryTime(b) - entryTime(a));
+  const deduped = dedupeCloudMirroredEntries([...accepted, ...repaired, ...kept]);
+  ledger.entries = deduped.entries;
+  if (repaired.length || deduped.removedCount) rewriteUsageEntriesStore(ledger.entries);
   broadcast("bonsai:ledger", ledger);
   refreshTrayMenu();
-  return accepted.length + repaired.length;
+  return accepted.length + repaired.length + deduped.removedCount;
 }
 
 function normalizeRemoteEntry(entry: LedgerEntry): LedgerEntry {
@@ -1640,8 +1679,120 @@ function entriesEquivalent(left: LedgerEntry, right: LedgerEntry) {
   );
 }
 
+function dedupeCloudMirroredEntries(entries: LedgerEntry[]) {
+  const byFingerprint = new Map<string, LedgerEntry>();
+  const withoutFingerprint: LedgerEntry[] = [];
+  let removedCount = 0;
+
+  for (const entry of entries) {
+    const fingerprint = cloudMirrorDedupeKey(entry);
+    if (!fingerprint) {
+      withoutFingerprint.push(entry);
+      continue;
+    }
+
+    const existing = byFingerprint.get(fingerprint);
+    if (!existing) {
+      byFingerprint.set(fingerprint, withCloudEventFingerprint(entry));
+      continue;
+    }
+
+    removedCount += 1;
+    const preferred = preferCloudMirrorDuplicate(existing, entry);
+    const secondary = preferred === existing ? entry : existing;
+    byFingerprint.set(
+      fingerprint,
+      mergeCloudMirrorDuplicate(preferred, secondary, cloudMirrorMergeEventFingerprint(preferred, secondary) ?? fingerprint),
+    );
+  }
+
+  return {
+    entries: [...withoutFingerprint, ...byFingerprint.values()].sort((a, b) => entryTime(b) - entryTime(a)),
+    removedCount,
+  };
+}
+
+function withCloudEventFingerprint(entry: LedgerEntry): LedgerEntry {
+  const eventFingerprint = entry.eventFingerprint ?? cloudEventFingerprint(entry);
+  if (!eventFingerprint) return entry;
+  return entry.eventFingerprint === eventFingerprint ? entry : { ...entry, eventFingerprint };
+}
+
+function preferCloudMirrorDuplicate(left: LedgerEntry, right: LedgerEntry) {
+  return cloudMirrorPreferenceScore(right) > cloudMirrorPreferenceScore(left) ? right : left;
+}
+
+function cloudMirrorPreferenceScore(entry: LedgerEntry) {
+  let score = 0;
+  if (!entry.syncedFromCloud && entry.source !== "cloud-sync") score += 100;
+  if (entry.source !== "cloud-sync") score += 20;
+  if (entry.deviceId) score += 4;
+  if (entry.eventFingerprint) score += 2;
+  return score;
+}
+
+function mergeCloudMirrorDuplicate(preferred: LedgerEntry, secondary: LedgerEntry, eventFingerprint: string): LedgerEntry {
+  return {
+    ...preferred,
+    tokens: syncedAuthoritativeTokens(preferred, secondary),
+    inputTokens: preferred.inputTokens ?? secondary.inputTokens,
+    outputTokens: preferred.outputTokens ?? secondary.outputTokens,
+    cacheReadTokens: preferred.cacheReadTokens ?? secondary.cacheReadTokens,
+    cacheWriteTokens: preferred.cacheWriteTokens ?? secondary.cacheWriteTokens,
+    deviceId: preferred.deviceId ?? secondary.deviceId,
+    syncedFromCloud: preferred.syncedFromCloud || secondary.syncedFromCloud || secondary.source === "cloud-sync" || undefined,
+    eventFingerprint,
+  };
+}
+
+function cloudMirrorMergeEventFingerprint(preferred: LedgerEntry, secondary: LedgerEntry) {
+  if (secondary.syncedFromCloud || secondary.source === "cloud-sync") {
+    return secondary.eventFingerprint ?? cloudEventFingerprint(secondary);
+  }
+  if (preferred.syncedFromCloud || preferred.source === "cloud-sync") {
+    return preferred.eventFingerprint ?? cloudEventFingerprint(preferred);
+  }
+  return (
+    preferred.eventFingerprint ??
+    secondary.eventFingerprint ??
+    cloudEventFingerprint(preferred) ??
+    cloudEventFingerprint(secondary)
+  );
+}
+
+function cloudMirrorDedupeKey(entry: Partial<LedgerEntry>) {
+  if (!entry.createdAt) return undefined;
+  const hasBreakdown =
+    entry.inputTokens !== undefined ||
+    entry.outputTokens !== undefined ||
+    entry.cacheReadTokens !== undefined ||
+    entry.cacheWriteTokens !== undefined;
+  if (!hasBreakdown) return entry.eventFingerprint ?? cloudEventFingerprint(entry);
+  return [
+    "v1",
+    mirrorSourceForEntry(entry),
+    entry.createdAt,
+    safeTokens(entry.inputTokens ?? 0),
+    safeTokens(entry.outputTokens ?? 0),
+    safeTokens(entry.cacheReadTokens ?? 0),
+    safeTokens(entry.cacheWriteTokens ?? 0),
+  ].join("|");
+}
+
+function mirrorSourceForEntry(entry: Partial<LedgerEntry>) {
+  if (entry.source === "cloud-sync") return sourceFromEventId(entry.id) ?? "cloud-sync";
+  return normalizeCloudEventSource(entry.source, entry.id);
+}
+
+function syncedAuthoritativeTokens(preferred: LedgerEntry, secondary: LedgerEntry) {
+  if (secondary.syncedFromCloud || secondary.source === "cloud-sync") return safeTokens(secondary.tokens);
+  if (preferred.syncedFromCloud || preferred.source === "cloud-sync") return safeTokens(preferred.tokens);
+  return safeTokens(preferred.tokens);
+}
+
 function normalizeCloudEventSource(value: unknown, eventId?: unknown) {
   const source = typeof value === "string" ? value.trim() : "";
+  if (source === "cloud-sync") return sourceFromEventId(eventId) ?? source;
   if (SAFE_CLOUD_EVENT_SOURCES.has(source)) return source;
   const inferred = sourceFromEventId(eventId);
   return inferred ?? "cloud-sync";

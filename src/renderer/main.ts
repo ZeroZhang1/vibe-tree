@@ -1061,7 +1061,7 @@ function bindEvents() {
       await leaveLeaderboard();
       return;
     }
-    openLeaderboardSettings();
+    await toggleLeaderboardMembership();
   });
 
   badgeFrontMetricSelect?.addEventListener("change", async () => {
@@ -3390,7 +3390,13 @@ function renderLeaderboardSettings() {
   }
   if (leaderboardPageRefreshButton) {
     leaderboardPageRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
-    leaderboardPageRefreshButton.textContent = leaderboardLoading ? t("leaderboardRefreshing") : t("refreshLeaderboard");
+    leaderboardPageRefreshButton.textContent = leaderboardLoading
+      ? leaderboardStatus.joined
+        ? t("leaderboardSyncingAndRefreshing")
+        : t("leaderboardRefreshing")
+      : leaderboardStatus.joined
+        ? t("refreshAndSyncLeaderboard")
+        : t("refreshLeaderboard");
   }
   if (leaderboardPageSyncButton) {
     leaderboardPageSyncButton.disabled =

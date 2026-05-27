@@ -174,7 +174,7 @@ export function appShellHtml(viewMode: ViewMode) {
               <h3 data-i18n="globalLeaderboard">全球排行榜</h3>
             </div>
             <div class="leaderboard-header-actions">
-              <button class="secondary-button leaderboard-refresh-button" id="leaderboardPageRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新并同步</button>
+              <button class="secondary-button leaderboard-refresh-button" id="leaderboardPageRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新榜单</button>
               <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
             </div>
           </div>

@@ -146,6 +146,29 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
     },
   });
 
+  await requestJson("/api/usage/daily", {
+    method: "POST",
+    body: {
+      appVersion: "0.5.5-test",
+      forceSync: true,
+      usageStartDate: "2026-05-27",
+      days: [{ date: "2026-05-27", tokens: 4321 }],
+    },
+  });
+
+  await assertRejects(
+    () =>
+      requestJson("/api/usage/daily", {
+        method: "POST",
+        body: {
+          appVersion: "0.5.5-test",
+          usageStartDate: "2026-05-27",
+          days: [{ date: "2026-05-27", tokens: 5678 }],
+        },
+      }),
+    "non-forced leaderboard sync should still honor cooldown",
+  );
+
   await requestJson("/api/leaderboard", { method: "DELETE" });
   cloudTree = await requestJson("/api/tree");
   assert(cloudTree.summary?.entryCount === 1, "leaving leaderboard must not delete cloud tree events");
@@ -311,6 +334,15 @@ function terminate(child) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function assertRejects(action, message) {
+  try {
+    await action();
+  } catch {
+    return;
+  }
+  throw new Error(message);
 }
 
 function assertNoForbiddenKeys(value, label) {

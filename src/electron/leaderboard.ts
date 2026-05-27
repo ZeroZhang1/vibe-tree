@@ -212,8 +212,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         leaderboardEnabled: true,
         leaderboardProfile: profile,
       });
-      void syncUsage();
-      return status();
+      return await syncUsage({ force: true });
     } catch (error) {
       return status(error instanceof Error ? error.message : text("leaderboardLoginFailed"));
     }
@@ -242,7 +241,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       leaderboardEnabled: enabled,
       leaderboardProfile: enabled ? auth.profile : ledger().settings.leaderboardProfile,
     });
-    if (enabled) void syncUsage();
+    if (enabled) return await syncUsage({ force: true });
     return status();
   }
 
@@ -726,9 +725,14 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   }
 
   function usageStartDate() {
+    const dates: string[] = [];
     const installedAt = new Date(ledger().installedAt);
-    if (!Number.isFinite(installedAt.getTime())) return undefined;
-    return options.dateKey(installedAt);
+    if (Number.isFinite(installedAt.getTime())) dates.push(options.dateKey(installedAt));
+    for (const entry of ledger().entries) {
+      const createdAt = new Date(entry.createdAt);
+      if (Number.isFinite(createdAt.getTime())) dates.push(options.dateKey(createdAt));
+    }
+    return dates.sort()[0];
   }
 
   function apiUrl(path: string) {

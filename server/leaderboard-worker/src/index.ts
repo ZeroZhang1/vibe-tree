@@ -518,7 +518,7 @@ async function syncDailyUsage(request: Request, env: Env) {
         usagePreferences?: unknown[];
       }
     | undefined;
-  await enforceSyncCooldown(user.userId, env);
+  if (body?.forceSync !== true) await enforceSyncCooldown(user.userId, env);
   const days = Array.isArray(body?.days) ? body.days.slice(0, MAX_BACKFILL_DAYS) : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
   const usageStartDate = normalizeUsageStartDate(body?.usageStartDate);

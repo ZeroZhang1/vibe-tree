@@ -102,6 +102,12 @@ function createFakeCloud() {
       return { ok: true, synced: unlocked.length };
     }
 
+    if (url.pathname === "/api/usage/daily" && method === "POST") {
+      assert(options.token === "token", "leaderboard daily usage upload requires auth token");
+      assert(Array.isArray(body?.days), "leaderboard daily usage upload requires day rows");
+      return { ok: true, synced: body.days.length };
+    }
+
     if (url.pathname === "/api/leaderboard" && method === "DELETE") {
       assert(options.token === "token", "leaderboard leave requires auth token");
       leaderboardDeleteCount += 1;
@@ -168,6 +174,11 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
     },
     appendRemoteEntries: (remoteEntries) => {
       const existing = new Map(ledger.entries.map((entry) => [entry.id, entry]));
+      const existingByMirrorKey = new Map();
+      for (const entry of ledger.entries) {
+        const fingerprint = mirrorDedupeKey(entry);
+        if (fingerprint && !existingByMirrorKey.has(fingerprint)) existingByMirrorKey.set(fingerprint, entry);
+      }
       const accepted = [];
       for (const entry of remoteEntries) {
         assertNoForbiddenKeys(entry, `remote event ${entry?.id ?? "unknown"}`);
@@ -175,6 +186,8 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
         const normalized = {
           ...entry,
           tokens: countedTokensForEntry(entry),
+          syncedFromCloud: true,
+          eventFingerprint: entry.eventFingerprint ?? eventFingerprint(entry),
         };
         const current = existing.get(entry.id);
         if (current) {
@@ -183,10 +196,19 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
           }
           continue;
         }
+        const fingerprint = mirrorDedupeKey(normalized);
+        const mirrored = fingerprint ? existingByMirrorKey.get(fingerprint) : undefined;
+        if (mirrored) {
+          const preferred = duplicateScore(normalized) > duplicateScore(mirrored) ? normalized : mirrored;
+          const secondary = preferred === normalized ? mirrored : normalized;
+          Object.assign(mirrored, mergeDuplicate(preferred, secondary, normalized.eventFingerprint ?? mirrored.eventFingerprint ?? eventFingerprint(normalized) ?? fingerprint));
+          continue;
+        }
         existing.set(entry.id, normalized);
+        if (fingerprint) existingByMirrorKey.set(fingerprint, normalized);
         accepted.push(normalized);
       }
-      ledger.entries = [...accepted, ...ledger.entries].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+      ledger.entries = dedupeByFingerprint([...accepted, ...ledger.entries]);
       return accepted.length;
     },
     mergeRemoteAchievements: (unlocked) => {
@@ -264,6 +286,85 @@ function normalizeCloudSource(source, eventId) {
   if (isSafeCloudSource(source) && source !== "cloud-sync") return source;
   const inferred = typeof eventId === "string" && eventId.includes(":") ? eventId.slice(0, eventId.indexOf(":")) : undefined;
   return isSafeCloudSource(inferred) ? inferred : "cloud-sync";
+}
+
+function eventFingerprint(entry) {
+  if (!entry?.createdAt) return undefined;
+  return [
+    "v1",
+    normalizeCloudSource(entry.source, entry.id),
+    entry.createdAt,
+    optionalCount(entry.tokens) ?? 0,
+    optionalCount(entry.inputTokens) ?? 0,
+    optionalCount(entry.outputTokens) ?? 0,
+    optionalCount(entry.cacheReadTokens) ?? 0,
+    optionalCount(entry.cacheWriteTokens) ?? 0,
+  ].join("|");
+}
+
+function mirrorDedupeKey(entry) {
+  if (!entry?.createdAt) return undefined;
+  const hasBreakdown =
+    entry.inputTokens !== undefined ||
+    entry.outputTokens !== undefined ||
+    entry.cacheReadTokens !== undefined ||
+    entry.cacheWriteTokens !== undefined;
+  if (!hasBreakdown) return entry.eventFingerprint ?? eventFingerprint(entry);
+  return [
+    "v1",
+    normalizeCloudSource(entry.source, entry.id),
+    entry.createdAt,
+    optionalCount(entry.inputTokens) ?? 0,
+    optionalCount(entry.outputTokens) ?? 0,
+    optionalCount(entry.cacheReadTokens) ?? 0,
+    optionalCount(entry.cacheWriteTokens) ?? 0,
+  ].join("|");
+}
+
+function dedupeByFingerprint(entries) {
+  const byFingerprint = new Map();
+  const withoutFingerprint = [];
+  for (const entry of entries) {
+    const fingerprint = mirrorDedupeKey(entry);
+    if (!fingerprint) {
+      withoutFingerprint.push(entry);
+      continue;
+    }
+    const existing = byFingerprint.get(fingerprint);
+    if (!existing) {
+      byFingerprint.set(fingerprint, { ...entry, eventFingerprint: entry.eventFingerprint ?? eventFingerprint(entry) });
+      continue;
+    }
+    const preferred = duplicateScore(entry) > duplicateScore(existing) ? entry : existing;
+    const secondary = preferred === entry ? existing : entry;
+    byFingerprint.set(fingerprint, mergeDuplicate(preferred, secondary, mergeEventFingerprint(preferred, secondary) ?? fingerprint));
+  }
+  return [...withoutFingerprint, ...byFingerprint.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function mergeDuplicate(preferred, secondary, fingerprint) {
+  return {
+    ...preferred,
+    tokens: secondary.syncedFromCloud || secondary.source === "cloud-sync" ? secondary.tokens : preferred.tokens,
+    deviceId: preferred.deviceId ?? secondary.deviceId,
+    syncedFromCloud: preferred.syncedFromCloud || secondary.syncedFromCloud || secondary.source === "cloud-sync" || undefined,
+    eventFingerprint: fingerprint,
+  };
+}
+
+function mergeEventFingerprint(preferred, secondary) {
+  if (secondary.syncedFromCloud || secondary.source === "cloud-sync") return secondary.eventFingerprint ?? eventFingerprint(secondary);
+  if (preferred.syncedFromCloud || preferred.source === "cloud-sync") return preferred.eventFingerprint ?? eventFingerprint(preferred);
+  return preferred.eventFingerprint ?? secondary.eventFingerprint ?? eventFingerprint(preferred) ?? eventFingerprint(secondary);
+}
+
+function duplicateScore(entry) {
+  let score = 0;
+  if (!entry.syncedFromCloud && entry.source !== "cloud-sync") score += 100;
+  if (entry.source !== "cloud-sync") score += 20;
+  if (entry.deviceId) score += 4;
+  if (entry.eventFingerprint) score += 2;
+  return score;
 }
 
 function isSafeCloudSource(source) {
@@ -380,6 +481,17 @@ cacheCloud.events.set("codex-session:cache-heavy", {
 const pollutedMac = createDevice("polluted-mac", "polluted-mac-device", cacheCloud, {
   entries: [
     {
+      id: "codex-session:cache-heavy-local-path-id",
+      createdAt: "2026-05-27T03:00:00.000Z",
+      source: "codex-session",
+      tokens: 1100,
+      inputTokens: 1000,
+      outputTokens: 100,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 0,
+      deviceId: "win-device",
+    },
+    {
       id: "codex-session:cache-heavy",
       createdAt: "2026-05-27T03:00:00.000Z",
       source: "cloud-sync",
@@ -397,10 +509,45 @@ pollutedMac.ledger.settings.cloudSyncEnabled = true;
 pollutedMac.ledger.settings.treeStartMode = "cloud";
 status = await pollutedMac.service.syncCloudTree({ force: true, pullFirst: true });
 assert(!status.error, `polluted cache repair sync failed: ${status.error}`);
-const repaired = pollutedMac.ledger.entries.find((entry) => entry.id === "codex-session:cache-heavy");
+const cacheHeavyEntries = pollutedMac.ledger.entries.filter((entry) => mirrorDedupeKey(entry) === mirrorDedupeKey(cacheCloud.events.get("codex-session:cache-heavy")));
+assert(cacheHeavyEntries.length === 1, "sync should collapse local original and cloud mirror with different ids");
+const repaired = cacheHeavyEntries[0];
 assert(repaired?.tokens === 1100, "cloud-sync repair should trust authoritative server tokens");
 assert(countedTokensForEntry(repaired) === 1100, "cloud-sync XP should not add cache read twice");
 assert(repaired.source === "codex-session", "cloud-sync repair should restore the safe source category");
+assert(pollutedMac.ledger.entries.reduce((total, entry) => total + countedTokensForEntry(entry), 0) === 1100, "polluted cache mirror must not keep counting after repair");
+
+const leaderboardCloud = createFakeCloud();
+const leaderboardDevice = createDevice("leaderboard-cloud", "leaderboard-device", leaderboardCloud, {
+  entries: [
+    {
+      id: "codex-session:older-cloud-history",
+      createdAt: "2026-05-21T03:00:00.000Z",
+      source: "codex-session",
+      tokens: 4200,
+      deviceId: "win-device",
+      syncedFromCloud: true,
+    },
+    {
+      id: "codex-session:newer-local-history",
+      createdAt: "2026-05-27T03:00:00.000Z",
+      source: "codex-session",
+      tokens: 800,
+      deviceId: "leaderboard-device",
+    },
+  ],
+});
+leaderboardDevice.ledger.installedAt = "2026-05-27T00:00:00.000Z";
+status = await leaderboardDevice.service.setEnabled(true);
+assert(!status.error, `leaderboard sync failed: ${status.error}`);
+const dailyUsageUpload = leaderboardCloud.requests.find((request) => request.path === "/api/usage/daily")?.body;
+assert(dailyUsageUpload?.usageStartDate === "2026-05-21", "leaderboard sync should preserve older cloud history start date");
+assert(
+  dailyUsageUpload.days.some((day) => day.date === "2026-05-21" && day.tokens === 4200),
+  "leaderboard sync should upload older cloud history rows",
+);
+assert(status.lastSyncedAt, "joining the leaderboard should wait for the first daily sync");
+leaderboardDevice.service.stop();
 
 console.log(
   "Cloud sync contract verified: two-device merge, dedupe, authoritative cloud tokens, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
