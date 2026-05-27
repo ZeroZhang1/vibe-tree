@@ -12,6 +12,8 @@ export interface LedgerEntry {
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   deviceId?: string;
+  syncedFromCloud?: boolean;
+  eventFingerprint?: string;
 }
 
 export type AppLanguage = "zh-CN" | "en-US";

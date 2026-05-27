@@ -30,6 +30,7 @@ interface LeaderboardAuthSessionResponse {
 
 interface CloudSyncFile {
   syncedEntryIds?: string[];
+  syncedEventFingerprints?: string[];
   syncedAchievementIds?: string[];
   lastUploadedCount?: number;
   lastDownloadedCount?: number;
@@ -365,7 +366,12 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       }
 
       const syncedEntryIds = new Set(syncOptions.force && !syncOptions.pullFirst ? [] : state.syncedEntryIds ?? []);
-      const localEntries = ledger().entries.filter((entry) => entry.source !== "cloud-sync" && !syncedEntryIds.has(entry.id));
+      const syncedEventFingerprints = new Set(state.syncedEventFingerprints ?? []);
+      const localEntries = ledger().entries.filter((entry) => {
+        if (isCloudSyncedEntry(entry) || syncedEntryIds.has(entry.id)) return false;
+        const fingerprint = cloudEventFingerprint(entry);
+        return !fingerprint || !syncedEventFingerprints.has(fingerprint);
+      });
       for (const chunk of chunkArray(localEntries, 500)) {
         if (!chunk.length) continue;
         await requestJson(apiUrl("/api/tree/events"), {
@@ -378,7 +384,11 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
           },
         });
         uploadedCount += chunk.length;
-        for (const entry of chunk) syncedEntryIds.add(entry.id);
+        for (const entry of chunk) {
+          syncedEntryIds.add(entry.id);
+          const fingerprint = cloudEventFingerprint(entry);
+          if (fingerprint) syncedEventFingerprints.add(fingerprint);
+        }
       }
 
       const syncedAchievementIds = new Set(syncOptions.force ? [] : state.syncedAchievementIds ?? []);
@@ -401,6 +411,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         {
           ...state,
           syncedEntryIds: [...syncedEntryIds],
+          syncedEventFingerprints: [...syncedEventFingerprints],
           syncedAchievementIds: [...syncedAchievementIds],
         },
         pulled.entries,
@@ -493,6 +504,9 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       syncedEntryIds: Array.isArray(state?.syncedEntryIds)
         ? state.syncedEntryIds.filter((id): id is string => typeof id === "string")
         : [],
+      syncedEventFingerprints: Array.isArray(state?.syncedEventFingerprints)
+        ? state.syncedEventFingerprints.filter((id): id is string => typeof id === "string")
+        : [],
       syncedAchievementIds: Array.isArray(state?.syncedAchievementIds)
         ? state.syncedAchievementIds.filter((id): id is string => typeof id === "string")
         : [],
@@ -504,6 +518,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   function writeCloudSyncState(state: CloudSyncFile) {
     options.writeJsonAtomic(options.cloudSyncPath(), {
       syncedEntryIds: [...new Set(state.syncedEntryIds ?? [])],
+      syncedEventFingerprints: [...new Set(state.syncedEventFingerprints ?? [])],
       syncedAchievementIds: [...new Set(state.syncedAchievementIds ?? [])],
       lastUploadedCount: positiveInteger(state.lastUploadedCount) ?? 0,
       lastDownloadedCount: positiveInteger(state.lastDownloadedCount) ?? 0,
@@ -515,6 +530,12 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       ...state,
       syncedEntryIds: [
         ...new Set([...(state.syncedEntryIds ?? []), ...entries.map((entry) => entry.id)]),
+      ],
+      syncedEventFingerprints: [
+        ...new Set([
+          ...(state.syncedEventFingerprints ?? []),
+          ...entries.map(cloudEventFingerprint).filter((value): value is string => Boolean(value)),
+        ]),
       ],
       syncedAchievementIds: [
         ...new Set([...(state.syncedAchievementIds ?? []), ...achievements.map((item) => item.id)]),
@@ -823,13 +844,14 @@ function cloudEntry(entry: LedgerEntry, deviceId: string) {
   return {
     id: entry.id,
     createdAt: entry.createdAt,
-    source: "cloud-sync",
+    source: normalizeCloudEventSource(entry.source, entry.id),
     tokens: Math.max(0, Math.round(entry.tokens)),
     inputTokens: optionalCount(entry.inputTokens),
     outputTokens: optionalCount(entry.outputTokens),
     cacheReadTokens: optionalCount(entry.cacheReadTokens),
     cacheWriteTokens: optionalCount(entry.cacheWriteTokens),
     deviceId: entry.deviceId || deviceId,
+    eventFingerprint: cloudEventFingerprint(entry),
   };
 }
 
@@ -849,17 +871,74 @@ function normalizeCloudEntries(values: unknown[]) {
     entries.push({
       id: input.id,
       createdAt: input.createdAt,
-      source: "cloud-sync",
+      source: normalizeCloudEventSource(input.source, input.id),
       tokens: optionalCount(input.tokens) ?? 0,
       inputTokens: optionalCount(input.inputTokens),
       outputTokens: optionalCount(input.outputTokens),
       cacheReadTokens: optionalCount(input.cacheReadTokens),
       cacheWriteTokens: optionalCount(input.cacheWriteTokens),
       deviceId: cleanOptionalString(input.deviceId, 80),
+      syncedFromCloud: true,
+      eventFingerprint:
+        cleanOptionalString(input.eventFingerprint, 240) ??
+        cloudEventFingerprint({
+          id: input.id,
+          createdAt: input.createdAt,
+          source: normalizeCloudEventSource(input.source, input.id),
+          tokens: optionalCount(input.tokens) ?? 0,
+          inputTokens: optionalCount(input.inputTokens),
+          outputTokens: optionalCount(input.outputTokens),
+          cacheReadTokens: optionalCount(input.cacheReadTokens),
+          cacheWriteTokens: optionalCount(input.cacheWriteTokens),
+        }),
     });
   }
   return entries;
 }
+
+function isCloudSyncedEntry(entry: LedgerEntry) {
+  return entry.syncedFromCloud === true || entry.source === "cloud-sync";
+}
+
+function normalizeCloudEventSource(value: unknown, eventId?: unknown) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (SAFE_CLOUD_EVENT_SOURCES.has(source)) return source;
+  const inferred = sourceFromEventId(eventId);
+  return inferred ?? "cloud-sync";
+}
+
+function sourceFromEventId(eventId: unknown) {
+  if (typeof eventId !== "string") return undefined;
+  const prefix = eventId.includes(":") ? eventId.slice(0, eventId.indexOf(":")) : "";
+  return SAFE_CLOUD_EVENT_SOURCES.has(prefix) ? prefix : undefined;
+}
+
+function cloudEventFingerprint(entry: Partial<LedgerEntry>) {
+  if (!entry.createdAt) return undefined;
+  const source = normalizeCloudEventSource(entry.source, entry.id);
+  return [
+    "v1",
+    source,
+    entry.createdAt,
+    optionalCount(entry.tokens) ?? 0,
+    optionalCount(entry.inputTokens) ?? 0,
+    optionalCount(entry.outputTokens) ?? 0,
+    optionalCount(entry.cacheReadTokens) ?? 0,
+    optionalCount(entry.cacheWriteTokens) ?? 0,
+  ].join("|");
+}
+
+const SAFE_CLOUD_EVENT_SOURCES = new Set([
+  "manual",
+  "codex-session",
+  "claude-session",
+  "openclaw-session",
+  "pi-session",
+  "opencode-session",
+  "gemini-session",
+  "hermes-session",
+  "cloud-sync",
+]);
 
 function normalizeCloudAchievements(values: unknown[]) {
   const achievements: AchievementUnlock[] = [];

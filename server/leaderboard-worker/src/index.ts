@@ -448,7 +448,7 @@ async function getCloudTree(request: Request, env: Env) {
     id: String(row.id),
     deviceId: typeof row.deviceId === "string" ? row.deviceId : undefined,
     createdAt: String(row.createdAt),
-    source: String(row.source || "cloud"),
+    source: normalizeTreeEventSource(row.source, row.id),
     tokens: numberOrZero(row.tokens),
     inputTokens: optionalNumber(row.inputTokens),
     outputTokens: optionalNumber(row.outputTokens),
@@ -482,7 +482,10 @@ async function syncCloudTreeEvents(request: Request, env: Env) {
   const entries = Array.isArray(body?.entries) ? body.entries.slice(0, 500) : [];
   const now = new Date().toISOString();
   const statements = entries.map((raw) => normalizeCloudTreeEvent(raw, user.userId, deviceId, appVersion, now, env)).filter(Boolean);
-  if (statements.length) await env.DB.batch(statements as D1PreparedStatement[]);
+  if (statements.length) {
+    await env.DB.batch(statements as D1PreparedStatement[]);
+    await dedupeCloudTreeEventsForUser(user.userId, env);
+  }
   return json({ ok: true, synced: statements.length }, env);
 }
 
@@ -689,7 +692,7 @@ function normalizeCloudTreeEvent(
   const createdAt = typeof input.createdAt === "string" && Number.isFinite(Date.parse(input.createdAt))
     ? input.createdAt
     : "";
-  const source = "cloud-sync";
+  const source = normalizeTreeEventSource(input.source, eventId);
   const tokens = normalizeTokenCount(input.tokens);
   if (!eventId || !createdAt || !source || tokens === undefined) return undefined;
   return env.DB.prepare(
@@ -723,6 +726,54 @@ function normalizeCloudTreeEvent(
     appVersion,
     now,
   );
+}
+
+function normalizeTreeEventSource(value: unknown, eventId?: unknown) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (SAFE_TREE_EVENT_SOURCES.has(source) && source !== "cloud-sync") return source;
+  const inferred = sourceFromEventId(eventId);
+  return inferred ?? (SAFE_TREE_EVENT_SOURCES.has(source) ? source : "cloud-sync");
+}
+
+function sourceFromEventId(eventId: unknown) {
+  if (typeof eventId !== "string") return undefined;
+  const delimiter = eventId.indexOf(":");
+  if (delimiter <= 0) return undefined;
+  const prefix = eventId.slice(0, delimiter);
+  return SAFE_TREE_EVENT_SOURCES.has(prefix) && prefix !== "cloud-sync" ? prefix : undefined;
+}
+
+const SAFE_TREE_EVENT_SOURCES = new Set([
+  "manual",
+  "codex-session",
+  "claude-session",
+  "openclaw-session",
+  "pi-session",
+  "opencode-session",
+  "gemini-session",
+  "hermes-session",
+  "cloud-sync",
+]);
+
+async function dedupeCloudTreeEventsForUser(userId: string, env: Env) {
+  await env.DB.prepare(
+    `DELETE FROM tree_events
+     WHERE user_id = ?
+       AND rowid NOT IN (
+         SELECT MIN(rowid)
+         FROM tree_events
+         WHERE user_id = ?
+         GROUP BY
+           user_id,
+           source,
+           created_at,
+           tokens,
+           COALESCE(input_tokens, -1),
+           COALESCE(output_tokens, -1),
+           COALESCE(cache_read_tokens, -1),
+           COALESCE(cache_write_tokens, -1)
+       )`,
+  ).bind(userId, userId).run();
 }
 
 function normalizeCloudTreeAchievement(

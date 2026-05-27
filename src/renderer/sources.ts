@@ -59,16 +59,24 @@ export function sourceVisibility(usageStatus: UsageStatus | null, enabledSourceI
 }
 
 export function historySourceId(entry: LedgerEntry): HistorySourceId | undefined {
-  if (entry.source === "cloud-sync") return "cloud";
-  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
-  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
-  if (entry.source === "pi-session" || entry.agent === "pi-agent") return "pi";
-  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+  if (entry.source === "cloud-sync") {
+    const inferred = sourceFromEventId(entry.id);
+    if (inferred) return historySourceIdForSource(inferred, entry.agent);
+    return "cloud";
+  }
+  return historySourceIdForSource(entry.source, entry.agent);
+}
+
+function historySourceIdForSource(source: string, agent?: string): HistorySourceId | undefined {
+  if (source === "codex-session" || agent === "codex-desktop") return "codex";
+  if (source === "openclaw-session" || agent === "openclaw") return "openclaw";
+  if (source === "pi-session" || agent === "pi-agent") return "pi";
+  if (source === "opencode-session" || agent === "opencode" || Boolean(agent?.startsWith("opencode:"))) {
     return "opencode";
   }
-  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
-  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
-  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
+  if (source === "claude-session" || Boolean(agent?.startsWith("claude-code"))) return "claude";
+  if (source === "gemini-session" || agent === "gemini") return "gemini";
+  if (source === "hermes-session" || agent === "hermes") return "hermes";
   return undefined;
 }
 
@@ -85,12 +93,13 @@ export function getSourceBreakdown(
 ): SourceBreakdown[] {
   const rows = new Map<string, SourceBreakdown>();
   for (const entry of entries) {
-    const id = entry.source === "manual" ? "manual" : entry.agent || entry.source;
+    const source = entry.source === "cloud-sync" ? sourceFromEventId(entry.id) ?? entry.source : entry.source;
+    const id = source === "manual" ? "manual" : entry.agent || source;
     const existing =
       rows.get(id) ??
       {
         id,
-        label: labelForEntry(id, entry.source),
+        label: labelForEntry(id, source),
         xp: 0,
         inputTokens: 0,
         outputTokens: 0,
@@ -138,19 +147,21 @@ export function combineSourceRows(label: string, rows: SourceBreakdown[]): Sourc
 }
 
 export function entryMatchesSourceKey(entry: LedgerEntry, sourceKey: string) {
-  if (sourceKey === "codex") return entry.source === "codex-session" || entry.agent === "codex-desktop";
-  if (sourceKey === "claude") return entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"));
-  if (sourceKey === "openclaw") return entry.source === "openclaw-session" || entry.agent === "openclaw";
-  if (sourceKey === "pi") return entry.source === "pi-session" || entry.agent === "pi-agent";
+  const inferredSource = entry.source === "cloud-sync" ? sourceFromEventId(entry.id) : undefined;
+  const source = inferredSource ?? entry.source;
+  if (sourceKey === "codex") return source === "codex-session" || entry.agent === "codex-desktop";
+  if (sourceKey === "claude") return source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"));
+  if (sourceKey === "openclaw") return source === "openclaw-session" || entry.agent === "openclaw";
+  if (sourceKey === "pi") return source === "pi-session" || entry.agent === "pi-agent";
   if (sourceKey === "opencode") {
-    return entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"));
+    return source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"));
   }
-  if (sourceKey === "gemini") return entry.source === "gemini-session" || entry.agent === "gemini";
-  if (sourceKey === "hermes") return entry.source === "hermes-session" || entry.agent === "hermes";
-  if (sourceKey === "cloud") return entry.source === "cloud-sync";
+  if (sourceKey === "gemini") return source === "gemini-session" || entry.agent === "gemini";
+  if (sourceKey === "hermes") return source === "hermes-session" || entry.agent === "hermes";
+  if (sourceKey === "cloud") return entry.source === "cloud-sync" && !inferredSource;
   if (sourceKey.startsWith("source:")) {
     const id = sourceKey.slice("source:".length);
-    const entryId = entry.source === "manual" ? "manual" : entry.agent || entry.source;
+    const entryId = source === "manual" ? "manual" : entry.agent || source;
     return entryId === id;
   }
   return false;
@@ -170,6 +181,22 @@ export function defaultSourceLabel(id: string, source: string, manualLabel: stri
   if (id === "cloud-sync" || source === "cloud-sync") return "Cloud Tree";
   return id;
 }
+
+function sourceFromEventId(eventId: unknown) {
+  if (typeof eventId !== "string") return undefined;
+  const prefix = eventId.includes(":") ? eventId.slice(0, eventId.indexOf(":")) : "";
+  return SAFE_CLOUD_EVENT_SOURCES.has(prefix) ? prefix : undefined;
+}
+
+const SAFE_CLOUD_EVENT_SOURCES = new Set([
+  "codex-session",
+  "claude-session",
+  "openclaw-session",
+  "pi-session",
+  "opencode-session",
+  "gemini-session",
+  "hermes-session",
+]);
 
 export function emptySourceTotals(): Record<HistorySourceId, number> {
   return { codex: 0, openclaw: 0, pi: 0, opencode: 0, claude: 0, gemini: 0, hermes: 0, cloud: 0 };

@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const workerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const persistDir = mkdtempSync("/tmp/vibe-tree-worker-api-");
+const persistDir = mkdtempSync(join(tmpdir(), "vibe-tree-worker-api-"));
 const token = "verify-worker-token";
 const tokenHash = createHash("sha256").update(token).digest("hex");
 const now = "2026-05-27T00:00:00.000Z";
@@ -91,6 +92,27 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
     },
   });
 
+  await requestJson("/api/tree/events", {
+    method: "POST",
+    body: {
+      deviceId: "other-device",
+      appVersion: "0.5.5-test",
+      entries: [
+        {
+          id: "mac-event-1-different-path-id",
+          createdAt: "2026-05-27T01:00:00.000Z",
+          source: "codex-session",
+          tokens: 1234,
+          inputTokens: 1000,
+          outputTokens: 200,
+          cacheReadTokens: 34,
+          cacheWriteTokens: 0,
+          deviceId: "other-device",
+        },
+      ],
+    },
+  });
+
   let cloudTree = await requestJson("/api/tree");
   assert(cloudTree.summary?.hasRemoteTree === true, "cloud tree summary should report an existing tree");
   assert(cloudTree.summary?.entryCount === 1, "cloud tree should contain one event");
@@ -98,7 +120,7 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   const [event] = cloudTree.entries ?? [];
   const [achievement] = cloudTree.achievements ?? [];
   assert(event?.id === "mac-event-1", "cloud tree should return the uploaded event");
-  assert(event.source === "cloud-sync", "worker should canonicalize tree event source to cloud-sync");
+  assert(event.source === "codex-session", "worker should preserve safe source categories");
   assert(event.deviceId === "mac-device", "worker should preserve device id");
   assert(event.tokens === 1234, "worker should preserve token count");
   assertNoForbiddenKeys(event, "GET /api/tree event");
@@ -131,26 +153,28 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
 
   console.log("Worker API verified: tree sync privacy, achievement privacy, and leaderboard leave safety passed.");
 } finally {
-  if (devProcess) terminate(devProcess);
-  rmSync(persistDir, { recursive: true, force: true });
+  if (devProcess) await terminate(devProcess);
+  rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
 }
 
 function wranglerCommand() {
-  const candidates =
-    process.platform === "win32"
-      ? ["npx.cmd"]
-      : ["/opt/homebrew/bin/npx", "/usr/local/bin/npx", "/usr/bin/npx", "npx"];
-  const command = candidates.find((candidate) => candidate === "npx" || candidate === "npx.cmd" || existsSync(candidate));
+  if (process.platform === "win32") {
+    const npxCli = join(dirname(process.execPath), "node_modules", "npm", "bin", "npx-cli.js");
+    if (existsSync(npxCli)) return { command: process.execPath, args: [npxCli, "--yes", "wrangler@3.114.0"] };
+  }
+  const candidates = ["/opt/homebrew/bin/npx", "/usr/local/bin/npx", "/usr/bin/npx", "npx"];
+  const command = candidates.find((candidate) => candidate === "npx" || existsSync(candidate));
   return { command: command ?? candidates[0], args: ["--yes", "wrangler@3.114.0"] };
 }
 
 function spawnWrangler(args) {
   const wrangler = wranglerCommand();
-  const child = spawn(wrangler.command, [...wrangler.args, ...args], {
+  const commandArgs = [...wrangler.args, ...args];
+  const child = spawn(wrangler.command, commandArgs, {
     cwd: workerDir,
     env: {
       ...process.env,
-      PATH: ["/opt/homebrew/bin", "/usr/local/bin", process.env.PATH].filter(Boolean).join(":"),
+      PATH: ["/opt/homebrew/bin", "/usr/local/bin", process.env.PATH].filter(Boolean).join(delimiter),
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -189,7 +213,7 @@ async function prepareD1Database(seedSql) {
     "--persist-to",
     persistDir,
     "--command",
-    "SELECT 1",
+    "SELECT(1)",
   ]);
 
   const databasePath = findLocalD1DatabasePath();
@@ -208,8 +232,8 @@ function runSqliteScript(databasePath, sql) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn("sqlite3", [databasePath], {
       env: {
-        ...process.env,
-        PATH: ["/opt/homebrew/bin", "/usr/local/bin", process.env.PATH].filter(Boolean).join(":"),
+      ...process.env,
+      PATH: ["/opt/homebrew/bin", "/usr/local/bin", process.env.PATH].filter(Boolean).join(delimiter),
       },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -267,10 +291,13 @@ async function requestJson(path, options = {}) {
 }
 
 function terminate(child) {
-  if (child.killed) return;
+  if (child.killed) return Promise.resolve();
   if (process.platform === "win32" && child.pid) {
-    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-    return;
+    return new Promise((resolveTerminate) => {
+      const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+      killer.on("error", () => resolveTerminate());
+      killer.on("exit", () => resolveTerminate());
+    });
   }
   if (child.pid) {
     try {
@@ -279,6 +306,7 @@ function terminate(child) {
       child.kill("SIGTERM");
     }
   }
+  return delay(500);
 }
 
 function assert(condition, message) {

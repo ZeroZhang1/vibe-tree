@@ -1,6 +1,7 @@
 import type { LedgerEntry } from "./types.js";
 
 export function countedTokensForEntry(entry: LedgerEntry) {
+  if (entry.source === "cloud-sync" || entry.syncedFromCloud) return safeTokens(entry.tokens);
   if (!hasTokenBreakdown(entry)) return safeTokens(entry.tokens);
 
   const inputTokens = countedInputTokensForEntry(entry);
@@ -26,7 +27,12 @@ function hasTokenBreakdown(entry: LedgerEntry) {
 }
 
 function inputTokensIncludeCacheRead(entry: LedgerEntry) {
-  return entry.source === "codex-session" || entry.agent === "codex-desktop" || entry.source === "gemini-session";
+  return (
+    entry.source === "codex-session" ||
+    entry.agent === "codex-desktop" ||
+    entry.source === "gemini-session" ||
+    (entry.source === "cloud-sync" && (entry.id.startsWith("codex-session:") || entry.id.startsWith("gemini-session:")))
+  );
 }
 
 function safeTokens(value: number) {

@@ -1411,16 +1411,24 @@ function xpForEntry(entry: LedgerEntry) {
 }
 
 function statSourceIdForEntry(entry: LedgerEntry): string | undefined {
-  if (entry.source === "cloud-sync") return "cloud";
-  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
-  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
-  if (entry.source === "pi-session" || entry.agent === "pi-agent") return "pi";
-  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+  if (entry.source === "cloud-sync") {
+    const inferred = sourceFromEventId(entry.id);
+    if (inferred) return statSourceIdForSource(inferred, entry.agent);
+    return "cloud";
+  }
+  return statSourceIdForSource(entry.source, entry.agent);
+}
+
+function statSourceIdForSource(source: string, agent?: string): string | undefined {
+  if (source === "codex-session" || agent === "codex-desktop") return "codex";
+  if (source === "openclaw-session" || agent === "openclaw") return "openclaw";
+  if (source === "pi-session" || agent === "pi-agent") return "pi";
+  if (source === "opencode-session" || agent === "opencode" || Boolean(agent?.startsWith("opencode:"))) {
     return "opencode";
   }
-  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
-  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
-  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
+  if (source === "claude-session" || Boolean(agent?.startsWith("claude-code"))) return "claude";
+  if (source === "gemini-session" || agent === "gemini") return "gemini";
+  if (source === "hermes-session" || agent === "hermes") return "hermes";
   return undefined;
 }
 
@@ -1555,24 +1563,122 @@ function appendUsageEvent(event: UsageEvent) {
 }
 
 function appendRemoteEntries(entries: LedgerEntry[]) {
-  const existing = new Set(ledger.entries.map((entry) => entry.id));
+  const existingById = new Map(ledger.entries.map((entry) => [entry.id, entry]));
+  const existingByFingerprint = new Map<string, LedgerEntry>();
+  for (const entry of ledger.entries) {
+    const fingerprint = entry.eventFingerprint ?? cloudEventFingerprint(entry);
+    if (fingerprint && !existingByFingerprint.has(fingerprint)) existingByFingerprint.set(fingerprint, entry);
+  }
   const accepted: LedgerEntry[] = [];
+  const repaired: LedgerEntry[] = [];
   for (const entry of entries) {
-    if (!isEntry(entry) || existing.has(entry.id)) continue;
-    existing.add(entry.id);
-    const normalized: LedgerEntry = {
-      ...entry,
-      tokens: countedTokensForEntry(entry),
-    };
+    if (!isEntry(entry)) continue;
+    const normalized = normalizeRemoteEntry(entry);
+    const existing = existingById.get(normalized.id);
+    if (existing) {
+      const merged = mergeRemoteEntry(existing, normalized);
+      if (!entriesEquivalent(existing, merged)) {
+        existingById.set(merged.id, merged);
+        repaired.push(merged);
+        appendUsageEntryToStore(merged);
+      }
+      continue;
+    }
+    const fingerprint = normalized.eventFingerprint ?? cloudEventFingerprint(normalized);
+    if (fingerprint && existingByFingerprint.has(fingerprint)) continue;
+    existingById.set(normalized.id, normalized);
+    if (fingerprint) existingByFingerprint.set(fingerprint, normalized);
     accepted.push(normalized);
     appendUsageEntryToStore(normalized);
   }
-  if (!accepted.length) return 0;
-  ledger.entries = [...accepted, ...ledger.entries].sort((a, b) => entryTime(b) - entryTime(a));
+  if (!accepted.length && !repaired.length) return 0;
+  const repairedIds = new Set(repaired.map((entry) => entry.id));
+  const kept = ledger.entries.filter((entry) => !repairedIds.has(entry.id));
+  ledger.entries = [...accepted, ...repaired, ...kept].sort((a, b) => entryTime(b) - entryTime(a));
   broadcast("bonsai:ledger", ledger);
   refreshTrayMenu();
-  return accepted.length;
+  return accepted.length + repaired.length;
 }
+
+function normalizeRemoteEntry(entry: LedgerEntry): LedgerEntry {
+  const source = normalizeCloudEventSource(entry.source, entry.id);
+  return {
+    ...entry,
+    source,
+    tokens: safeTokens(entry.tokens),
+    syncedFromCloud: true,
+    eventFingerprint: entry.eventFingerprint ?? cloudEventFingerprint({ ...entry, source }),
+  };
+}
+
+function mergeRemoteEntry(existing: LedgerEntry, remote: LedgerEntry): LedgerEntry {
+  if (existing.syncedFromCloud || existing.source === "cloud-sync") return remote;
+  return {
+    ...existing,
+    source: existing.source === "cloud-sync" ? remote.source : existing.source,
+    tokens: remote.tokens,
+    inputTokens: remote.inputTokens ?? existing.inputTokens,
+    outputTokens: remote.outputTokens ?? existing.outputTokens,
+    cacheReadTokens: remote.cacheReadTokens ?? existing.cacheReadTokens,
+    cacheWriteTokens: remote.cacheWriteTokens ?? existing.cacheWriteTokens,
+    deviceId: existing.deviceId ?? remote.deviceId,
+    eventFingerprint: existing.eventFingerprint ?? remote.eventFingerprint,
+  };
+}
+
+function entriesEquivalent(left: LedgerEntry, right: LedgerEntry) {
+  return (
+    left.source === right.source &&
+    left.tokens === right.tokens &&
+    left.inputTokens === right.inputTokens &&
+    left.outputTokens === right.outputTokens &&
+    left.cacheReadTokens === right.cacheReadTokens &&
+    left.cacheWriteTokens === right.cacheWriteTokens &&
+    left.deviceId === right.deviceId &&
+    left.syncedFromCloud === right.syncedFromCloud &&
+    left.eventFingerprint === right.eventFingerprint
+  );
+}
+
+function normalizeCloudEventSource(value: unknown, eventId?: unknown) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (SAFE_CLOUD_EVENT_SOURCES.has(source)) return source;
+  const inferred = sourceFromEventId(eventId);
+  return inferred ?? "cloud-sync";
+}
+
+function sourceFromEventId(eventId: unknown) {
+  if (typeof eventId !== "string") return undefined;
+  const prefix = eventId.includes(":") ? eventId.slice(0, eventId.indexOf(":")) : "";
+  return SAFE_CLOUD_EVENT_SOURCES.has(prefix) ? prefix : undefined;
+}
+
+function cloudEventFingerprint(entry: Partial<LedgerEntry>) {
+  if (!entry.createdAt) return undefined;
+  const source = normalizeCloudEventSource(entry.source, entry.id);
+  return [
+    "v1",
+    source,
+    entry.createdAt,
+    safeTokens(entry.tokens ?? 0),
+    safeTokens(entry.inputTokens ?? 0),
+    safeTokens(entry.outputTokens ?? 0),
+    safeTokens(entry.cacheReadTokens ?? 0),
+    safeTokens(entry.cacheWriteTokens ?? 0),
+  ].join("|");
+}
+
+const SAFE_CLOUD_EVENT_SOURCES = new Set([
+  "manual",
+  "codex-session",
+  "claude-session",
+  "openclaw-session",
+  "pi-session",
+  "opencode-session",
+  "gemini-session",
+  "hermes-session",
+  "cloud-sync",
+]);
 
 function mergeRemoteAchievements(unlocked: AchievementUnlock[]) {
   const existing = new Set(achievementState.unlocked.map((item) => item.id));

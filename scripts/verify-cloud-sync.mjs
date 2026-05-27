@@ -72,17 +72,18 @@ function createFakeCloud() {
       const entries = Array.isArray(body?.entries) ? body.entries : [];
       for (const entry of entries) {
         assertNoForbiddenKeys(entry, `uploaded event ${entry?.id ?? "unknown"}`);
-        assert(entry.source === "cloud-sync", `uploaded event ${entry?.id ?? "unknown"} did not use cloud-sync source`);
+        assert(isSafeCloudSource(entry.source), `uploaded event ${entry?.id ?? "unknown"} used an unsafe source`);
         events.set(entry.id, {
           id: entry.id,
           createdAt: entry.createdAt,
-          source: "cloud-sync",
+          source: normalizeCloudSource(entry.source, entry.id),
           tokens: Math.max(0, Math.round(Number(entry.tokens))),
           inputTokens: optionalCount(entry.inputTokens),
           outputTokens: optionalCount(entry.outputTokens),
           cacheReadTokens: optionalCount(entry.cacheReadTokens),
           cacheWriteTokens: optionalCount(entry.cacheWriteTokens),
           deviceId: entry.deviceId || body.deviceId,
+          eventFingerprint: entry.eventFingerprint,
         });
       }
       return { ok: true, synced: entries.length };
@@ -166,16 +167,24 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
       ledger.settings = { ...ledger.settings, ...partial };
     },
     appendRemoteEntries: (remoteEntries) => {
-      const existing = new Set(ledger.entries.map((entry) => entry.id));
+      const existing = new Map(ledger.entries.map((entry) => [entry.id, entry]));
       const accepted = [];
       for (const entry of remoteEntries) {
         assertNoForbiddenKeys(entry, `remote event ${entry?.id ?? "unknown"}`);
-        if (!entry?.id || existing.has(entry.id)) continue;
-        existing.add(entry.id);
-        accepted.push({
+        if (!entry?.id) continue;
+        const normalized = {
           ...entry,
           tokens: countedTokensForEntry(entry),
-        });
+        };
+        const current = existing.get(entry.id);
+        if (current) {
+          if (current.source === "cloud-sync" || current.syncedFromCloud) {
+            Object.assign(current, normalized);
+          }
+          continue;
+        }
+        existing.set(entry.id, normalized);
+        accepted.push(normalized);
       }
       ledger.entries = [...accepted, ...ledger.entries].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
       return accepted.length;
@@ -251,6 +260,28 @@ function localEntry(id, deviceId, source, createdAt, tokens) {
   };
 }
 
+function normalizeCloudSource(source, eventId) {
+  if (isSafeCloudSource(source) && source !== "cloud-sync") return source;
+  const inferred = typeof eventId === "string" && eventId.includes(":") ? eventId.slice(0, eventId.indexOf(":")) : undefined;
+  return isSafeCloudSource(inferred) ? inferred : "cloud-sync";
+}
+
+function isSafeCloudSource(source) {
+  return safeCloudSources.has(source);
+}
+
+const safeCloudSources = new Set([
+  "manual",
+  "codex-session",
+  "claude-session",
+  "openclaw-session",
+  "pi-session",
+  "opencode-session",
+  "gemini-session",
+  "hermes-session",
+  "cloud-sync",
+]);
+
 const emptyCloud = createFakeCloud();
 const emptyMac = createDevice("empty-mac", "mac-empty", emptyCloud);
 let status = await emptyMac.service.joinCloudTree();
@@ -275,17 +306,23 @@ status = await windows.service.syncCloudTree({ force: true });
 assert(!status.error, `windows initial sync failed: ${status.error}`);
 assert(cloud.events.size === 1, "windows initial sync should upload one event");
 assert(cloud.achievements.size === 1, "windows initial sync should upload one achievement");
-assert(cloud.events.get("win-event-1").source === "cloud-sync", "cloud stores canonical cloud-sync source");
+assert(cloud.events.get("win-event-1").source === "codex-session", "cloud should preserve safe source categories");
 
 const mac = createDevice("mac", "mac-device", cloud);
 status = await mac.service.joinCloudTree();
 assert(!status.error, `mac join existing failed: ${status.error}`);
 assert(mac.ledger.entries.length === 1, "mac should pull the windows event");
-assert(mac.ledger.entries[0].source === "cloud-sync", "mac should store pulled events as cloud-sync");
+assert(mac.ledger.entries[0].source === "codex-session", "mac should preserve pulled event source");
+assert(mac.ledger.entries[0].syncedFromCloud === true, "mac should mark pulled events as cloud-synced");
 assert(mac.ledger.entries[0].deviceId === "win-device", "mac should preserve remote device id");
 assert(mac.achievements.unlocked.some((item) => item.id === "sprout"), "mac should merge remote achievement");
 
 const eventPostCountAfterJoin = cloud.requests.filter((request) => request.path === "/api/tree/events").length;
+mac.ledger.entries.unshift(localEntry("win-event-1-different-local-id", "mac-device", "codex-session", "2026-05-27T01:00:00.000Z", 1000));
+status = await mac.service.syncCloudTree({ force: true });
+assert(!status.error, `mac duplicate-history sync failed: ${status.error}`);
+assert(cloud.events.size === 1, "mac should not upload same historical event with a different local id");
+
 mac.ledger.entries.unshift(localEntry("mac-event-1", "mac-device", "claude-session", "2026-05-27T02:00:00.000Z", 2000));
 mac.achievements.unlocked.push({
   id: "mac-growth",
@@ -306,7 +343,10 @@ assert(!macEventUploads.some((entry) => entry.id === "win-event-1"), "mac sync s
 
 status = await windows.service.syncCloudTree();
 assert(!status.error, `windows follow-up sync failed: ${status.error}`);
-assert(windows.ledger.entries.some((entry) => entry.id === "mac-event-1" && entry.source === "cloud-sync"), "windows should pull mac event");
+assert(
+  windows.ledger.entries.some((entry) => entry.id === "mac-event-1" && entry.source === "claude-session" && entry.syncedFromCloud),
+  "windows should pull mac event with its safe source category",
+);
 assert(windows.achievements.unlocked.some((item) => item.id === "mac-growth"), "windows should pull mac achievement");
 
 const beforeRepeatIds = windows.ledger.entries.map((entry) => entry.id).sort().join(",");
@@ -325,6 +365,43 @@ assert(cloud.leaderboardDeleteCount === 1, "leaving leaderboard should call the 
 assert(cloud.events.size === 2, "leaving leaderboard must not delete cloud tree events");
 assert(cloud.achievements.size === 2, "leaving leaderboard must not delete cloud tree achievements");
 
+const cacheCloud = createFakeCloud();
+cacheCloud.events.set("codex-session:cache-heavy", {
+  id: "codex-session:cache-heavy",
+  createdAt: "2026-05-27T03:00:00.000Z",
+  source: "codex-session",
+  tokens: 1100,
+  inputTokens: 1000,
+  outputTokens: 100,
+  cacheReadTokens: 900,
+  cacheWriteTokens: 0,
+  deviceId: "win-device",
+});
+const pollutedMac = createDevice("polluted-mac", "polluted-mac-device", cacheCloud, {
+  entries: [
+    {
+      id: "codex-session:cache-heavy",
+      createdAt: "2026-05-27T03:00:00.000Z",
+      source: "cloud-sync",
+      tokens: 2000,
+      inputTokens: 1000,
+      outputTokens: 100,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 0,
+      deviceId: "win-device",
+      syncedFromCloud: true,
+    },
+  ],
+});
+pollutedMac.ledger.settings.cloudSyncEnabled = true;
+pollutedMac.ledger.settings.treeStartMode = "cloud";
+status = await pollutedMac.service.syncCloudTree({ force: true, pullFirst: true });
+assert(!status.error, `polluted cache repair sync failed: ${status.error}`);
+const repaired = pollutedMac.ledger.entries.find((entry) => entry.id === "codex-session:cache-heavy");
+assert(repaired?.tokens === 1100, "cloud-sync repair should trust authoritative server tokens");
+assert(countedTokensForEntry(repaired) === 1100, "cloud-sync XP should not add cache read twice");
+assert(repaired.source === "codex-session", "cloud-sync repair should restore the safe source category");
+
 console.log(
-  "Cloud sync contract verified: two-device merge, dedupe, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
+  "Cloud sync contract verified: two-device merge, dedupe, authoritative cloud tokens, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
 );
