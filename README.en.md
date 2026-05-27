@@ -93,6 +93,8 @@ Vibe Tree auto-detects the default paths after installation. You can customize s
 
 Vibe Tree is local-first. By default, it does not upload code, prompts, filenames, paths, conversation logs, or complete hourly heatmaps.
 
+See [PRIVACY.md](PRIVACY.md) for the full data-handling details.
+
 When joining the leaderboard, it syncs daily token totals and the local first-use date so the service can compute today, 7-day, 30-day, and all-time rankings. If "Public usage preferences" is enabled, it additionally syncs four aggregated fields:
 
 - Favorite agent
