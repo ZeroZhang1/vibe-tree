@@ -52,6 +52,25 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
 
   await waitForWorker();
 
+  let cloudTree = await requestJson("/api/tree");
+  assert(cloudTree.summary?.hasRemoteTree === false, "empty cloud tree summary should not report an existing tree");
+
+  await requestJson("/api/tree/events", {
+    method: "POST",
+    body: {
+      deviceId: "zero-token-device",
+      device: { alias: "Zero Token Mac", platform: "mac" },
+      appVersion: "0.5.5-test",
+      entries: [],
+      modelStats: [],
+    },
+  });
+
+  cloudTree = await requestJson("/api/tree");
+  assert(cloudTree.summary?.hasRemoteTree === true, "device-only cloud tree should count as an existing tree");
+  assert(cloudTree.summary?.entryCount === 0, "device-only cloud tree should still have zero events");
+  assert(cloudTree.summary?.deviceCount === 1, "device-only cloud tree should report its device snapshot");
+
   await requestJson("/api/tree/events", {
     method: "POST",
     body: {
@@ -130,10 +149,11 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
     },
   });
 
-  let cloudTree = await requestJson("/api/tree");
+  cloudTree = await requestJson("/api/tree");
   assert(cloudTree.summary?.hasRemoteTree === true, "cloud tree summary should report an existing tree");
   assert(cloudTree.summary?.entryCount === 1, "cloud tree should contain one event");
   assert(cloudTree.summary?.achievementCount === 1, "cloud tree should contain one achievement");
+  assert(cloudTree.summary?.deviceCount === 3, "cloud tree should include all device snapshots");
   const [event] = cloudTree.entries ?? [];
   const [achievement] = cloudTree.achievements ?? [];
   const [device] = cloudTree.devices ?? [];
@@ -209,7 +229,7 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assert(cloudTree.summary?.entryCount === 1, "leaving leaderboard must not delete cloud tree events");
   assert(cloudTree.summary?.achievementCount === 1, "leaving leaderboard must not delete cloud tree achievements");
 
-  console.log("Worker API verified: tree sync privacy, achievement privacy, and leaderboard leave safety passed.");
+  console.log("Worker API verified: device-only cloud trees, tree sync privacy, achievement privacy, and leaderboard leave safety passed.");
 } finally {
   if (devProcess) await terminate(devProcess);
   rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });

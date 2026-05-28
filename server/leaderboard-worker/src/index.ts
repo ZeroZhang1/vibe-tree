@@ -541,9 +541,11 @@ async function getCloudTree(request: Request, env: Env) {
     devices,
     modelStats,
     summary: {
-      hasRemoteTree: entries.length > 0 || achievements.length > 0,
+      hasRemoteTree: entries.length > 0 || achievements.length > 0 || devices.length > 0 || modelStats.length > 0,
       entryCount: entries.length,
       achievementCount: achievements.length,
+      deviceCount: devices.length,
+      modelStatCount: modelStats.length,
     },
   }, env);
 }

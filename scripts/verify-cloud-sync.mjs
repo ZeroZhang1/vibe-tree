@@ -63,9 +63,11 @@ function createFakeCloud() {
         devices: [...devices.values()],
         modelStats: [...modelStats.values()],
         summary: {
-          hasRemoteTree: entries.length > 0 || unlocked.length > 0,
+          hasRemoteTree: entries.length > 0 || unlocked.length > 0 || devices.size > 0 || modelStats.size > 0,
           entryCount: entries.length,
           achievementCount: unlocked.length,
+          deviceCount: devices.size,
+          modelStatCount: modelStats.size,
         },
       };
     }
@@ -464,6 +466,18 @@ let status = await emptyMac.service.joinCloudTree();
 assert(status.error === "no remote tree", "joining an empty account should return a no remote tree error");
 assert(emptyMac.ledger.settings.cloudSyncEnabled === false, "joining an empty account should leave cloud sync disabled");
 
+const zeroTokenCloud = createFakeCloud();
+const seedDevice = createDevice("seed-mac", "seed-device", zeroTokenCloud);
+seedDevice.ledger.settings.cloudSyncEnabled = true;
+seedDevice.ledger.settings.treeStartMode = "new";
+status = await seedDevice.service.syncCloudTree({ force: true });
+assert(!status.error, `zero-token seed sync failed: ${status.error}`);
+assert(zeroTokenCloud.devices.get("seed-device")?.tokens === 0, "zero-token cloud tree should still store a device snapshot");
+const joinZeroTokenDevice = createDevice("join-zero-token", "join-zero-device", zeroTokenCloud);
+status = await joinZeroTokenDevice.service.joinCloudTree();
+assert(!status.error, `joining a zero-token cloud tree should succeed: ${status.error}`);
+assert(joinZeroTokenDevice.ledger.settings.cloudSyncEnabled === true, "joining a zero-token cloud tree should enable cloud sync");
+
 const cloud = createFakeCloud();
 const repairedWinEntry = {
   ...localEntry("win-repaired-from-cloud", "win-device", "codex-session", "2026-05-27T01:30:00.000Z", 500),
@@ -651,5 +665,5 @@ assert(status.lastSyncedAt, "joining the leaderboard should wait for the first d
 leaderboardDevice.service.stop();
 
 console.log(
-  "Cloud sync contract verified: two-device merge, dedupe, authoritative cloud tokens, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
+  "Cloud sync contract verified: two-device merge, zero-token cloud tree join, dedupe, authoritative cloud tokens, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
 );

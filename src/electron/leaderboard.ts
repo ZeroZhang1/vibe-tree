@@ -515,7 +515,9 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     const modelStats = normalizeCloudModelStats(data.modelStats ?? []);
     const downloaded = options.appendRemoteEntries(entries);
     options.mergeRemoteAchievements(achievements);
-    const hasRemoteTree = Boolean(data.summary?.hasRemoteTree ?? (entries.length > 0 || achievements.length > 0));
+    const hasRemoteTree = Boolean(
+      data.summary?.hasRemoteTree ?? (entries.length > 0 || achievements.length > 0 || devices.length > 0 || modelStats.length > 0),
+    );
     return { entries, achievements, devices, modelStats, downloaded, hasRemoteTree };
   }
 
