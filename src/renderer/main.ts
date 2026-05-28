@@ -15,7 +15,7 @@ import type {
   UsageStatus,
   WindowBounds,
 } from "../shared/types";
-import { countedInputTokensForEntry } from "../shared/tokenAccounting";
+import { countedInputTokensForEntry, countedTokenBreakdownForEntry } from "../shared/tokenAccounting";
 import { ACHIEVEMENTS, CATEGORY_ORDER, rarityOrder } from "./achievements";
 import type { AchievementContext, AchievementDef } from "./achievements";
 import { appShellHtml } from "./appShell";
@@ -3858,7 +3858,7 @@ function renderSourceBreakdown(rows: SourceBreakdown[], visibility = sourceVisib
               <span>${row.xp > 0 ? `${percent}%` : escapeHtml(t("noRecords"))}</span>
             </div>
             <div class="source-meter"><span style="width:${percent}%"></span></div>
-            <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
+            <p>${tokenBreakdownSummary(row)}</p>
           </div>
           ${expanded ? renderModelBreakdown(row.sourceKey, visibility.enabled) : ""}
         </article>
@@ -3980,7 +3980,7 @@ function renderModelBreakdown(sourceKey: string, enabledSources = enabledStatsSo
                 <span>${formatCompact(row.xp)} token · ${percent}%</span>
               </div>
               <div class="source-meter"><span style="width:${percent}%"></span></div>
-              <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
+              <p>${tokenBreakdownSummary(row)}</p>
             </div>
           `;
         })
@@ -4062,15 +4062,26 @@ function resolveCloudModelBreakdown(
 }
 
 function breakdownForEntry(entry: LedgerEntry, enabledSources: Set<HistorySourceId>): SourceBreakdown {
+  const breakdown = countedTokenBreakdownForEntry(entry);
   return {
     id: "",
     label: "",
     xp: xpForEntry(entry, enabledSources),
-    inputTokens: countedInputTokensForEntry(entry),
-    outputTokens: safeTokens(entry.outputTokens ?? 0),
-    cacheReadTokens: safeTokens(entry.cacheReadTokens ?? 0),
-    cacheWriteTokens: safeTokens(entry.cacheWriteTokens ?? 0),
+    inputTokens: breakdown.inputTokens,
+    outputTokens: breakdown.outputTokens,
+    cacheReadTokens: breakdown.cacheReadTokens,
+    cacheWriteTokens: breakdown.cacheWriteTokens,
   };
+}
+
+function tokenBreakdownSummary(row: Pick<SourceBreakdown, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">) {
+  const parts = [
+    `in ${formatCompact(row.inputTokens)}`,
+    `out ${formatCompact(row.outputTokens)}`,
+    `cache ${formatCompact(row.cacheReadTokens)}`,
+  ];
+  if (row.cacheWriteTokens > 0) parts.push(`write ${formatCompact(row.cacheWriteTokens)}`);
+  return parts.join(" · ");
 }
 
 function addBreakdown(rows: Map<string, SourceBreakdown>, id: string, label: string, item: SourceBreakdown) {

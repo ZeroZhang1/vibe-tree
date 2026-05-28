@@ -1,7 +1,7 @@
 import type { LedgerEntry, TreeAsset } from "../shared/types";
-import { countedInputTokensForEntry } from "../shared/tokenAccounting";
+import { countedTokenBreakdownForEntry } from "../shared/tokenAccounting";
 import { clamp, dateKey } from "./format";
-import { emptySourceTotals, historySourceId, safeTokens, xpForEntry } from "./sources";
+import { emptySourceTotals, historySourceId, xpForEntry } from "./sources";
 import { treeStatsSignature } from "./treeAssets";
 import type { BaseStatsSnapshot, GameBalance, HistoryDayRow, HistoryFilter, HistorySourceId, SourceVisibility, Stats, WeatherState } from "./types";
 
@@ -164,10 +164,11 @@ function getSevenDayRows(entries: LedgerEntry[], filter: HistoryFilter = "all", 
     if (entryXp <= 0) continue;
 
     row.tokens += entryXp;
-    row.inputTokens += countedInputTokensForEntry(entry);
-    row.outputTokens += safeTokens(entry.outputTokens ?? 0);
-    row.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
-    row.cacheWriteTokens += safeTokens(entry.cacheWriteTokens ?? 0);
+    const breakdown = countedTokenBreakdownForEntry(entry);
+    row.inputTokens += breakdown.inputTokens;
+    row.outputTokens += breakdown.outputTokens;
+    row.cacheReadTokens += breakdown.cacheReadTokens;
+    row.cacheWriteTokens += breakdown.cacheWriteTokens;
     row.sources[source] += entryXp;
   }
 
