@@ -1823,11 +1823,9 @@ html[lang^="en"] .side-tabs {
   display: grid;
   gap: 6px;
   padding: 10px;
-  border: 1px solid color-mix(in srgb, var(--leaf) 30%, var(--border));
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--leaf) 9%, transparent), transparent 62%),
-    color-mix(in srgb, var(--bg-light) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-light) 78%, transparent);
 }
 
 .cloud-device-share-header,
@@ -1847,36 +1845,6 @@ html[lang^="en"] .side-tabs {
 .cloud-device-share-header strong {
   color: var(--ink);
   font-size: 0.72rem;
-}
-
-.cloud-device-share-meter {
-  height: 10px;
-  display: flex;
-  border: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 72%, transparent);
-  overflow: hidden;
-}
-
-.cloud-device-share-meter span {
-  display: block;
-  height: 100%;
-}
-
-.cloud-device-share-meter span:empty {
-  min-width: 0;
-}
-
-.cloud-device-share-meter .is-local {
-  background: linear-gradient(90deg, var(--leaf), var(--leaf-hi));
-}
-
-.cloud-device-share-meter.has-both .is-local {
-  box-shadow: inset -2px 0 0 var(--bg-light);
-}
-
-.cloud-device-share-meter .is-remote {
-  background: linear-gradient(90deg, var(--rain), color-mix(in srgb, var(--rain) 72%, var(--bg-light)));
 }
 
 .cloud-device-row {

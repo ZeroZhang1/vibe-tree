@@ -3539,9 +3539,8 @@ function renderCloudDeviceShare(devices: NonNullable<CloudSyncStatus["devices"]>
         <span>${escapeHtml(t("cloudDeviceShareTitle"))}</span>
         <strong>${escapeHtml(t("cloudDeviceLocalShare"))} ${localPercent}% · ${escapeHtml(t("cloudDeviceRemoteShare"))} ${remotePercent}%</strong>
       </div>
-      <div class="cloud-device-share-meter${localPercent > 0 && remotePercent > 0 ? " has-both" : ""}" aria-hidden="true">
-        <span class="is-local" style="width:${localPercent}%"></span>
-        <span class="is-remote" style="width:${remotePercent}%"></span>
+      <div class="cloud-device-share-meter source-meter" aria-hidden="true">
+        <span style="width:${localPercent}%"></span>
       </div>
       <div class="cloud-device-share-values">
         <span>${escapeHtml(t("cloudDeviceLocalShare"))} ${formatCompact(currentDeviceTokens)} token</span>
