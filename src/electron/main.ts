@@ -16,6 +16,8 @@ import type {
   LedgerFile,
   LeaderboardProfile,
   Settings,
+  ToastPlacement,
+  TreeToastItem,
   UpdateStatus,
   UsageEvent,
   UsageStatus,
@@ -43,6 +45,7 @@ const ACHIEVEMENT_TOAST_OVERLAP_PER_SCALE = 48;
 const ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE = 18;
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
+const LEVEL_TOAST_DEDUPE_MS = 4_000;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
@@ -125,7 +128,9 @@ let achievementToastWindow: BrowserWindow | null = null;
 let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let achievementToastFallbackHideAt = 0;
 let achievementToastRendererReady = false;
-let achievementToastPendingIds: string[] = [];
+let achievementToastPendingItems: TreeToastItem[] = [];
+let lastLevelToastKey = "";
+let lastLevelToastAt = 0;
 let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateStatus: UpdateStatus = {
   checking: false,
@@ -964,7 +969,7 @@ function achievementToastPlacement() {
   const leftX = petBounds.x - size.width + overlap;
   const canUseRight = rightX <= maxX;
   const canUseLeft = leftX >= minX;
-  const placement = canUseRight || !canUseLeft ? "right" : "left";
+  const placement: ToastPlacement = canUseRight || !canUseLeft ? "right" : "left";
   const rawX = placement === "right" ? rightX : leftX;
   const downOffset = Math.round(ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE * ledger.settings.scale);
   const rawY = petBounds.y - size.height + overlap + downOffset;
@@ -1019,32 +1024,65 @@ function flushAchievementToastOverlay() {
     !achievementToastWindow ||
     achievementToastWindow.isDestroyed() ||
     !achievementToastRendererReady ||
-    !achievementToastPendingIds.length
+    !achievementToastPendingItems.length
   ) {
     return;
   }
 
-  const ids = achievementToastPendingIds;
-  achievementToastPendingIds = [];
+  const items = achievementToastPendingItems;
+  achievementToastPendingItems = [];
   const { bounds, placement } = achievementToastPlacement();
   achievementToastWindow.setBounds(bounds, false);
   achievementToastWindow.setAlwaysOnTop(true, "floating");
-  achievementToastWindow.webContents.send("bonsai:achievement-toast", { ids, placement });
+  achievementToastWindow.webContents.send("bonsai:achievement-toast", toastPayload(items, placement));
   achievementToastWindow.showInactive();
-  scheduleAchievementToastFallbackHide(ids.length);
+  scheduleAchievementToastFallbackHide(items.length);
 }
 
-function showAchievementToastOverlay(ids: string[]) {
-  const cleanIds = ids.filter((id) => typeof id === "string" && id.length);
-  if (!cleanIds.length) return;
+function showTreeToastOverlay(items: TreeToastItem[]) {
+  const cleanItems = items.filter(isTreeToastItem);
+  if (!cleanItems.length) return;
 
-  achievementToastPendingIds.push(...cleanIds);
+  achievementToastPendingItems.push(...cleanItems);
   const window = createAchievementToastWindow();
   const { bounds, placement } = achievementToastPlacement();
   window.setBounds(bounds, false);
   window.setAlwaysOnTop(true, "floating");
   window.webContents.send("bonsai:achievement-toast-placement", placement);
   flushAchievementToastOverlay();
+}
+
+function showAchievementToastOverlay(ids: string[]) {
+  showTreeToastOverlay(
+    ids
+      .filter((id) => typeof id === "string" && id.length)
+      .map((id) => ({ type: "achievement", id })),
+  );
+}
+
+function showLevelToastOverlay(input: { from?: unknown; to?: unknown }) {
+  const from = Math.max(1, Math.round(Number(input?.from)));
+  const to = Math.max(1, Math.round(Number(input?.to)));
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
+  const key = String(to);
+  const now = Date.now();
+  if (lastLevelToastKey === key && now - lastLevelToastAt < LEVEL_TOAST_DEDUPE_MS) return;
+  lastLevelToastKey = key;
+  lastLevelToastAt = now;
+  showTreeToastOverlay([{ type: "level", from, to }]);
+}
+
+function toastPayload(items: TreeToastItem[], placement: ToastPlacement) {
+  return {
+    items,
+    ids: items.flatMap((item) => (item.type === "achievement" ? [item.id] : [])),
+    placement,
+  };
+}
+
+function isTreeToastItem(item: TreeToastItem): item is TreeToastItem {
+  if (item.type === "achievement") return typeof item.id === "string" && item.id.length > 0;
+  return Number.isFinite(item.from) && Number.isFinite(item.to) && item.to > item.from;
 }
 
 function showManager() {
@@ -2766,11 +2804,15 @@ ipcMain.on("achievements:toast-ready", (event) => {
 ipcMain.on("achievements:toast-drained", (event) => {
   if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;
   if (event.sender !== achievementToastWindow.webContents) return;
-  if (achievementToastPendingIds.length) {
+  if (achievementToastPendingItems.length) {
     flushAchievementToastOverlay();
     return;
   }
   scheduleAchievementToastDrainedHide();
+});
+
+ipcMain.on("level:toast", (_event, input: { from?: unknown; to?: unknown }) => {
+  showLevelToastOverlay(input);
 });
 
 ipcMain.handle("ledger:add-entry", (_event, input: { tokens: number; note?: string }) => {

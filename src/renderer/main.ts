@@ -14,8 +14,9 @@ import type {
   UpdateStatus,
   UsageStatus,
   WindowBounds,
+  TreeToastItem,
 } from "../shared/types";
-import { countedInputTokensForEntry, countedTokenBreakdownForEntry } from "../shared/tokenAccounting";
+import { countedTokenBreakdownForEntry } from "../shared/tokenAccounting";
 import { ACHIEVEMENTS, CATEGORY_ORDER, rarityOrder } from "./achievements";
 import type { AchievementContext, AchievementDef } from "./achievements";
 import { appShellHtml } from "./appShell";
@@ -175,7 +176,7 @@ let achievementSyncInFlight = false;
 let achievementReconcileInFlight = false;
 let achievementToastTimer: number | undefined;
 let lockedAchievementHintTimer: number | undefined;
-const achievementToastQueue: AchievementDef[] = [];
+const achievementToastQueue: TreeToastItem[] = [];
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const TOAST_PREVIEW_IDS = ["sprout", "deep_night", "xp_1m", "xp_100m", "fibonacci"];
 const RENDER_INTERVAL_MS = viewMode === "pet" ? 2_500 : 1_000;
@@ -794,7 +795,7 @@ async function refreshTreeConfig() {
 function bindToastOverlayEvents() {
   window.bonsai.onAchievementToast((payload) => {
     root.dataset.placement = payload.placement;
-    queueAchievementToasts(payload.ids);
+    queueTreeToasts(payload.items ?? (payload.ids ?? []).map((id) => ({ type: "achievement", id })));
   });
   window.bonsai.onAchievementToastPlacement((placement) => {
     root.dataset.placement = placement;
@@ -2481,8 +2482,7 @@ function renderDashboardTabs() {
 }
 
 function triggerLevelUpAnimation(levels: { from: number; to: number }) {
-  text("#petLevelUpText", `Lv.${levels.from} -> Lv.${levels.to}`);
-  text("#previewLevelUpText", `Lv.${levels.from} -> Lv.${levels.to}`);
+  window.bonsai.showLevelToast(levels);
   pendingLevelUp = null;
   root.classList.remove("level-up");
   void root.offsetWidth;
@@ -2876,7 +2876,6 @@ function syncAchievements(stats: Stats, context: AchievementContext) {
     .unlockAchievements(items)
     .then((result) => {
       achievementState = result.state;
-      queueAchievementToasts(result.unlocked.map((item) => item.id));
       renderAchievements(stats, context);
     })
     .finally(() => {
@@ -3058,10 +3057,10 @@ function markAchievementSeen(id: string) {
   renderDashboardTabs();
 }
 
-function queueAchievementToasts(ids: string[]) {
-  const defs = ids.map((id) => ACHIEVEMENTS.find((def) => def.id === id)).filter((def): def is AchievementDef => Boolean(def));
-  if (!defs.length) return;
-  achievementToastQueue.push(...defs);
+function queueTreeToasts(items: TreeToastItem[]) {
+  const cleanItems = items.filter(isRenderableToastItem);
+  if (!cleanItems.length) return;
+  achievementToastQueue.push(...cleanItems);
   showNextAchievementToast();
 }
 
@@ -3077,9 +3076,26 @@ function showNextAchievementToast() {
     if (viewMode === "toast") window.bonsai.notifyAchievementToastDrained();
     return;
   }
-  const def = achievementToastQueue.shift()!;
+  const item = achievementToastQueue.shift()!;
+  achievementToastLayer.innerHTML = toastItemHtml(item);
+  achievementToastTimer = window.setTimeout(() => {
+    achievementToastLayer.innerHTML = "";
+    achievementToastTimer = undefined;
+    showNextAchievementToast();
+  }, ACHIEVEMENT_TOAST_DURATION_MS);
+}
+
+function isRenderableToastItem(item: TreeToastItem) {
+  if (item.type === "achievement") return ACHIEVEMENTS.some((def) => def.id === item.id);
+  return Number.isFinite(item.from) && Number.isFinite(item.to) && item.to > item.from;
+}
+
+function toastItemHtml(item: TreeToastItem) {
+  if (item.type === "level") return levelToastHtml(item);
+  const def = ACHIEVEMENTS.find((achievement) => achievement.id === item.id);
+  if (!def) return "";
   const copy = achievementText(def);
-  achievementToastLayer.innerHTML = `
+  return `
     <div class="achievement-toast rarity-${def.rarity}">
       <div class="achievement-toast-head">
         <span class="achievement-toast-meta">${escapeHtml(achievementRarityLabel(def.rarity))} · ${escapeHtml(t("achievementUnlocked"))}</span>
@@ -3088,11 +3104,18 @@ function showNextAchievementToast() {
       <p>${escapeHtml(copy.description)}</p>
     </div>
   `;
-  achievementToastTimer = window.setTimeout(() => {
-    achievementToastLayer.innerHTML = "";
-    achievementToastTimer = undefined;
-    showNextAchievementToast();
-  }, ACHIEVEMENT_TOAST_DURATION_MS);
+}
+
+function levelToastHtml(item: Extract<TreeToastItem, { type: "level" }>) {
+  return `
+    <div class="achievement-toast level-toast">
+      <div class="achievement-toast-head">
+        <span class="achievement-toast-meta">${escapeHtml(t("levelUpToastMeta"))}</span>
+      </div>
+      <strong>Lv.${item.from} -> Lv.${item.to}</strong>
+      <p>${escapeHtml(t("levelUpToastCopy"))}</p>
+    </div>
+  `;
 }
 
 function longestConsecutiveDays(keys: string[]) {

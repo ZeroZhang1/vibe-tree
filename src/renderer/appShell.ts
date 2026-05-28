@@ -9,10 +9,6 @@ export function appShellHtml(viewMode: ViewMode) {
         <div class="pet-aura"></div>
         <img class="tree-image" id="treeImage" alt="Vibe Tree" draggable="false" />
         <div class="weather-layer weather-front" id="weatherFront"></div>
-        <div class="level-up-toast" aria-hidden="true">
-          <strong>LEVEL UP!</strong>
-          <span id="petLevelUpText">Lv.1 -> Lv.2</span>
-        </div>
         <div class="level-badge" id="petLevelBadge">
           <span class="badge-card">
             <span class="badge-face badge-front">Lv.1</span>
@@ -41,10 +37,6 @@ export function appShellHtml(viewMode: ViewMode) {
           <div class="pet-aura"></div>
           <img class="tree-image" id="previewTreeImage" alt="Vibe Tree preview" draggable="false" />
           <div class="weather-layer weather-front" id="previewWeatherFront"></div>
-          <div class="level-up-toast" aria-hidden="true">
-            <strong>LEVEL UP!</strong>
-            <span id="previewLevelUpText">Lv.1 -> Lv.2</span>
-          </div>
           <div class="level-badge preview-level" id="previewLevelBadge">
             <span class="badge-card">
               <span class="badge-face badge-front">Lv.1</span>

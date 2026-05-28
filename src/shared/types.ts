@@ -179,6 +179,12 @@ export interface AchievementUnlockResult {
   unlocked: AchievementUnlock[];
 }
 
+export type ToastPlacement = "left" | "right";
+
+export type TreeToastItem =
+  | { type: "achievement"; id: string }
+  | { type: "level"; from: number; to: number };
+
 export interface UpdateStatus {
   checking: boolean;
   installing: boolean;

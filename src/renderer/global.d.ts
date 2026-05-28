@@ -9,6 +9,8 @@ import type {
   LeaderboardRange,
   LeaderboardStatus,
   Settings,
+  ToastPlacement,
+  TreeToastItem,
   UpdateStatus,
   UsageStatus,
   WindowBounds,
@@ -48,6 +50,7 @@ declare global {
       updateAchievementStats: (stats: Record<string, unknown>) => Promise<AchievementState>;
       reconcileAchievements: (input: { version: number; unlockedIds: string[]; stats?: Record<string, unknown> }) => Promise<AchievementState>;
       saveShareImage: (input: { filename: string; pngBase64: string }) => Promise<{ canceled: boolean; filePath?: string }>;
+      showLevelToast: (input: { from: number; to: number }) => void;
       notifyAchievementToastReady: () => void;
       notifyAchievementToastDrained: () => void;
       notifyManagerReady: () => void;
@@ -60,8 +63,8 @@ declare global {
       onLeaderboardStatus: (callback: (status: LeaderboardStatus) => void) => () => void;
       onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => () => void;
       onPreviewAchievementToast: (callback: (id: string) => void) => () => void;
-      onAchievementToast: (callback: (payload: { ids: string[]; placement: "left" | "right" }) => void) => () => void;
-      onAchievementToastPlacement: (callback: (placement: "left" | "right") => void) => () => void;
+      onAchievementToast: (callback: (payload: { ids?: string[]; items?: TreeToastItem[]; placement: ToastPlacement }) => void) => () => void;
+      onAchievementToastPlacement: (callback: (placement: ToastPlacement) => void) => () => void;
     };
   }
 }

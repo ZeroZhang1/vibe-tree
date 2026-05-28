@@ -10,6 +10,8 @@ import type {
   LeaderboardRange,
   LeaderboardStatus,
   Settings,
+  ToastPlacement,
+  TreeToastItem,
   UpdateStatus,
   UsageStatus,
   WindowBounds,
@@ -56,6 +58,7 @@ const api = {
     ipcRenderer.invoke("achievements:reconcile", input) as Promise<AchievementState>,
   saveShareImage: (input: { filename: string; pngBase64: string }) =>
     ipcRenderer.invoke("share:save-image", input) as Promise<{ canceled: boolean; filePath?: string }>,
+  showLevelToast: (input: { from: number; to: number }) => ipcRenderer.send("level:toast", input),
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
   notifyManagerReady: () => ipcRenderer.send("manager:ready"),
@@ -108,16 +111,16 @@ const api = {
     ipcRenderer.on("bonsai:preview-achievement-toast", listener);
     return () => ipcRenderer.removeListener("bonsai:preview-achievement-toast", listener);
   },
-  onAchievementToast: (callback: (payload: { ids: string[]; placement: "left" | "right" }) => void) => {
+  onAchievementToast: (callback: (payload: { ids?: string[]; items?: TreeToastItem[]; placement: ToastPlacement }) => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      payload: { ids: string[]; placement: "left" | "right" },
+      payload: { ids?: string[]; items?: TreeToastItem[]; placement: ToastPlacement },
     ) => callback(payload);
     ipcRenderer.on("bonsai:achievement-toast", listener);
     return () => ipcRenderer.removeListener("bonsai:achievement-toast", listener);
   },
-  onAchievementToastPlacement: (callback: (placement: "left" | "right") => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, placement: "left" | "right") => callback(placement);
+  onAchievementToastPlacement: (callback: (placement: ToastPlacement) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, placement: ToastPlacement) => callback(placement);
     ipcRenderer.on("bonsai:achievement-toast-placement", listener);
     return () => ipcRenderer.removeListener("bonsai:achievement-toast-placement", listener);
   },

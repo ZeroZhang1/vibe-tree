@@ -31,6 +31,7 @@ const api = {
   updateAchievementStats: (stats) => ipcRenderer.invoke("achievements:update-stats", stats),
   reconcileAchievements: (input) => ipcRenderer.invoke("achievements:reconcile", input),
   saveShareImage: (input) => ipcRenderer.invoke("share:save-image", input),
+  showLevelToast: (input) => ipcRenderer.send("level:toast", input),
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
   notifyManagerReady: () => ipcRenderer.send("manager:ready"),
