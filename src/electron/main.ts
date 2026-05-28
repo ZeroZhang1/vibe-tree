@@ -1581,10 +1581,9 @@ function cloudModelStats(): CloudModelStat[] {
   const deviceId = ensureCloudSyncDeviceId();
   const rows = new Map<string, CloudModelStat>();
   for (const entry of ledger.entries) {
-    const belongsToCurrentDevice = entry.deviceId === deviceId;
-    if ((entry.syncedFromCloud || entry.source === "cloud-sync") && !belongsToCurrentDevice) continue;
     const model = cleanCloudModelLabel(entry.model) ?? cleanCloudModelLabel(entry.provider);
     if (!model) continue;
+    if (entryIsKnownRemoteCloudMirror(entry, deviceId)) continue;
     const createdAt = new Date(entry.createdAt);
     if (!Number.isFinite(createdAt.getTime())) continue;
     const source = normalizeCloudEventSource(entry.source, entry.id);
@@ -1617,6 +1616,11 @@ function cloudModelStats(): CloudModelStat[] {
     const sourceOrder = a.source.localeCompare(b.source);
     return sourceOrder || a.model.localeCompare(b.model);
   });
+}
+
+function entryIsKnownRemoteCloudMirror(entry: LedgerEntry, currentDeviceId: string) {
+  if (!entry.syncedFromCloud && entry.source !== "cloud-sync") return false;
+  return Boolean(entry.deviceId && entry.deviceId !== currentDeviceId);
 }
 
 function cleanCloudModelLabel(value: unknown) {

@@ -732,7 +732,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     const now = new Date();
     const start = preferenceRangeStart(range, now);
     const agentTotals = new Map<string, number>();
-    const modelTotals = new Map<string, number>();
+    const modelTotals = modelTotalsFromSyncedAggregates(start);
+    const useAggregateModelTotals = modelTotals.size > 0;
     const hourTotals = Array.from({ length: 24 }, () => 0);
     const hourBuckets = new Map<number, number>();
     let totalTokens = 0;
@@ -747,8 +748,10 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       totalTokens += tokens;
       const agentLabel = agentLabelForEntry(entry);
       if (agentLabel) agentTotals.set(agentLabel, (agentTotals.get(agentLabel) ?? 0) + tokens);
-      const model = cleanPreferenceLabel(entry.model);
-      if (model) modelTotals.set(model, (modelTotals.get(model) ?? 0) + tokens);
+      if (!useAggregateModelTotals) {
+        const model = cleanPreferenceLabel(entry.model);
+        if (model) modelTotals.set(model, (modelTotals.get(model) ?? 0) + tokens);
+      }
       hourTotals[createdAt.getHours()] += tokens;
       const hourKey = Math.floor(createdAt.getTime() / 3_600_000);
       hourBuckets.set(hourKey, (hourBuckets.get(hourKey) ?? 0) + tokens);
@@ -772,6 +775,38 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       favoritePeriod,
       peakTokensPerMinute: Math.max(0, Math.round(peakHourTokens / 60)),
     };
+  }
+
+  function modelTotalsFromSyncedAggregates(start: Date | undefined) {
+    const rows = new Map<string, CloudModelStat>();
+    if (ledger().settings.cloudSyncEnabled) {
+      for (const stat of readCloudSyncState().modelStats ?? []) mergePreferenceModelStat(rows, stat);
+    }
+    for (const stat of options.cloudModelStats()) mergePreferenceModelStat(rows, stat);
+
+    const totals = new Map<string, number>();
+    for (const stat of rows.values()) {
+      if (!modelStatInPreferenceRange(stat, start)) continue;
+      const model = cleanPreferenceLabel(stat.model);
+      const tokens = positiveInteger(stat.tokens);
+      if (!model || !tokens) continue;
+      totals.set(model, (totals.get(model) ?? 0) + tokens);
+    }
+    return totals;
+  }
+
+  function mergePreferenceModelStat(rows: Map<string, CloudModelStat>, input: CloudModelStat) {
+    const [stat] = normalizeCloudModelStats([input]);
+    if (!stat) return;
+    const key = `${stat.deviceId}|${stat.date}|${stat.source}|${stat.model}`;
+    const existing = rows.get(key);
+    if (!existing || stat.tokens > existing.tokens) rows.set(key, stat);
+  }
+
+  function modelStatInPreferenceRange(stat: CloudModelStat, start: Date | undefined) {
+    if (!start) return true;
+    const date = new Date(`${stat.date}T00:00:00`);
+    return Number.isFinite(date.getTime()) && date >= start;
   }
 
   function usageStartDate() {
@@ -1151,16 +1186,23 @@ function agentLabelForEntry(entry: LedgerEntry) {
 }
 
 function preferenceSourceIdForEntry(entry: LedgerEntry): keyof typeof AGENT_LABELS | undefined {
-  if (entry.source === "cloud-sync") return "cloud";
-  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
-  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
-  if (entry.source === "pi-session" || entry.agent === "pi-agent") return "pi";
-  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+  if (entry.source === "cloud-sync") {
+    const inferred = sourceFromEventId(entry.id);
+    return inferred ? preferenceSourceIdForSource(inferred, entry.agent) : "cloud";
+  }
+  return preferenceSourceIdForSource(entry.source, entry.agent);
+}
+
+function preferenceSourceIdForSource(source: string, agent?: string): keyof typeof AGENT_LABELS | undefined {
+  if (source === "codex-session" || agent === "codex-desktop") return "codex";
+  if (source === "openclaw-session" || agent === "openclaw") return "openclaw";
+  if (source === "pi-session" || agent === "pi-agent") return "pi";
+  if (source === "opencode-session" || agent === "opencode" || Boolean(agent?.startsWith("opencode:"))) {
     return "opencode";
   }
-  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
-  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
-  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
+  if (source === "claude-session" || Boolean(agent?.startsWith("claude-code"))) return "claude";
+  if (source === "gemini-session" || agent === "gemini") return "gemini";
+  if (source === "hermes-session" || agent === "hermes") return "hermes";
   return undefined;
 }
 

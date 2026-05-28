@@ -60,7 +60,9 @@ This branch adds the current implementation pass for cloud tree sync, plus Mac/W
 - Cloud tree sync strips local agent/note/trigger details and does not upload prompt, reply, session text, file content, or local paths.
 - Pulled cloud events preserve safe source categories such as `codex-session`, `openclaw-session`, and `claude-session`, so remote growth is merged into its real source rather than shown as a separate Cloud Tree source.
 - Per-event model/provider remains local by default. Aggregate model sync uploads only daily totals grouped by device/source/model, not individual sessions.
+- Old repaired local mirrors that still have a model label but no device id are allowed to rebuild this device's aggregate model totals; mirrors explicitly belonging to another device are still skipped.
 - The homepage data-source model share falls back to `未归类模型` / `Uncategorized model` instead of showing raw `unknown`.
+- Public leaderboard model preference uses the synced aggregate model stats when available, so cross-device model preference is not limited to the current device's event-level model fields.
 - The leaderboard page owns `同步并刷新`, `加入排行`, and `退出排行榜`; settings keeps only public preference and data-safety copy.
 - Leaving the leaderboard now deletes only remote leaderboard daily totals/preferences and keeps the shared cloud tree archive intact.
 - A local contract verification script simulates Windows and Mac sharing one fake cloud tree.

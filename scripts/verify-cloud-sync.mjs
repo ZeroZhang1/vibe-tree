@@ -218,18 +218,19 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
     deviceInfo: () => ({ deviceId, alias: name, platform: name === "windows" ? "windows" : "mac" }),
     cloudModelStats: () =>
       ledger.entries
-        .filter((entry) => entry.model && (!(entry.syncedFromCloud || entry.source === "cloud-sync") || entry.deviceId === deviceId))
+        .filter((entry) => entry.model && (!(entry.syncedFromCloud || entry.source === "cloud-sync") || !entry.deviceId || entry.deviceId === deviceId))
         .map((entry) => ({
           deviceId,
           date: entry.createdAt.slice(0, 10),
-          source: entry.source,
+          source: normalizeCloudSource(entry.source, entry.id),
           model: entry.model,
           tokens: countedTokensForEntry(entry),
           inputTokens: optionalCount(entry.inputTokens),
           outputTokens: optionalCount(entry.outputTokens),
           cacheReadTokens: optionalCount(entry.cacheReadTokens),
           cacheWriteTokens: optionalCount(entry.cacheWriteTokens),
-        })),
+        }))
+        .filter((stat) => stat.source !== "cloud-sync"),
     getLedger: () => ledger,
     getAchievements: () => achievementState,
     updateSettings: (partial) => {
@@ -521,6 +522,39 @@ assert(
   "cloud should not let one device re-upload another device's aggregate model totals",
 );
 
+const legacyModelCloud = createFakeCloud();
+legacyModelCloud.events.set("codex-session:legacy-no-device-model", {
+  id: "codex-session:legacy-no-device-model",
+  createdAt: "2026-05-27T02:00:00.000Z",
+  source: "codex-session",
+  tokens: 700,
+  inputTokens: 500,
+  outputTokens: 200,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  deviceId: "legacy-device",
+});
+const legacyModelDevice = createDevice("legacy-model-device", "legacy-device", legacyModelCloud, {
+  entries: [
+    {
+      ...localEntry("codex-session:legacy-no-device-model", undefined, "cloud-sync", "2026-05-27T02:00:00.000Z", 700),
+      model: "legacy-model",
+      syncedFromCloud: true,
+    },
+  ],
+});
+legacyModelDevice.ledger.settings.cloudSyncEnabled = true;
+legacyModelDevice.ledger.settings.treeStartMode = "cloud";
+status = await legacyModelDevice.service.syncCloudTree({ force: true });
+assert(!status.error, `legacy no-device model sync failed: ${status.error}`);
+assert(
+  [...legacyModelCloud.modelStats.values()].some(
+    (row) => row.deviceId === "legacy-device" && row.source === "codex-session" && row.model === "legacy-model",
+  ),
+  "same-device cloud mirrors without a device id should still repair aggregate model totals",
+);
+legacyModelDevice.service.stop();
+
 const mac = createDevice("mac", "mac-device", cloud);
 status = await mac.service.joinCloudTree();
 assert(!status.error, `mac join existing failed: ${status.error}`);
@@ -653,6 +687,19 @@ const leaderboardDevice = createDevice("leaderboard-cloud", "leaderboard-device"
   ],
 });
 leaderboardDevice.ledger.installedAt = "2026-05-27T00:00:00.000Z";
+leaderboardDevice.ledger.settings.cloudSyncEnabled = true;
+leaderboardDevice.ledger.settings.leaderboardPreferencesPublic = true;
+leaderboardDevice.files.set("leaderboard-cloud:cloud", {
+  modelStats: [
+    {
+      deviceId: "win-device",
+      date: "2026-05-21",
+      source: "codex-session",
+      model: "remote-favorite-model",
+      tokens: 4200,
+    },
+  ],
+});
 status = await leaderboardDevice.service.setEnabled(true);
 assert(!status.error, `leaderboard sync failed: ${status.error}`);
 const dailyUsageUpload = leaderboardCloud.requests.find((request) => request.path === "/api/usage/daily")?.body;
@@ -660,6 +707,11 @@ assert(dailyUsageUpload?.usageStartDate === "2026-05-21", "leaderboard sync shou
 assert(
   dailyUsageUpload.days.some((day) => day.date === "2026-05-21" && day.tokens === 4200),
   "leaderboard sync should upload older cloud history rows",
+);
+const allPreference = dailyUsageUpload.usagePreferences?.find((item) => item.range === "all");
+assert(
+  allPreference?.favoriteModel === "remote-favorite-model",
+  "leaderboard public preferences should use synced aggregate model stats across devices",
 );
 assert(status.lastSyncedAt, "joining the leaderboard should wait for the first daily sync");
 leaderboardDevice.service.stop();
