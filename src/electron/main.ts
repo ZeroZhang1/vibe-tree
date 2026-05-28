@@ -1581,7 +1581,8 @@ function cloudModelStats(): CloudModelStat[] {
   const deviceId = ensureCloudSyncDeviceId();
   const rows = new Map<string, CloudModelStat>();
   for (const entry of ledger.entries) {
-    if (entry.syncedFromCloud || entry.source === "cloud-sync") continue;
+    const belongsToCurrentDevice = entry.deviceId === deviceId;
+    if ((entry.syncedFromCloud || entry.source === "cloud-sync") && !belongsToCurrentDevice) continue;
     const model = cleanCloudModelLabel(entry.model) ?? cleanCloudModelLabel(entry.provider);
     if (!model) continue;
     const createdAt = new Date(entry.createdAt);
@@ -1721,7 +1722,9 @@ function normalizeRemoteEntry(entry: LedgerEntry): LedgerEntry {
 }
 
 function mergeRemoteEntry(existing: LedgerEntry, remote: LedgerEntry): LedgerEntry {
-  if (existing.syncedFromCloud || existing.source === "cloud-sync") return remote;
+  if (existing.syncedFromCloud || existing.source === "cloud-sync") {
+    return mergeLocalOnlyUsageFields(remote, existing);
+  }
   return {
     ...existing,
     source: existing.source === "cloud-sync" ? remote.source : existing.source,
@@ -1735,6 +1738,16 @@ function mergeRemoteEntry(existing: LedgerEntry, remote: LedgerEntry): LedgerEnt
   };
 }
 
+function mergeLocalOnlyUsageFields(base: LedgerEntry, fallback: LedgerEntry): LedgerEntry {
+  return {
+    ...base,
+    agent: base.agent ?? fallback.agent,
+    provider: base.provider ?? fallback.provider,
+    model: base.model ?? fallback.model,
+    note: base.note ?? fallback.note,
+  };
+}
+
 function entriesEquivalent(left: LedgerEntry, right: LedgerEntry) {
   return (
     left.source === right.source &&
@@ -1745,7 +1758,11 @@ function entriesEquivalent(left: LedgerEntry, right: LedgerEntry) {
     left.cacheWriteTokens === right.cacheWriteTokens &&
     left.deviceId === right.deviceId &&
     left.syncedFromCloud === right.syncedFromCloud &&
-    left.eventFingerprint === right.eventFingerprint
+    left.eventFingerprint === right.eventFingerprint &&
+    left.agent === right.agent &&
+    left.provider === right.provider &&
+    left.model === right.model &&
+    left.note === right.note
   );
 }
 
@@ -1804,6 +1821,10 @@ function cloudMirrorPreferenceScore(entry: LedgerEntry) {
 function mergeCloudMirrorDuplicate(preferred: LedgerEntry, secondary: LedgerEntry, eventFingerprint: string): LedgerEntry {
   return {
     ...preferred,
+    agent: preferred.agent ?? secondary.agent,
+    provider: preferred.provider ?? secondary.provider,
+    model: preferred.model ?? secondary.model,
+    note: preferred.note ?? secondary.note,
     tokens: syncedAuthoritativeTokens(preferred, secondary),
     inputTokens: preferred.inputTokens ?? secondary.inputTokens,
     outputTokens: preferred.outputTokens ?? secondary.outputTokens,

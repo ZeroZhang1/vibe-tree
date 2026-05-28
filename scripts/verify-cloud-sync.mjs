@@ -216,7 +216,7 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
     deviceInfo: () => ({ deviceId, alias: name, platform: name === "windows" ? "windows" : "mac" }),
     cloudModelStats: () =>
       ledger.entries
-        .filter((entry) => !entry.syncedFromCloud && entry.source !== "cloud-sync" && entry.model)
+        .filter((entry) => entry.model && (!(entry.syncedFromCloud || entry.source === "cloud-sync") || entry.deviceId === deviceId))
         .map((entry) => ({
           deviceId,
           date: entry.createdAt.slice(0, 10),
@@ -253,7 +253,7 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
         const current = existing.get(entry.id);
         if (current) {
           if (current.source === "cloud-sync" || current.syncedFromCloud) {
-            Object.assign(current, normalized);
+            Object.assign(current, preserveLocalOnlyFields(normalized, current));
           }
           continue;
         }
@@ -406,10 +406,24 @@ function dedupeByFingerprint(entries) {
 function mergeDuplicate(preferred, secondary, fingerprint) {
   return {
     ...preferred,
+    agent: preferred.agent ?? secondary.agent,
+    provider: preferred.provider ?? secondary.provider,
+    model: preferred.model ?? secondary.model,
+    note: preferred.note ?? secondary.note,
     tokens: secondary.syncedFromCloud || secondary.source === "cloud-sync" ? secondary.tokens : preferred.tokens,
     deviceId: preferred.deviceId ?? secondary.deviceId,
     syncedFromCloud: preferred.syncedFromCloud || secondary.syncedFromCloud || secondary.source === "cloud-sync" || undefined,
     eventFingerprint: fingerprint,
+  };
+}
+
+function preserveLocalOnlyFields(base, fallback) {
+  return {
+    ...base,
+    agent: base.agent ?? fallback.agent,
+    provider: base.provider ?? fallback.provider,
+    model: base.model ?? fallback.model,
+    note: base.note ?? fallback.note,
   };
 }
 
@@ -451,8 +465,18 @@ assert(status.error === "no remote tree", "joining an empty account should retur
 assert(emptyMac.ledger.settings.cloudSyncEnabled === false, "joining an empty account should leave cloud sync disabled");
 
 const cloud = createFakeCloud();
+const repairedWinEntry = {
+  ...localEntry("win-repaired-from-cloud", "win-device", "codex-session", "2026-05-27T01:30:00.000Z", 500),
+  model: "repaired-model",
+  syncedFromCloud: true,
+};
+const pulledMacEntry = {
+  ...localEntry("mac-pulled-cloud-copy", "mac-device", "claude-session", "2026-05-27T01:45:00.000Z", 600),
+  model: "remote-model",
+  syncedFromCloud: true,
+};
 const windows = createDevice("windows", "win-device", cloud, {
-  entries: [localEntry("win-event-1", "win-device", "codex-session", "2026-05-27T01:00:00.000Z", 1000)],
+  entries: [localEntry("win-event-1", "win-device", "codex-session", "2026-05-27T01:00:00.000Z", 1000), repairedWinEntry, pulledMacEntry],
   achievements: [
     {
       id: "sprout",
@@ -473,6 +497,14 @@ assert(cloud.devices.get("win-device")?.platform === "windows", "cloud should tr
 assert(
   [...cloud.modelStats.values()].some((row) => row.deviceId === "win-device" && row.model === "private-model"),
   "cloud should store default aggregate model totals",
+);
+assert(
+  [...cloud.modelStats.values()].some((row) => row.deviceId === "win-device" && row.model === "repaired-model"),
+  "cloud should include repaired same-device cloud mirrors in aggregate model totals",
+);
+assert(
+  ![...cloud.modelStats.values()].some((row) => row.deviceId === "win-device" && row.model === "remote-model"),
+  "cloud should not let one device re-upload another device's aggregate model totals",
 );
 
 const mac = createDevice("mac", "mac-device", cloud);
@@ -551,6 +583,7 @@ const pollutedMac = createDevice("polluted-mac", "polluted-mac-device", cacheClo
       id: "codex-session:cache-heavy-local-path-id",
       createdAt: "2026-05-27T03:00:00.000Z",
       source: "codex-session",
+      model: "gpt-5.5",
       tokens: 1100,
       inputTokens: 1000,
       outputTokens: 100,
@@ -582,6 +615,7 @@ const repaired = cacheHeavyEntries[0];
 assert(repaired?.tokens === 1100, "cloud-sync repair should trust authoritative server tokens");
 assert(countedTokensForEntry(repaired) === 1100, "cloud-sync XP should not add cache read twice");
 assert(repaired.source === "codex-session", "cloud-sync repair should restore the safe source category");
+assert(repaired.model === "gpt-5.5", "cloud-sync repair should preserve local model labels");
 assert(pollutedMac.ledger.entries.reduce((total, entry) => total + countedTokensForEntry(entry), 0) === 1100, "polluted cache mirror must not keep counting after repair");
 
 const leaderboardCloud = createFakeCloud();
