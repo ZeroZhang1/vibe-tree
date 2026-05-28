@@ -34,6 +34,7 @@ Opt into the leaderboard with GitHub. By default, only aggregated token ranking 
 - **Live token weather**: total tokens drive level growth; current token/min drives weather.
 - **Multi-agent sources**: Codex, Claude Code, OpenClaw, Pi Agent, OpenCode, Gemini, and Hermes.
 - **Source and model breakdowns**: inspect input, output, cache, and model distribution by agent.
+- **One tree across devices**: sign in with the same GitHub account to sync level, total tokens, achievements, device contributions, and aggregate model share across Windows and Mac.
 - **Recent 7-day chart**: filter token trends by source.
 - **Achievements**: unlock milestones for totals, peaks, streaks, time habits, and agent usage.
 - **Share image export**: choose from three templates and export a high-resolution PNG.
@@ -93,6 +94,8 @@ Vibe Tree auto-detects the default paths after installation. You can customize s
 
 Vibe Tree is local-first. By default, it does not upload code, prompts, filenames, paths, conversation logs, or complete hourly heatmaps.
 
+When "One tree, many devices" is enabled, it syncs only the growth data needed for the shared tree: token events, safe source categories, device id, coarse device summaries, achievement state, and daily token totals grouped by device/source/model. It does not upload individual session text, prompts, replies, local paths, or code files.
+
 When joining the leaderboard, it syncs daily token totals and the local first-use date so the service can compute today, 7-day, 30-day, and all-time rankings. If "Public usage preferences" is enabled, it additionally syncs four aggregated fields:
 
 - Favorite agent
@@ -134,7 +137,7 @@ $env:VIBE_OPENCODE_IMPORT_HISTORY="today"
 npm start
 ```
 
-## Leaderboard Service
+## Cloud Sync And Leaderboard Service
 
 The hosted app uses the configured Cloudflare Worker by default. For local testing or self-hosting:
 

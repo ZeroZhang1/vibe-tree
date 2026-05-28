@@ -187,7 +187,6 @@ VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm run start
 - The first-run flow still validates remote tree existence after click/login. A later nicety could preflight the remote account state before the user chooses.
 - Remote sync currently merges entries by event id and achievements by achievement id. It now stores per-device contribution summaries, but it still does not provide a full conflict UI or reset/relink flow.
 - Cloud tree sync reuses the leaderboard auth/profile. This is convenient but product copy should keep leaderboard publishing separate from private tree sync.
-- The Worker README still describes leaderboard as the main feature. It should be updated if this branch becomes the main sync architecture.
 - Full packaged release validation is still separate from this branch-level sync/UX verification.
 
 ## Verification Done On Mac

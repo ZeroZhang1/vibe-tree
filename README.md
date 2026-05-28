@@ -34,6 +34,7 @@ Vibe Tree 是一个桌面常驻的 token 天气树。它会读取本地 AI codin
 - **实时 token 天气**：累计 Token 决定成长等级，当前 token/min 决定天气状态。
 - **多 Agent 数据源**：支持 Codex、Claude Code、OpenClaw、Pi Agent、OpenCode、Gemini 和 Hermes。
 - **来源与模型统计**：按 agent 查看 input / output / cache，展开后可查看模型占比。
+- **多设备同养一棵树**：登录同一个 GitHub 账号后，Windows 和 Mac 可以同步等级、累计 Token、成就、设备贡献和聚合模型占比。
 - **最近 7 天图表**：按来源筛选近期 token 使用趋势。
 - **成就系统**：记录累计消耗、峰值时刻、连续活跃、时间偏好和 agent 使用里程碑。
 - **分享图导出**：从 3 套视觉模板里选择，一键导出高清 PNG。
@@ -93,6 +94,8 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 
 Vibe Tree 优先做本地统计。默认不会上传代码、提示词、文件名、路径、会话内容或完整小时热力图。
 
+开启「同养一棵树」后，只同步养成所需的数据：token 事件、安全来源分类、设备 id、粗粒度设备摘要、成就状态，以及按天/设备/来源/模型汇总后的 token 数。不会上传单条会话内容、prompt、回复、本地路径或代码文件。
+
 加入排行榜时，默认只同步每日 token 总量和本地首次使用日期，用于计算今日、7 天、30 天和全部榜单。开启「公开使用偏好」后，才会额外上传聚合后的四项信息：
 
 - 最常用 Agent
@@ -134,7 +137,7 @@ $env:VIBE_OPENCODE_IMPORT_HISTORY="today"
 npm start
 ```
 
-## 排行榜服务
+## 云同步与排行榜服务
 
 线上版本默认使用项目配置的 Cloudflare Worker。自托管或本地调试时可以覆盖：
 
