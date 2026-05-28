@@ -24,6 +24,7 @@ const api = {
   startNewTree: () => ipcRenderer.invoke("cloud-sync:start-new"),
   enableCloudSync: () => ipcRenderer.invoke("cloud-sync:enable"),
   joinExistingTree: () => ipcRenderer.invoke("cloud-sync:join-existing"),
+  cancelCloudAuth: () => ipcRenderer.invoke("cloud-sync:cancel-auth"),
   syncCloudTree: () => ipcRenderer.invoke("cloud-sync:sync"),
   getAchievements: () => ipcRenderer.invoke("achievements:get"),
   unlockAchievements: (items) => ipcRenderer.invoke("achievements:unlock", items),

@@ -244,6 +244,7 @@ let sourceScope: SourceScope = "today";
 let dashboardTab: DashboardTab = "home";
 let treeStartPendingAction: "new" | "cloud" | null = null;
 let treeStartCloudHelpTimer: number | undefined;
+let treeStartPendingVersion = 0;
 let achievementCategoryFilter: AchievementCategoryFilter = "growth";
 let achievementStatusFilter: AchievementStatusFilter = "all";
 let seenAchievementIds = new Set<string>();
@@ -993,26 +994,32 @@ function bindEvents() {
 
   treeStartNewButton?.addEventListener("click", async () => {
     setTreeStartFeedback(t("treeStartSaving"), "busy");
-    setTreeStartPending("new");
+    const pendingVersion = setTreeStartPending("new");
     try {
       cloudSyncStatus = await window.bonsai.startNewTree();
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
       setTreeStartFeedback(t("treeStartSaved"), "success");
       await wait(TREE_START_FEEDBACK_HOLD_MS);
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
       ledger = await window.bonsai.getLedger();
     } catch (error) {
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
       setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
     } finally {
-      clearTreeStartPending();
+      if (isCurrentTreeStartPending(pendingVersion)) {
+        clearTreeStartPending(pendingVersion);
+        render();
+      }
     }
-    render();
   });
 
   treeStartExistingButton?.addEventListener("click", async () => {
     setTreeStartFeedback(t("treeStartJoining"), "busy");
-    setTreeStartPending("cloud");
+    const pendingVersion = setTreeStartPending("cloud");
     scheduleTreeStartCloudHelp();
     try {
       cloudSyncStatus = await window.bonsai.joinExistingTree();
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
       ledger = await window.bonsai.getLedger();
       achievementState = await window.bonsai.getAchievements();
       if (!ledger.settings.treeStartMode) {
@@ -1022,20 +1029,36 @@ function bindEvents() {
         await wait(TREE_START_FEEDBACK_HOLD_MS);
       }
     } catch (error) {
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
       setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
     } finally {
-      clearTreeStartPending();
+      if (isCurrentTreeStartPending(pendingVersion)) {
+        clearTreeStartPending(pendingVersion);
+        render();
+      }
     }
-    render();
   });
 
-  treeStartCancelButton?.addEventListener("click", async () => {
+  treeStartCancelButton?.addEventListener("click", () => {
     if (treeStartPendingAction !== "cloud") return;
-    clearTreeStartCloudHelp();
-    setTreeStartFeedback(t("treeStartCancelled"), "error");
-    cloudSyncStatus = await window.bonsai.cancelCloudAuth();
     clearTreeStartPending();
+    setTreeStartFeedback(t("treeStartCancelled"), "error");
     render();
+    void window.bonsai
+      .cancelCloudAuth()
+      .then((status) => {
+        cloudSyncStatus = status;
+        if (!ledger?.settings.treeStartMode) {
+          setTreeStartFeedback(t("treeStartCancelled"), "error");
+          render();
+        }
+      })
+      .catch((error) => {
+        if (!ledger?.settings.treeStartMode) {
+          setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
+          render();
+        }
+      });
   });
 
   window.addEventListener("focus", remindTreeStartCloudPending);
@@ -3497,6 +3520,8 @@ function showTreeStartCloudHelp() {
 }
 
 function setTreeStartPending(action: "new" | "cloud") {
+  treeStartPendingVersion += 1;
+  const pendingVersion = treeStartPendingVersion;
   treeStartPendingAction = action;
   [treeStartNewButton, treeStartExistingButton].forEach((button) => {
     if (!button) return;
@@ -3507,9 +3532,16 @@ function setTreeStartPending(action: "new" | "cloud") {
     );
   });
   if (treeStartCancelButton) treeStartCancelButton.hidden = action !== "cloud";
+  return pendingVersion;
 }
 
-function clearTreeStartPending() {
+function isCurrentTreeStartPending(pendingVersion: number) {
+  return treeStartPendingVersion === pendingVersion;
+}
+
+function clearTreeStartPending(pendingVersion?: number) {
+  if (pendingVersion !== undefined && pendingVersion !== treeStartPendingVersion) return;
+  treeStartPendingVersion += 1;
   clearTreeStartCloudHelp();
   treeStartPendingAction = null;
   [treeStartNewButton, treeStartExistingButton].forEach((button) => {
