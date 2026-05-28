@@ -96,6 +96,8 @@ Vibe Tree is local-first. By default, it does not upload code, prompts, filename
 
 When "One tree, many devices" is enabled, it syncs only the growth data needed for the shared tree: token events, safe source categories, device id, coarse device summaries, achievement state, and daily token totals grouped by device/source/model. It does not upload individual session text, prompts, replies, local paths, or code files.
 
+See [PRIVACY.md](PRIVACY.md) for the full data-handling details.
+
 When joining the leaderboard, it syncs daily token totals and the local first-use date so the service can compute today, 7-day, 30-day, and all-time rankings. If "Public usage preferences" is enabled, it additionally syncs four aggregated fields:
 
 - Favorite agent
