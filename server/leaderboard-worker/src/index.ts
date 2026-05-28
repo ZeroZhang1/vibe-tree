@@ -403,6 +403,8 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_events WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_achievements WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_devices WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_model_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM auth_codes WHERE user_id = ?").bind(user.userId),
@@ -427,7 +429,7 @@ async function leaveLeaderboard(request: Request, env: Env) {
 async function getCloudTree(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureCloudTreeTables(env);
-  const [eventRows, achievementRows] = await Promise.all([
+  const [eventRows, achievementRows, deviceRows, deviceTotalRows, modelStatRows] = await Promise.all([
     env.DB.prepare(
       `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source,
               tokens, input_tokens AS inputTokens, output_tokens AS outputTokens,
@@ -442,6 +444,27 @@ async function getCloudTree(request: Request, env: Env) {
        FROM tree_achievements
        WHERE user_id = ?
        ORDER BY unlocked_at ASC`,
+    ).bind(user.userId).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      `SELECT device_id AS deviceId, alias, platform, last_synced_at AS lastSyncedAt,
+              app_version AS appVersion
+       FROM tree_devices
+       WHERE user_id = ?`,
+    ).bind(user.userId).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      `SELECT device_id AS deviceId, COUNT(*) AS entryCount, SUM(tokens) AS tokens, MAX(updated_at) AS lastSyncedAt
+       FROM tree_events
+       WHERE user_id = ? AND device_id IS NOT NULL
+       GROUP BY device_id`,
+    ).bind(user.userId).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      `SELECT device_id AS deviceId, date, source, model, tokens,
+              input_tokens AS inputTokens, output_tokens AS outputTokens,
+              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens
+       FROM tree_model_stats
+       WHERE user_id = ?
+       ORDER BY date ASC, source ASC, model ASC
+       LIMIT 5000`,
     ).bind(user.userId).all<Record<string, unknown>>(),
   ]);
   const entries = (eventRows.results || []).map((row) => ({
@@ -459,9 +482,64 @@ async function getCloudTree(request: Request, env: Env) {
     id: String(row.id),
     unlockedAt: String(row.unlockedAt),
   }));
+  const deviceMeta = new Map(
+    (deviceRows.results || []).map((row) => [
+      String(row.deviceId),
+      {
+        alias: typeof row.alias === "string" ? row.alias : undefined,
+        platform: typeof row.platform === "string" ? row.platform : undefined,
+        lastSyncedAt: typeof row.lastSyncedAt === "string" ? row.lastSyncedAt : undefined,
+        appVersion: typeof row.appVersion === "string" ? row.appVersion : undefined,
+      },
+    ]),
+  );
+  const deviceIds = new Set<string>([
+    ...[...deviceMeta.keys()],
+    ...(deviceTotalRows.results || [])
+      .map((row) => (typeof row.deviceId === "string" ? row.deviceId : undefined))
+      .filter((deviceId): deviceId is string => Boolean(deviceId)),
+  ]);
+  const deviceTotals = new Map(
+    (deviceTotalRows.results || []).map((row) => [
+      String(row.deviceId),
+      {
+        entryCount: numberOrZero(row.entryCount),
+        tokens: numberOrZero(row.tokens),
+        lastSyncedAt: typeof row.lastSyncedAt === "string" ? row.lastSyncedAt : undefined,
+      },
+    ]),
+  );
+  const devices = [...deviceIds]
+    .map((deviceId) => {
+      const meta = deviceMeta.get(deviceId);
+      const totals = deviceTotals.get(deviceId);
+      return {
+        deviceId,
+        alias: meta?.alias,
+        platform: meta?.platform,
+        lastSyncedAt: meta?.lastSyncedAt ?? totals?.lastSyncedAt,
+        appVersion: meta?.appVersion,
+        entryCount: totals?.entryCount ?? 0,
+        tokens: totals?.tokens ?? 0,
+      };
+    })
+    .sort((left, right) => right.tokens - left.tokens);
+  const modelStats = (modelStatRows.results || []).map((row) => ({
+    deviceId: String(row.deviceId),
+    date: String(row.date),
+    source: normalizeTreeEventSource(row.source),
+    model: String(row.model),
+    tokens: numberOrZero(row.tokens),
+    inputTokens: optionalNumber(row.inputTokens),
+    outputTokens: optionalNumber(row.outputTokens),
+    cacheReadTokens: optionalNumber(row.cacheReadTokens),
+    cacheWriteTokens: optionalNumber(row.cacheWriteTokens),
+  }));
   return json({
     entries,
     achievements,
+    devices,
+    modelStats,
     summary: {
       hasRemoteTree: entries.length > 0 || achievements.length > 0,
       entryCount: entries.length,
@@ -474,19 +552,32 @@ async function syncCloudTreeEvents(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureCloudTreeTables(env);
   const body = await request.json().catch(() => undefined) as
-    | { deviceId?: string; entries?: unknown[]; appVersion?: string }
+    | {
+        deviceId?: string;
+        device?: unknown;
+        entries?: unknown[];
+        modelStatsEnabled?: boolean;
+        modelStats?: unknown[];
+        appVersion?: string;
+      }
     | undefined;
   const deviceId = cleanShortText(body?.deviceId, 80);
   if (!deviceId) throw new HttpError(400, "Device id is required.", {}, "invalid_payload");
   const appVersion = cleanShortText(body?.appVersion, 32) ?? null;
   const entries = Array.isArray(body?.entries) ? body.entries.slice(0, 500) : [];
   const now = new Date().toISOString();
-  const statements = entries.map((raw) => normalizeCloudTreeEvent(raw, user.userId, deviceId, appVersion, now, env)).filter(Boolean);
+  const eventStatements = entries.map((raw) => normalizeCloudTreeEvent(raw, user.userId, deviceId, appVersion, now, env)).filter(Boolean);
+  const modelStats = normalizeCloudModelStatStatements(body, user.userId, deviceId, now, env);
+  const statements = [
+    upsertCloudTreeDevice(user.userId, deviceId, body?.device, appVersion, now, env),
+    ...eventStatements,
+    ...modelStats.statements,
+  ];
   if (statements.length) {
     await env.DB.batch(statements as D1PreparedStatement[]);
-    await dedupeCloudTreeEventsForUser(user.userId, env);
+    if (eventStatements.length) await dedupeCloudTreeEventsForUser(user.userId, env);
   }
-  return json({ ok: true, synced: statements.length }, env);
+  return json({ ok: true, synced: eventStatements.length, syncedModelStats: modelStats.count }, env);
 }
 
 async function syncCloudTreeAchievements(request: Request, env: Env) {
@@ -672,9 +763,43 @@ async function ensureCloudTreeTables(env: Env) {
         FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
       )`,
     ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_devices (
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        alias TEXT,
+        platform TEXT,
+        first_seen_at TEXT NOT NULL,
+        last_synced_at TEXT NOT NULL,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_model_stats (
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        source TEXT NOT NULL,
+        model TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id, date, source, model),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_user_created ON tree_events(user_id, created_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_device ON tree_events(user_id, device_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_achievements_user ON tree_achievements(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_devices_user ON tree_devices(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user ON tree_model_stats(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_device ON tree_model_stats(user_id, device_id)"),
   ]);
 }
 
@@ -726,6 +851,101 @@ function normalizeCloudTreeEvent(
     appVersion,
     now,
   );
+}
+
+function upsertCloudTreeDevice(
+  userId: string,
+  deviceId: string,
+  rawDevice: unknown,
+  appVersion: string | null,
+  now: string,
+  env: Env,
+) {
+  const input = rawDevice as Record<string, unknown> | undefined;
+  const alias = cleanShortText(input?.alias, 64) ?? null;
+  const platform = normalizeDevicePlatform(input?.platform) ?? null;
+  return env.DB.prepare(
+    `INSERT INTO tree_devices (
+       user_id, device_id, alias, platform, first_seen_at, last_synced_at, app_version, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, device_id) DO UPDATE SET
+       alias = COALESCE(excluded.alias, tree_devices.alias),
+       platform = COALESCE(excluded.platform, tree_devices.platform),
+       last_synced_at = excluded.last_synced_at,
+       app_version = COALESCE(excluded.app_version, tree_devices.app_version),
+       updated_at = excluded.updated_at`,
+  ).bind(userId, deviceId, alias, platform, now, now, appVersion, now);
+}
+
+function normalizeCloudModelStatStatements(
+  body: { modelStatsEnabled?: boolean; modelStats?: unknown[] } | undefined,
+  userId: string,
+  deviceId: string,
+  now: string,
+  env: Env,
+) {
+  if (body?.modelStatsEnabled !== true && body?.modelStatsEnabled !== false && !Array.isArray(body?.modelStats)) {
+    return { statements: [], count: 0 };
+  }
+
+  const rows = body?.modelStatsEnabled === true && Array.isArray(body?.modelStats)
+    ? body.modelStats.slice(0, 1000).map(normalizeCloudModelStat).filter(Boolean)
+    : [];
+  return {
+    statements: [
+      env.DB.prepare("DELETE FROM tree_model_stats WHERE user_id = ? AND device_id = ?").bind(userId, deviceId),
+      ...rows.map((row) =>
+        env.DB.prepare(
+          `INSERT INTO tree_model_stats (
+             user_id, device_id, date, source, model, tokens,
+             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, device_id, date, source, model) DO UPDATE SET
+             tokens = excluded.tokens,
+             input_tokens = excluded.input_tokens,
+             output_tokens = excluded.output_tokens,
+             cache_read_tokens = excluded.cache_read_tokens,
+             cache_write_tokens = excluded.cache_write_tokens,
+             updated_at = excluded.updated_at`,
+        ).bind(
+          userId,
+          deviceId,
+          row.date,
+          row.source,
+          row.model,
+          row.tokens,
+          row.inputTokens ?? null,
+          row.outputTokens ?? null,
+          row.cacheReadTokens ?? null,
+          row.cacheWriteTokens ?? null,
+          now,
+        ),
+      ),
+    ],
+    count: rows.length,
+  };
+}
+
+function normalizeCloudModelStat(raw: unknown) {
+  const input = raw as Record<string, unknown> | undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const date = typeof input.date === "string" && isDateKey(input.date) ? input.date : undefined;
+  const source = normalizeTreeEventSource(input.source);
+  const model = cleanShortText(input.model, 64);
+  const tokens = normalizeTokenCount(input.tokens);
+  if (!date || !model || source === "cloud-sync" || tokens === undefined || tokens <= 0) return undefined;
+  return {
+    date,
+    source,
+    model,
+    tokens,
+    inputTokens: normalizeTokenCount(input.inputTokens),
+    outputTokens: normalizeTokenCount(input.outputTokens),
+    cacheReadTokens: normalizeTokenCount(input.cacheReadTokens),
+    cacheWriteTokens: normalizeTokenCount(input.cacheWriteTokens),
+  };
 }
 
 function normalizeTreeEventSource(value: unknown, eventId?: unknown) {
@@ -1207,6 +1427,13 @@ function normalizePreferencePeriod(value: unknown): UsagePreferencePeriod | unde
 
 function cleanShortText(value: unknown, maxLength: number) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+}
+
+function normalizeDevicePlatform(value: unknown) {
+  const platform = cleanShortText(value, 32);
+  return platform === "mac" || platform === "windows" || platform === "linux" || platform === "unknown"
+    ? platform
+    : undefined;
 }
 
 function normalizePercent(value: unknown) {

@@ -10,6 +10,7 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   AppLanguage,
+  CloudModelStat,
   CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
@@ -33,7 +34,7 @@ import { MAIN_TEXT, WEATHER_LABELS } from "./i18n.js";
 import type { WeatherId } from "./i18n.js";
 import { createLeaderboardService } from "./leaderboard.js";
 import type { LeaderboardRequestJsonOptions } from "./leaderboard.js";
-import { countedTokensForEntry } from "../shared/tokenAccounting.js";
+import { countedInputTokensForEntry, countedTokensForEntry } from "../shared/tokenAccounting.js";
 
 const PET_BASE = { width: 192, height: 208 };
 const PET_STAGE_OFFSET = { x: 28, y: 0 };
@@ -92,6 +93,7 @@ const DEFAULT_SETTINGS: Settings = {
   cloudSyncDeviceId: undefined,
   cloudSyncLastSyncedAt: undefined,
   cloudSyncLastPulledAt: undefined,
+  cloudSyncModelStatsEnabled: false,
   treeStartMode: undefined,
   launchOnStartup: false,
   silentStartup: false,
@@ -211,6 +213,8 @@ const leaderboardService = createLeaderboardService({
   authPath: leaderboardAuthPath,
   cloudSyncPath,
   deviceId: () => ensureCloudSyncDeviceId(),
+  deviceInfo: () => cloudSyncDeviceInfo(),
+  cloudModelStats: () => cloudModelStats(),
   getLedger: () => ledger,
   updateSettings,
   appendRemoteEntries,
@@ -561,6 +565,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     cloudSyncDeviceId: cleanDeviceId(settings.cloudSyncDeviceId),
     cloudSyncLastSyncedAt,
     cloudSyncLastPulledAt,
+    cloudSyncModelStatsEnabled: Boolean(settings.cloudSyncModelStatsEnabled),
     treeStartMode: settings.treeStartMode === "new" || settings.treeStartMode === "cloud" ? settings.treeStartMode : undefined,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
@@ -1516,6 +1521,7 @@ function updateSettings(partial: Partial<Settings>) {
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
     previous.cloudSyncEnabled !== ledger.settings.cloudSyncEnabled ||
+    previous.cloudSyncModelStatsEnabled !== ledger.settings.cloudSyncModelStatsEnabled ||
     previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id
   ) {
     leaderboardService.startSync();
@@ -1525,7 +1531,8 @@ function updateSettings(partial: Partial<Settings>) {
     partial.leaderboardLastSyncedAt !== undefined ||
     partial.cloudSyncEnabled !== undefined ||
     partial.cloudSyncLastSyncedAt !== undefined ||
-    partial.cloudSyncLastPulledAt !== undefined
+    partial.cloudSyncLastPulledAt !== undefined ||
+    partial.cloudSyncModelStatsEnabled !== undefined
   ) {
     leaderboardService.broadcast();
   }
@@ -1550,6 +1557,73 @@ function ensureCloudSyncDeviceId() {
   ledger.settings = normalizeSettings({ ...ledger.settings, cloudSyncDeviceId: deviceId });
   writeDeviceSettings();
   return ledger.settings.cloudSyncDeviceId ?? deviceId;
+}
+
+function cloudSyncDeviceInfo() {
+  return {
+    deviceId: ensureCloudSyncDeviceId(),
+    alias: cloudDevicePlatformLabel(),
+    platform: cloudDevicePlatform(),
+  };
+}
+
+function cloudDevicePlatform() {
+  if (process.platform === "darwin") return "mac";
+  if (process.platform === "win32") return "windows";
+  if (process.platform === "linux") return "linux";
+  return "unknown";
+}
+
+function cloudDevicePlatformLabel() {
+  if (process.platform === "darwin") return "Mac";
+  if (process.platform === "win32") return "Windows";
+  if (process.platform === "linux") return "Linux";
+  return "Device";
+}
+
+function cloudModelStats(): CloudModelStat[] {
+  const deviceId = ensureCloudSyncDeviceId();
+  const rows = new Map<string, CloudModelStat>();
+  for (const entry of ledger.entries) {
+    if (entry.syncedFromCloud || entry.source === "cloud-sync") continue;
+    const model = cleanCloudModelLabel(entry.model) ?? cleanCloudModelLabel(entry.provider);
+    if (!model) continue;
+    const createdAt = new Date(entry.createdAt);
+    if (!Number.isFinite(createdAt.getTime())) continue;
+    const source = normalizeCloudEventSource(entry.source, entry.id);
+    if (source === "cloud-sync") continue;
+    const date = dateKey(createdAt);
+    const key = `${deviceId}|${date}|${source}|${model}`;
+    const existing =
+      rows.get(key) ??
+      {
+        deviceId,
+        date,
+        source,
+        model,
+        tokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      };
+    existing.tokens += countedTokensForEntry(entry);
+    existing.inputTokens = (existing.inputTokens ?? 0) + countedInputTokensForEntry(entry);
+    existing.outputTokens = (existing.outputTokens ?? 0) + safeTokens(entry.outputTokens ?? 0);
+    existing.cacheReadTokens = (existing.cacheReadTokens ?? 0) + safeTokens(entry.cacheReadTokens ?? 0);
+    existing.cacheWriteTokens = (existing.cacheWriteTokens ?? 0) + safeTokens(entry.cacheWriteTokens ?? 0);
+    rows.set(key, existing);
+  }
+  return [...rows.values()].filter((row) => row.tokens > 0).sort((a, b) => {
+    const dateOrder = a.date.localeCompare(b.date);
+    if (dateOrder) return dateOrder;
+    const sourceOrder = a.source.localeCompare(b.source);
+    return sourceOrder || a.model.localeCompare(b.model);
+  });
+}
+
+function cleanCloudModelLabel(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 64) : undefined;
 }
 
 function appendUsageEvent(event: UsageEvent) {

@@ -43,6 +43,8 @@ function assertNoForbiddenKeys(value, label) {
 function createFakeCloud() {
   const events = new Map();
   const achievements = new Map();
+  const devices = new Map();
+  const modelStats = new Map();
   const requests = [];
   let leaderboardDeleteCount = 0;
 
@@ -58,6 +60,8 @@ function createFakeCloud() {
       return {
         entries,
         achievements: unlocked,
+        devices: [...devices.values()],
+        modelStats: [...modelStats.values()],
         summary: {
           hasRemoteTree: entries.length > 0 || unlocked.length > 0,
           entryCount: entries.length,
@@ -69,6 +73,40 @@ function createFakeCloud() {
     if (url.pathname === "/api/tree/events" && method === "POST") {
       assert(options.token === "token", "tree event upload requires auth token");
       assert(typeof body?.deviceId === "string" && body.deviceId, "tree event upload requires device id");
+      const previousDevice = devices.get(body.deviceId) ?? {};
+      devices.set(body.deviceId, {
+        deviceId: body.deviceId,
+        alias: body?.device?.alias ?? previousDevice.alias,
+        platform: body?.device?.platform ?? previousDevice.platform,
+        lastSyncedAt: new Date().toISOString(),
+        entryCount: 0,
+        tokens: 0,
+      });
+      if (body?.modelStatsEnabled === true || body?.modelStatsEnabled === false) {
+        for (const key of [...modelStats.keys()].filter((key) => key.startsWith(`${body.deviceId}|`))) {
+          modelStats.delete(key);
+        }
+      }
+      if (body?.modelStatsEnabled === true && Array.isArray(body?.modelStats)) {
+        for (const stat of body.modelStats) {
+          assert(!("prompt" in stat), "model stats should not leak prompt");
+          assert(!("reply" in stat), "model stats should not leak reply");
+          assert(!("path" in stat), "model stats should not leak path");
+          assert(!("session" in stat), "model stats should not leak session");
+          assert(isSafeCloudSource(stat.source), `model stats used an unsafe source: ${stat.source}`);
+          modelStats.set(`${body.deviceId}|${stat.date}|${stat.source}|${stat.model}`, {
+            deviceId: body.deviceId,
+            date: stat.date,
+            source: normalizeCloudSource(stat.source),
+            model: stat.model,
+            tokens: optionalCount(stat.tokens) ?? 0,
+            inputTokens: optionalCount(stat.inputTokens),
+            outputTokens: optionalCount(stat.outputTokens),
+            cacheReadTokens: optionalCount(stat.cacheReadTokens),
+            cacheWriteTokens: optionalCount(stat.cacheWriteTokens),
+          });
+        }
+      }
       const entries = Array.isArray(body?.entries) ? body.entries : [];
       for (const entry of entries) {
         assertNoForbiddenKeys(entry, `uploaded event ${entry?.id ?? "unknown"}`);
@@ -85,6 +123,12 @@ function createFakeCloud() {
           deviceId: entry.deviceId || body.deviceId,
           eventFingerprint: entry.eventFingerprint,
         });
+      }
+      const device = devices.get(body.deviceId);
+      if (device) {
+        const deviceEvents = [...events.values()].filter((entry) => entry.deviceId === body.deviceId);
+        device.entryCount = deviceEvents.length;
+        device.tokens = deviceEvents.reduce((total, entry) => total + entry.tokens, 0);
       }
       return { ok: true, synced: entries.length };
     }
@@ -120,6 +164,8 @@ function createFakeCloud() {
   return {
     events,
     achievements,
+    devices,
+    modelStats,
     requests,
     requestJson,
     get leaderboardDeleteCount() {
@@ -150,6 +196,7 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
     settings: {
       cloudSyncEnabled: false,
       cloudSyncDeviceId: deviceId,
+      cloudSyncModelStatsEnabled: false,
       leaderboardProfile: profile,
       leaderboardPreferencesPublic: false,
       treeStartMode: undefined,
@@ -167,6 +214,21 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
     authPath: () => `${name}:auth`,
     cloudSyncPath: () => `${name}:cloud`,
     deviceId: () => deviceId,
+    deviceInfo: () => ({ deviceId, alias: name, platform: name === "windows" ? "windows" : "mac" }),
+    cloudModelStats: () =>
+      ledger.entries
+        .filter((entry) => !entry.syncedFromCloud && entry.source !== "cloud-sync" && entry.model)
+        .map((entry) => ({
+          deviceId,
+          date: entry.createdAt.slice(0, 10),
+          source: entry.source,
+          model: entry.model,
+          tokens: countedTokensForEntry(entry),
+          inputTokens: optionalCount(entry.inputTokens),
+          outputTokens: optionalCount(entry.outputTokens),
+          cacheReadTokens: optionalCount(entry.cacheReadTokens),
+          cacheWriteTokens: optionalCount(entry.cacheWriteTokens),
+        })),
     getLedger: () => ledger,
     getAchievements: () => achievementState,
     updateSettings: (partial) => {
@@ -408,6 +470,16 @@ assert(!status.error, `windows initial sync failed: ${status.error}`);
 assert(cloud.events.size === 1, "windows initial sync should upload one event");
 assert(cloud.achievements.size === 1, "windows initial sync should upload one achievement");
 assert(cloud.events.get("win-event-1").source === "codex-session", "cloud should preserve safe source categories");
+assert(cloud.devices.get("win-device")?.platform === "windows", "cloud should track device platform metadata");
+assert(cloud.modelStats.size === 0, "cloud should not upload model stats until the user enables aggregate model sync");
+
+windows.ledger.settings.cloudSyncModelStatsEnabled = true;
+status = await windows.service.syncCloudTree({ force: true });
+assert(!status.error, `windows aggregate model sync failed: ${status.error}`);
+assert(
+  [...cloud.modelStats.values()].some((row) => row.deviceId === "win-device" && row.model === "private-model"),
+  "cloud should store opt-in aggregate model totals",
+);
 
 const mac = createDevice("mac", "mac-device", cloud);
 status = await mac.service.joinCloudTree();
@@ -417,6 +489,7 @@ assert(mac.ledger.entries[0].source === "codex-session", "mac should preserve pu
 assert(mac.ledger.entries[0].syncedFromCloud === true, "mac should mark pulled events as cloud-synced");
 assert(mac.ledger.entries[0].deviceId === "win-device", "mac should preserve remote device id");
 assert(mac.achievements.unlocked.some((item) => item.id === "sprout"), "mac should merge remote achievement");
+assert(mac.service.cloudStatus().modelStats?.some((row) => row.model === "private-model"), "mac should cache remote aggregate model stats");
 
 const eventPostCountAfterJoin = cloud.requests.filter((request) => request.path === "/api/tree/events").length;
 mac.ledger.entries.unshift(localEntry("win-event-1-different-local-id", "mac-device", "codex-session", "2026-05-27T01:00:00.000Z", 1000));

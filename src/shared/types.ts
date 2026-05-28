@@ -49,7 +49,31 @@ export interface CloudSyncStatus {
   lastPulledAt?: string;
   lastUploadedCount?: number;
   lastDownloadedCount?: number;
+  devices?: CloudDeviceSummary[];
+  modelStats?: CloudModelStat[];
   error?: string;
+}
+
+export interface CloudDeviceSummary {
+  deviceId: string;
+  alias?: string;
+  platform?: string;
+  lastSyncedAt?: string;
+  appVersion?: string;
+  entryCount: number;
+  tokens: number;
+}
+
+export interface CloudModelStat {
+  deviceId: string;
+  date: string;
+  source: string;
+  model: string;
+  tokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export type LeaderboardPreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
@@ -113,6 +137,7 @@ export interface Settings {
   cloudSyncDeviceId?: string;
   cloudSyncLastSyncedAt?: string;
   cloudSyncLastPulledAt?: string;
+  cloudSyncModelStatsEnabled: boolean;
   treeStartMode?: "new" | "cloud";
   launchOnStartup: boolean;
   silentStartup: boolean;

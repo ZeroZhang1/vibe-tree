@@ -13,7 +13,9 @@
     "db:migrate:sources": "wrangler d1 execute vibe-tree-leaderboard --file=./migrations/20260527_restore_cloud_tree_sources.sql",
     "db:migrate:sources:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260527_restore_cloud_tree_sources.sql",
     "db:migrate:dedupe": "wrangler d1 execute vibe-tree-leaderboard --file=./migrations/20260527_dedupe_cloud_tree_events.sql",
-    "db:migrate:dedupe:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260527_dedupe_cloud_tree_events.sql"
+    "db:migrate:dedupe:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260527_dedupe_cloud_tree_events.sql",
+    "db:migrate:devices": "wrangler d1 execute vibe-tree-leaderboard --file=./migrations/20260528_cloud_tree_device_model_stats.sql",
+    "db:migrate:devices:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260528_cloud_tree_device_model_stats.sql"
   },
   "devDependencies": {
     "wrangler": "^3.114.0"

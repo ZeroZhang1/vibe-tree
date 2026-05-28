@@ -336,9 +336,9 @@ const treeStartNewButton = document.querySelector<HTMLButtonElement>("#treeStart
 const treeStartExistingButton = document.querySelector<HTMLButtonElement>("#treeStartExistingButton");
 const treeStartFeedback = document.querySelector<HTMLElement>("#treeStartFeedback");
 const cloudSyncStatusText = document.querySelector<HTMLElement>("#cloudSyncStatusText");
-const cloudSyncEnableButton = document.querySelector<HTMLButtonElement>("#cloudSyncEnableButton");
-const cloudSyncJoinButton = document.querySelector<HTMLButtonElement>("#cloudSyncJoinButton");
-const cloudSyncNowButton = document.querySelector<HTMLButtonElement>("#cloudSyncNowButton");
+const cloudSyncActionButton = document.querySelector<HTMLButtonElement>("#cloudSyncActionButton");
+const cloudModelStatsInput = document.querySelector<HTMLInputElement>("#cloudModelStatsInput");
+const cloudSyncDeviceList = document.querySelector<HTMLElement>("#cloudSyncDeviceList");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -378,7 +378,6 @@ function setupHistoryCard() {
         <button type="button" data-history-filter="claude">Claude Code</button>
         <button type="button" data-history-filter="gemini">Gemini</button>
         <button type="button" data-history-filter="hermes">Hermes</button>
-        <button type="button" data-history-filter="cloud" data-i18n="cloudSource">云端小树</button>
       </div>
     </div>
     <div class="history-legend" id="historyLegend" aria-label="token 类型" data-i18n-aria="historyTokenAria">
@@ -547,6 +546,9 @@ function t(key: string): string {
 }
 
 function applyI18n() {
+  updateStatusRenderKey = "";
+  leaderboardSettingsRenderKey = "";
+  leaderboardRenderKey = "";
   document.documentElement.lang = languageLocale();
   if (viewMode === "pet") {
     delete document.documentElement.dataset.uiTheme;
@@ -647,17 +649,20 @@ function sourceMonitorStatus(sourceId: HistorySourceId) {
 
 function sourceVisibility(): SourceVisibility {
   const visibility = buildSourceVisibility(usageStatus, ledger?.settings.enabledSourceIds);
-  if (shouldShowCloudSource()) return visibility;
-  const visible = visibility.visible.filter((sourceId) => sourceId !== "cloud");
+  const sourcesWithEntries = new Set(
+    (ledger?.entries ?? [])
+      .map((entry) => historySourceId(entry))
+      .filter((sourceId): sourceId is HistorySourceId => Boolean(sourceId && sourceId !== "cloud")),
+  );
+  const visible = AGENT_SOURCES.filter((source) => {
+    if (source.id === "cloud" || !visibility.enabled.has(source.id)) return false;
+    return visibility.visibleSet.has(source.id) || sourcesWithEntries.has(source.id);
+  }).map((source) => source.id);
   return {
     ...visibility,
     visible,
     visibleSet: new Set(visible),
   };
-}
-
-function shouldShowCloudSource() {
-  return Boolean(ledger?.settings.cloudSyncEnabled || ledger?.entries.some((entry) => historySourceId(entry) === "cloud"));
 }
 
 function achievementText(def: AchievementDef): Pick<AchievementDef, "name" | "description" | "flavor"> {
@@ -1009,30 +1014,27 @@ function bindEvents() {
     render();
   });
 
-  cloudSyncEnableButton?.addEventListener("click", async () => {
-    cloudSyncEnableButton.disabled = true;
-    cloudSyncStatus = await window.bonsai.enableCloudSync();
+  cloudSyncActionButton?.addEventListener("click", async () => {
+    cloudSyncActionButton.disabled = true;
+    cloudSyncStatus = cloudSyncStatus.enabled
+      ? await window.bonsai.syncCloudTree()
+      : await window.bonsai.enableCloudSync();
     ledger = await window.bonsai.getLedger();
-    cloudSyncEnableButton.disabled = false;
+    achievementState = await window.bonsai.getAchievements();
+    cloudSyncActionButton.disabled = false;
     render();
   });
 
-  cloudSyncJoinButton?.addEventListener("click", async () => {
-    cloudSyncJoinButton.disabled = true;
-    cloudSyncStatus = await window.bonsai.joinExistingTree();
-    ledger = await window.bonsai.getLedger();
-    achievementState = await window.bonsai.getAchievements();
-    cloudSyncJoinButton.disabled = false;
+  cloudModelStatsInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      cloudSyncModelStatsEnabled: cloudModelStatsInput.checked,
+    });
     render();
-  });
-
-  cloudSyncNowButton?.addEventListener("click", async () => {
-    cloudSyncNowButton.disabled = true;
-    cloudSyncStatus = await window.bonsai.syncCloudTree();
-    ledger = await window.bonsai.getLedger();
-    achievementState = await window.bonsai.getAchievements();
-    cloudSyncNowButton.disabled = false;
-    render();
+    if (cloudSyncStatus.enabled) {
+      cloudSyncStatus = await window.bonsai.syncCloudTree();
+      render();
+    }
   });
 
   leaderboardMembershipButton?.addEventListener("click", async () => {
@@ -2336,6 +2338,7 @@ function render() {
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
     syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
+    if (cloudModelStatsInput) cloudModelStatsInput.checked = ledger.settings.cloudSyncModelStatsEnabled;
     if (leaderboardPreferencesPublicInput) {
       leaderboardPreferencesPublicInput.checked = ledger.settings.leaderboardPreferencesPublic;
     }
@@ -3346,16 +3349,45 @@ function renderCloudSyncSettings() {
     ];
     cloudSyncStatusText.innerHTML = lines.join("");
   }
-  if (cloudSyncEnableButton) {
-    cloudSyncEnableButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
-    cloudSyncEnableButton.textContent = cloudSyncStatus.syncing ? t("cloudSyncSyncing") : t("cloudSyncEnable");
+  const showAdvancedSync = cloudSyncStatus.enabled;
+  const cloudSyncSettings = cloudSyncStatusText?.closest<HTMLElement>(".cloud-sync-settings");
+  if (cloudSyncSettings) cloudSyncSettings.dataset.connected = String(showAdvancedSync);
+  if (cloudModelStatsInput) {
+    cloudModelStatsInput.disabled = !showAdvancedSync || cloudSyncStatus.syncing;
   }
-  if (cloudSyncJoinButton) {
-    cloudSyncJoinButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
+  if (cloudSyncActionButton) {
+    cloudSyncActionButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
+    cloudSyncActionButton.textContent = cloudSyncStatus.syncing
+      ? t("cloudSyncSyncing")
+      : cloudSyncStatus.enabled
+        ? t("cloudSyncSyncTree")
+        : t("cloudSyncConnectAndSync");
   }
-  if (cloudSyncNowButton) {
-    cloudSyncNowButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.enabled;
-    cloudSyncNowButton.textContent = cloudSyncStatus.syncing ? t("cloudSyncSyncing") : t("syncNow");
+  if (cloudSyncDeviceList) {
+    const devices = showAdvancedSync ? (cloudSyncStatus.devices ?? []) : [];
+    cloudSyncDeviceList.innerHTML = devices.length
+      ? `
+        ${devices
+          .slice(0, 6)
+          .map((device) => {
+            const isCurrent = device.deviceId === cloudSyncStatus.deviceId;
+            const name = device.alias || device.platform || `${t("device")} ${device.deviceId.slice(-6)}`;
+            const parts = [
+              device.lastSyncedAt ? `${t("cloudDeviceLastSynced")} ${formatRelativeTime(device.lastSyncedAt)}` : "",
+            ].filter(Boolean);
+            return `
+              <div class="cloud-device-row">
+                <div>
+                  <strong>${escapeHtml(name)}${isCurrent ? ` · ${escapeHtml(t("cloudDeviceCurrent"))}` : ""}</strong>
+                  <span>${escapeHtml(parts.join(" · ") || device.deviceId.slice(-6))}</span>
+                </div>
+                <strong>${formatCompact(device.tokens)} token</strong>
+              </div>
+            `;
+          })
+          .join("")}
+      `
+      : "";
   }
 }
 
@@ -3386,7 +3418,7 @@ function renderLeaderboardSettings() {
   if (leaderboardSettingsSyncButton) {
     leaderboardSettingsSyncButton.disabled =
       leaderboardStatus.syncing || !leaderboardStatus.configured || !leaderboardStatus.joined;
-    leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncNow");
+    leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncLeaderboardNow");
   }
   if (leaderboardPageRefreshButton) {
     leaderboardPageRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
@@ -3621,6 +3653,7 @@ function renderScopedSourceBreakdown(visibility = sourceVisibility()) {
     [...visibility.enabled].join(","),
     visibility.visible.join(","),
     usageStatusSignature(),
+    cloudModelStatsSignature(),
     relativeRenderBucket(15_000),
   ].join("|");
   if (key === sourceBreakdownCacheKey) return;
@@ -3705,9 +3738,12 @@ type SourceRowView = SourceBreakdown & {
 function getMonitorSourceRows(rows: SourceBreakdown[], visibility = sourceVisibility()): SourceRowView[] {
   return AGENT_SOURCES.filter((source) => visibility.visibleSet.has(source.id)).map((monitor) => {
     const matches = rows.filter((row) => sourceMatchesBreakdownRow(row, monitor.id));
+    const combined = combineSourceRows(monitor.id === "cloud" ? t("cloudSource") : monitor.label, matches);
+    const hasCloudRecords = sourceHasCloudRecords(monitor.id);
+    const hasLocalRecords = sourceHasLocalRecords(monitor.id);
     if (monitor.id === "cloud") {
       return {
-        ...combineSourceRows(t("cloudSource"), matches),
+        ...combined,
         sourceKey: monitor.id,
         status: t("sourceSynced"),
         statusClass: "running",
@@ -3715,12 +3751,51 @@ function getMonitorSourceRows(rows: SourceBreakdown[], visibility = sourceVisibi
         compact: false,
       };
     }
+    const status = monitorStatusView(sourceMonitorStatus(monitor.id));
+    if (hasCloudRecords && !hasLocalRecords && status.compact) {
+      return {
+        ...combined,
+        sourceKey: monitor.id,
+        status: t("sourceSynced"),
+        statusClass: "running",
+        meta: t("readingOtherDeviceRecords"),
+        compact: false,
+      };
+    }
+    if (combined.xp > 0 && status.compact) {
+      return {
+        ...combined,
+        sourceKey: monitor.id,
+        status: t("sourceRecorded"),
+        statusClass: "running",
+        meta: hasCloudRecords ? t("readingMixedRecords") : t("readingLocalRecords"),
+        compact: false,
+      };
+    }
     return {
-      ...combineSourceRows(monitor.label, matches),
+      ...combined,
       sourceKey: monitor.id,
-      ...monitorStatusView(sourceMonitorStatus(monitor.id)),
+      ...status,
     };
   });
+}
+
+function sourceHasCloudRecords(sourceId: HistorySourceId) {
+  if (!ledger || sourceId === "cloud") return false;
+  return ledger.entries.some(
+    (entry) =>
+      entryMatchesSourceKey(entry, sourceId) &&
+      (entry.syncedFromCloud || entry.source === "cloud-sync") &&
+      entry.deviceId !== undefined &&
+      entry.deviceId !== cloudSyncStatus.deviceId,
+  );
+}
+
+function sourceHasLocalRecords(sourceId: HistorySourceId) {
+  if (!ledger || sourceId === "cloud") return false;
+  return ledger.entries.some(
+    (entry) => entryMatchesSourceKey(entry, sourceId) && !entry.syncedFromCloud && entry.source !== "cloud-sync",
+  );
 }
 
 function monitorStatusView(status: UsageStatus["codexSession"] | undefined) {
@@ -3771,28 +3846,138 @@ function renderModelBreakdown(sourceKey: string, enabledSources = enabledStatsSo
 function getModelBreakdown(sourceKey: string, enabledSources = enabledStatsSourceSet()) {
   if (!ledger) return [];
   const rows = new Map<string, SourceBreakdown>();
+  const unresolvedCloudRows = new Map<string, SourceBreakdown>();
   for (const entry of getSourceScopeEntries(ledger.entries)) {
     if (!entryMatchesSourceKey(entry, sourceKey)) continue;
     const model = entry.model || entry.provider || "unknown";
-    const existing =
-      rows.get(model) ??
-      {
-        id: model,
-        label: model,
-        xp: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-      };
-    existing.xp += xpForEntry(entry, enabledSources);
-    existing.inputTokens += countedInputTokensForEntry(entry);
-    existing.outputTokens += safeTokens(entry.outputTokens ?? 0);
-    existing.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
-    existing.cacheWriteTokens += safeTokens(entry.cacheWriteTokens ?? 0);
-    rows.set(model, existing);
+    const breakdown = breakdownForEntry(entry, enabledSources);
+    if (model === "unknown" && (entry.syncedFromCloud || entry.source === "cloud-sync") && entry.deviceId) {
+      const key = cloudModelStatKey(entry.deviceId, dateKey(new Date(entry.createdAt)), mirrorSourceForModelStats(entry));
+      addBreakdown(unresolvedCloudRows, key, key, breakdown);
+      continue;
+    }
+    addBreakdown(rows, model, model, breakdown);
   }
+  resolveCloudModelBreakdown(rows, unresolvedCloudRows, sourceKey);
   return [...rows.values()].filter((row) => row.xp > 0).sort((a, b) => b.xp - a.xp);
+}
+
+function resolveCloudModelBreakdown(
+  rows: Map<string, SourceBreakdown>,
+  unresolvedCloudRows: Map<string, SourceBreakdown>,
+  sourceKey: string,
+) {
+  if (!cloudSyncStatus.modelStats?.length || !unresolvedCloudRows.size) {
+    for (const row of unresolvedCloudRows.values()) addBreakdown(rows, "unknown", "unknown", row);
+    return;
+  }
+
+  const statsByKey = new Map<string, NonNullable<CloudSyncStatus["modelStats"]>>();
+  for (const stat of cloudSyncStatus.modelStats) {
+    if (!cloudModelStatMatchesSourceKey(stat, sourceKey)) continue;
+    if (sourceScope !== "total" && stat.date !== dateKey(new Date())) continue;
+    const key = cloudModelStatKey(stat.deviceId, stat.date, stat.source);
+    const stats = statsByKey.get(key) ?? [];
+    stats.push(stat);
+    statsByKey.set(key, stats);
+  }
+
+  for (const [key, unknown] of unresolvedCloudRows) {
+    const stats = statsByKey.get(key) ?? [];
+    const statsTotal = stats.reduce((total, stat) => total + safeTokens(stat.tokens), 0);
+    if (statsTotal <= 0) {
+      addBreakdown(rows, "unknown", "unknown", unknown);
+      continue;
+    }
+    const scale = unknown.xp > 0 && statsTotal > unknown.xp ? unknown.xp / statsTotal : 1;
+    let resolvedXp = 0;
+    for (const stat of stats) {
+      const scaled = scaleBreakdown(
+        {
+          id: stat.model,
+          label: stat.model,
+          xp: safeTokens(stat.tokens),
+          inputTokens: safeTokens(stat.inputTokens ?? 0),
+          outputTokens: safeTokens(stat.outputTokens ?? 0),
+          cacheReadTokens: safeTokens(stat.cacheReadTokens ?? 0),
+          cacheWriteTokens: safeTokens(stat.cacheWriteTokens ?? 0),
+        },
+        scale,
+      );
+      resolvedXp += scaled.xp;
+      addBreakdown(rows, stat.model, stat.model, scaled);
+    }
+    const leftover = unknown.xp - resolvedXp;
+    if (leftover > 0) {
+      const ratio = unknown.xp > 0 ? leftover / unknown.xp : 0;
+      addBreakdown(rows, "unknown", "unknown", scaleBreakdown(unknown, ratio));
+    }
+  }
+}
+
+function breakdownForEntry(entry: LedgerEntry, enabledSources: Set<HistorySourceId>): SourceBreakdown {
+  return {
+    id: "",
+    label: "",
+    xp: xpForEntry(entry, enabledSources),
+    inputTokens: countedInputTokensForEntry(entry),
+    outputTokens: safeTokens(entry.outputTokens ?? 0),
+    cacheReadTokens: safeTokens(entry.cacheReadTokens ?? 0),
+    cacheWriteTokens: safeTokens(entry.cacheWriteTokens ?? 0),
+  };
+}
+
+function addBreakdown(rows: Map<string, SourceBreakdown>, id: string, label: string, item: SourceBreakdown) {
+  const existing =
+    rows.get(id) ??
+    {
+      id,
+      label,
+      xp: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    };
+  existing.xp += item.xp;
+  existing.inputTokens += item.inputTokens;
+  existing.outputTokens += item.outputTokens;
+  existing.cacheReadTokens += item.cacheReadTokens;
+  existing.cacheWriteTokens += item.cacheWriteTokens;
+  rows.set(id, existing);
+}
+
+function scaleBreakdown(item: SourceBreakdown, scale: number): SourceBreakdown {
+  return {
+    ...item,
+    xp: Math.round(item.xp * scale),
+    inputTokens: Math.round(item.inputTokens * scale),
+    outputTokens: Math.round(item.outputTokens * scale),
+    cacheReadTokens: Math.round(item.cacheReadTokens * scale),
+    cacheWriteTokens: Math.round(item.cacheWriteTokens * scale),
+  };
+}
+
+function cloudModelStatMatchesSourceKey(stat: NonNullable<CloudSyncStatus["modelStats"]>[number], sourceKey: string) {
+  return entryMatchesSourceKey(
+    {
+      id: `${stat.source}:model-stat:${stat.deviceId}:${stat.date}:${stat.model}`,
+      createdAt: `${stat.date}T00:00:00.000`,
+      source: stat.source,
+      tokens: stat.tokens,
+    },
+    sourceKey,
+  );
+}
+
+function cloudModelStatKey(deviceId: string, date: string, source: string) {
+  return `${deviceId}|${date}|${source}`;
+}
+
+function mirrorSourceForModelStats(entry: LedgerEntry) {
+  if (entry.source !== "cloud-sync") return entry.source;
+  const delimiter = entry.id.indexOf(":");
+  return delimiter > 0 ? entry.id.slice(0, delimiter) : entry.source;
 }
 
 function getSourceScopeEntries(entries: LedgerEntry[]) {
@@ -3849,9 +4034,35 @@ function ledgerEntriesSignature() {
   if (!ledger) return "no-ledger";
   const first = ledger.entries[0];
   const last = ledger.entries[ledger.entries.length - 1];
+  const totals = ledger.entries.reduce(
+    (acc, entry) => {
+      acc.tokens += entry.tokens;
+      acc.input += entry.inputTokens ?? 0;
+      acc.output += entry.outputTokens ?? 0;
+      acc.cacheRead += entry.cacheReadTokens ?? 0;
+      acc.cacheWrite += entry.cacheWriteTokens ?? 0;
+      const sourceKey = `${entry.source}:${entry.syncedFromCloud ? "1" : "0"}`;
+      acc.sources.set(sourceKey, (acc.sources.get(sourceKey) ?? 0) + 1);
+      return acc;
+    },
+    {
+      tokens: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      sources: new Map<string, number>(),
+    },
+  );
   return [
     ledger.entries.length,
     ledger.installedAt,
+    totals.tokens,
+    totals.input,
+    totals.output,
+    totals.cacheRead,
+    totals.cacheWrite,
+    [...totals.sources.entries()].sort(([left], [right]) => left.localeCompare(right)).join(","),
     first?.id ?? "",
     first?.createdAt ?? "",
     first?.tokens ?? "",
@@ -3859,6 +4070,24 @@ function ledgerEntriesSignature() {
     last?.createdAt ?? "",
     last?.tokens ?? "",
   ].join(":");
+}
+
+function cloudModelStatsSignature() {
+  return (cloudSyncStatus.modelStats ?? [])
+    .map((stat) =>
+      [
+        stat.deviceId,
+        stat.date,
+        stat.source,
+        stat.model,
+        stat.tokens,
+        stat.inputTokens ?? 0,
+        stat.outputTokens ?? 0,
+        stat.cacheReadTokens ?? 0,
+        stat.cacheWriteTokens ?? 0,
+      ].join(":"),
+    )
+    .join(",");
 }
 
 function usageStatusSignature() {

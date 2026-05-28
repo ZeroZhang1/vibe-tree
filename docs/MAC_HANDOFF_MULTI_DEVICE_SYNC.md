@@ -49,11 +49,14 @@ This branch adds the first implementation pass for cloud tree sync, plus a Mac-s
 - D1 schema has new tables:
   - `tree_events`
   - `tree_achievements`
+  - `tree_devices`
+  - `tree_model_stats`
 - First-run usage watchers now wait for the user to choose `Grow a new tree` or `Continue existing tree`, so old local history is not imported before consent.
 - `Grow a new tree` resets `installedAt` to the choice time and only counts new local token events.
 - `Continue existing tree` now requires a non-empty remote tree; otherwise it keeps first-run mode active and shows an error.
-- Cloud tree sync now strips local agent/model/note/trigger details and stores remote events locally as `cloud-sync`.
-- Pulled cloud events show up as `Cloud Tree` in history/source views without counting as a local agent for agent achievements.
+- Cloud tree sync strips local agent/note/trigger details and does not upload prompt, reply, session text, file content, or local paths.
+- Pulled cloud events preserve safe source categories such as `codex-session`, `openclaw-session`, and `claude-session`, so remote growth is merged into its real source rather than shown as a separate Cloud Tree source.
+- Per-event model/provider remains local by default. Optional aggregate model sync uploads only daily totals grouped by device/source/model, not individual sessions.
 - Leaving the leaderboard now deletes only remote leaderboard daily totals/preferences and keeps the shared cloud tree archive intact.
 - A local contract verification script simulates Windows and Mac sharing one fake cloud tree.
 
@@ -91,6 +94,9 @@ This branch adds the first implementation pass for cloud tree sync, plus a Mac-s
 
 - `server/leaderboard-worker/migrations/20260527_trim_cloud_tree_privacy.sql`
   Rebuilds existing D1 cloud tree tables without historical `agent`, `provider`, `model`, `note`, or achievement `trigger_json` columns.
+
+- `server/leaderboard-worker/migrations/20260528_cloud_tree_device_model_stats.sql`
+  Adds cloud tree device summaries and optional aggregate model-stat tables.
 
 - `scripts/verify-cloud-sync.mjs`
   Verifies two-device merge, de-dupe, empty remote-tree guard, leaderboard leave safety, and the cloud payload privacy whitelist against a fake cloud API.
@@ -152,6 +158,7 @@ cd server/leaderboard-worker
 npm install
 npx wrangler d1 execute vibe-tree-leaderboard --file=./schema.sql
 npx wrangler d1 execute vibe-tree-leaderboard --file=./migrations/20260527_trim_cloud_tree_privacy.sql
+npx wrangler d1 execute vibe-tree-leaderboard --file=./migrations/20260528_cloud_tree_device_model_stats.sql
 npm run deploy
 ```
 
@@ -173,7 +180,7 @@ VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm run start
 - The first-run modal previously appeared for an existing Windows user while old dev processes were still serving stale renderer assets. If UI changes do not appear, stop all old Vite/Electron processes and restart from a clean build.
 - `Continue existing tree` requires GitHub auth and a Worker with the new `/api/tree` routes deployed. Without that, the UI should show an error rather than silently doing nothing.
 - `cloudStatus.hasRemoteTree` is still primitive and mostly based on local sync state. `Continue existing tree` validates the remote tree during join, but a nicer onboarding flow could query remote state before the user clicks.
-- Remote sync currently merges entries by event id and achievements by achievement id. It does not yet provide conflict UI, per-device audit UI, or a reset/relink flow.
+- Remote sync currently merges entries by event id and achievements by achievement id. It now stores per-device contribution summaries, but it still does not provide a full conflict UI or reset/relink flow.
 - Cloud tree sync reuses the leaderboard auth/profile. This is convenient but product copy should keep leaderboard publishing separate from private tree sync.
 - The Worker README still describes leaderboard as the main feature. It should be updated if this branch becomes the main sync architecture.
 - The first-run copy should be revisited once the final cloud sync behavior is decided.

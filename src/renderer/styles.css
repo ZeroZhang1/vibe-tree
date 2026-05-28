@@ -1563,6 +1563,60 @@ html[lang^="en"] .side-tabs {
   grid-template-columns: 1fr;
 }
 
+.cloud-sync-settings:not([data-connected="true"]) .leaderboard-help,
+.cloud-sync-settings:not([data-connected="true"]) .cloud-model-stats-row,
+.cloud-sync-settings:not([data-connected="true"]) .cloud-device-list {
+  display: none;
+}
+
+.cloud-model-stats-row {
+  align-items: flex-start;
+  padding: 9px 10px;
+}
+
+.cloud-model-stats-row span {
+  display: grid;
+  gap: 3px;
+}
+
+.cloud-model-stats-row small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.3;
+}
+
+.cloud-device-list {
+  display: grid;
+  gap: 6px;
+}
+
+.cloud-device-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-light) 74%, transparent);
+}
+
+.cloud-device-row strong,
+.cloud-device-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cloud-device-row strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+}
+
+.cloud-device-row span {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
 .leaderboard-user-card,
 .leaderboard-status {
   min-height: 54px;

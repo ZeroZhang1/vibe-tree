@@ -4,6 +4,8 @@ import { createHash, randomBytes } from "node:crypto";
 import type {
   AchievementState,
   AchievementUnlock,
+  CloudDeviceSummary,
+  CloudModelStat,
   CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
@@ -34,14 +36,24 @@ interface CloudSyncFile {
   syncedAchievementIds?: string[];
   lastUploadedCount?: number;
   lastDownloadedCount?: number;
+  devices?: CloudDeviceSummary[];
+  modelStats?: CloudModelStat[];
 }
 
 interface CloudTreeResponse {
   entries?: unknown[];
   achievements?: unknown[];
+  devices?: unknown[];
+  modelStats?: unknown[];
   summary?: {
     hasRemoteTree?: boolean;
   };
+}
+
+interface CloudDeviceInfo {
+  deviceId: string;
+  alias?: string;
+  platform?: string;
 }
 
 export interface LeaderboardRequestJsonOptions {
@@ -65,6 +77,8 @@ interface LeaderboardServiceOptions {
   authPath: () => string;
   cloudSyncPath: () => string;
   deviceId: () => string;
+  deviceInfo: () => CloudDeviceInfo;
+  cloudModelStats: () => CloudModelStat[];
   getLedger: () => LedgerFile;
   getAchievements: () => AchievementState;
   updateSettings: (partial: Partial<Settings>) => void;
@@ -191,6 +205,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       lastPulledAt: ledger().settings.cloudSyncLastPulledAt,
       lastUploadedCount: lastCloudUploadedCount || state.lastUploadedCount,
       lastDownloadedCount: lastCloudDownloadedCount || state.lastDownloadedCount,
+      devices: state.devices,
+      modelStats: state.modelStats,
       error,
     };
   }
@@ -250,8 +266,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     if (token && configured) {
       try {
         await requestJson(apiUrl("/api/leaderboard"), { method: "DELETE", token });
-      } catch {
-        // Local leaderboard opt-out should still succeed even if the remote service is unavailable.
+      } catch (error) {
+        return status(error instanceof Error ? error.message : text("leaderboardSyncFailed"));
       }
     }
     options.updateSettings({
@@ -361,8 +377,10 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
           throw new Error(text("cloudSyncNoRemoteTree"));
         }
         downloadedCount += pulled.downloaded;
-        state = mergeCloudState(state, pulled.entries, pulled.achievements);
+        state = mergeCloudState(state, pulled.entries, pulled.achievements, pulled.devices, pulled.modelStats);
       }
+
+      await syncCloudDeviceSnapshot();
 
       const syncedEntryIds = new Set(syncOptions.force && !syncOptions.pullFirst ? [] : state.syncedEntryIds ?? []);
       const syncedEventFingerprints = new Set(state.syncedEventFingerprints ?? []);
@@ -415,6 +433,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         },
         pulled.entries,
         pulled.achievements,
+        pulled.devices,
+        pulled.modelStats,
       );
 
       lastCloudUploadedCount = uploadedCount;
@@ -491,10 +511,28 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     const data = await requestJson<CloudTreeResponse>(apiUrl("/api/tree"), { token: auth.token });
     const entries = normalizeCloudEntries(data.entries ?? []);
     const achievements = normalizeCloudAchievements(data.achievements ?? []);
+    const devices = normalizeCloudDevices(data.devices ?? []);
+    const modelStats = normalizeCloudModelStats(data.modelStats ?? []);
     const downloaded = options.appendRemoteEntries(entries);
     options.mergeRemoteAchievements(achievements);
     const hasRemoteTree = Boolean(data.summary?.hasRemoteTree ?? (entries.length > 0 || achievements.length > 0));
-    return { entries, achievements, downloaded, hasRemoteTree };
+    return { entries, achievements, devices, modelStats, downloaded, hasRemoteTree };
+  }
+
+  async function syncCloudDeviceSnapshot() {
+    const modelStatsEnabled = ledger().settings.cloudSyncModelStatsEnabled;
+    await requestJson(apiUrl("/api/tree/events"), {
+      method: "POST",
+      token: auth.token,
+      body: {
+        deviceId: options.deviceId(),
+        device: options.deviceInfo(),
+        entries: [],
+        modelStatsEnabled,
+        modelStats: modelStatsEnabled ? options.cloudModelStats() : undefined,
+        appVersion: options.currentAppVersion(),
+      },
+    });
   }
 
   function readCloudSyncState(): CloudSyncFile {
@@ -511,6 +549,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         : [],
       lastUploadedCount: positiveInteger(state?.lastUploadedCount),
       lastDownloadedCount: positiveInteger(state?.lastDownloadedCount),
+      devices: normalizeCloudDevices(state?.devices ?? []),
+      modelStats: normalizeCloudModelStats(state?.modelStats ?? []),
     };
   }
 
@@ -521,10 +561,18 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       syncedAchievementIds: [...new Set(state.syncedAchievementIds ?? [])],
       lastUploadedCount: positiveInteger(state.lastUploadedCount) ?? 0,
       lastDownloadedCount: positiveInteger(state.lastDownloadedCount) ?? 0,
+      devices: normalizeCloudDevices(state.devices ?? []),
+      modelStats: normalizeCloudModelStats(state.modelStats ?? []),
     });
   }
 
-  function mergeCloudState(state: CloudSyncFile, entries: LedgerEntry[], achievements: AchievementUnlock[]) {
+  function mergeCloudState(
+    state: CloudSyncFile,
+    entries: LedgerEntry[],
+    achievements: AchievementUnlock[],
+    devices: CloudDeviceSummary[] = state.devices ?? [],
+    modelStats: CloudModelStat[] = state.modelStats ?? [],
+  ) {
     return {
       ...state,
       syncedEntryIds: [
@@ -539,6 +587,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       syncedAchievementIds: [
         ...new Set([...(state.syncedAchievementIds ?? []), ...achievements.map((item) => item.id)]),
       ],
+      devices,
+      modelStats,
     };
   }
 
@@ -900,6 +950,54 @@ function normalizeCloudEntries(values: unknown[]) {
   return entries;
 }
 
+function normalizeCloudDevices(values: unknown[]) {
+  const devices: CloudDeviceSummary[] = [];
+  for (const value of values) {
+    const input = value as Partial<CloudDeviceSummary> | undefined;
+    const deviceId = cleanOptionalString(input?.deviceId, 80);
+    if (!deviceId) continue;
+    const lastSyncedAt =
+      typeof input?.lastSyncedAt === "string" && Number.isFinite(Date.parse(input.lastSyncedAt))
+        ? input.lastSyncedAt
+        : undefined;
+    devices.push({
+      deviceId,
+      alias: cleanOptionalString(input?.alias, 64),
+      platform: cleanOptionalString(input?.platform, 32),
+      lastSyncedAt,
+      appVersion: cleanOptionalString(input?.appVersion, 32),
+      entryCount: optionalCount(input?.entryCount) ?? 0,
+      tokens: optionalCount(input?.tokens) ?? 0,
+    });
+  }
+  return devices.sort((a, b) => b.tokens - a.tokens);
+}
+
+function normalizeCloudModelStats(values: unknown[]) {
+  const stats: CloudModelStat[] = [];
+  for (const value of values) {
+    const input = value as Partial<CloudModelStat> | undefined;
+    const deviceId = cleanOptionalString(input?.deviceId, 80);
+    const date = cleanDateKey(input?.date);
+    const source = normalizeCloudEventSource(input?.source);
+    const model = cleanOptionalString(input?.model, 64);
+    const tokens = optionalCount(input?.tokens) ?? 0;
+    if (!deviceId || !date || source === "cloud-sync" || !model || tokens <= 0) continue;
+    stats.push({
+      deviceId,
+      date,
+      source,
+      model,
+      tokens,
+      inputTokens: optionalCount(input?.inputTokens),
+      outputTokens: optionalCount(input?.outputTokens),
+      cacheReadTokens: optionalCount(input?.cacheReadTokens),
+      cacheWriteTokens: optionalCount(input?.cacheWriteTokens),
+    });
+  }
+  return stats;
+}
+
 function isCloudSyncedEntry(entry: LedgerEntry) {
   return entry.syncedFromCloud === true || entry.source === "cloud-sync";
 }
@@ -960,6 +1058,10 @@ function normalizeCloudAchievements(values: unknown[]) {
 
 function cleanOptionalString(value: unknown, maxLength: number) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+}
+
+function cleanDateKey(value: unknown) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
 }
 
 function optionalCount(value: unknown) {

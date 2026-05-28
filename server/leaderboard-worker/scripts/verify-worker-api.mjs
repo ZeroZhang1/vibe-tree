@@ -56,7 +56,23 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
     method: "POST",
     body: {
       deviceId: "mac-device",
+      device: { alias: "Mac", platform: "mac" },
       appVersion: "0.5.5-test",
+      modelStatsEnabled: true,
+      modelStats: [
+        {
+          date: utcToday,
+          source: "codex-session",
+          model: "private-model",
+          tokens: 1234,
+          inputTokens: 1000,
+          outputTokens: 200,
+          cacheReadTokens: 34,
+          cacheWriteTokens: 0,
+          prompt: "private prompt",
+          localPath: "/private/workspace/path",
+        },
+      ],
       entries: [
         {
           id: "mac-event-1",
@@ -121,6 +137,8 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assert(cloudTree.summary?.achievementCount === 1, "cloud tree should contain one achievement");
   const [event] = cloudTree.entries ?? [];
   const [achievement] = cloudTree.achievements ?? [];
+  const [device] = cloudTree.devices ?? [];
+  const [modelStat] = cloudTree.modelStats ?? [];
   assert(event?.id === "mac-event-1", "cloud tree should return the uploaded event");
   assert(event.source === "codex-session", "worker should preserve safe source categories");
   assert(event.deviceId === "mac-device", "worker should preserve device id");
@@ -128,6 +146,9 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assertNoForbiddenKeys(event, "GET /api/tree event");
   assert(achievement?.id === "sprout", "cloud tree should return the uploaded achievement");
   assertNoForbiddenKeys(achievement, "GET /api/tree achievement");
+  assert(device?.deviceId === "mac-device" && device.platform === "mac", "cloud tree should return device metadata");
+  assert(modelStat?.model === "private-model" && modelStat.tokens === 1234, "cloud tree should return opt-in aggregate model stats");
+  assert(!("prompt" in modelStat) && !("localPath" in modelStat), "cloud model stats should not leak raw session data");
 
   await requestJson("/api/usage/daily", {
     method: "POST",

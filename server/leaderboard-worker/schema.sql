@@ -61,6 +61,35 @@ CREATE TABLE IF NOT EXISTS tree_achievements (
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS tree_devices (
+  user_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  alias TEXT,
+  platform TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_synced_at TEXT NOT NULL,
+  app_version TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, device_id),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tree_model_stats (
+  user_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  source TEXT NOT NULL,
+  model TEXT NOT NULL,
+  tokens INTEGER NOT NULL,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cache_read_tokens INTEGER,
+  cache_write_tokens INTEGER,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, device_id, date, source, model),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS usage_preferences (
   user_id TEXT NOT NULL,
   range TEXT NOT NULL,
@@ -101,6 +130,9 @@ CREATE INDEX IF NOT EXISTS idx_daily_usage_user ON daily_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_tree_events_user_created ON tree_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tree_events_device ON tree_events(user_id, device_id);
 CREATE INDEX IF NOT EXISTS idx_tree_achievements_user ON tree_achievements(user_id);
+CREATE INDEX IF NOT EXISTS idx_tree_devices_user ON tree_devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user ON tree_model_stats(user_id);
+CREATE INDEX IF NOT EXISTS idx_tree_model_stats_device ON tree_model_stats(user_id, device_id);
 CREATE INDEX IF NOT EXISTS idx_usage_preferences_user ON usage_preferences(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_codes_expires ON auth_codes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);

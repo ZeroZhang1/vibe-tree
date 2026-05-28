@@ -175,7 +175,7 @@ export function appShellHtml(viewMode: ViewMode) {
             </div>
             <div class="leaderboard-header-actions">
               <button class="secondary-button leaderboard-refresh-button" id="leaderboardPageRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新榜单</button>
-              <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
+              <button class="secondary-button leaderboard-sync-button" id="leaderboardPageSyncButton" type="button">加入排行</button>
             </div>
           </div>
           <div class="leaderboard-range-tabs" id="leaderboardRangeTabs" role="tablist" aria-label="全球排行榜范围" data-i18n-aria="leaderboardAria">
@@ -318,10 +318,16 @@ export function appShellHtml(viewMode: ViewMode) {
                 <strong data-i18n="cloudSyncPrivacyTitle">同步内容</strong>
                 <p data-i18n="cloudSyncPrivacyCopy">只同步 token 事件、设备 id 和成就状态，不上传提示词、回复、文件内容或本地路径。</p>
               </div>
+              <label class="toggle-row cloud-model-stats-row">
+                <input id="cloudModelStatsInput" type="checkbox" />
+                <span>
+                  <strong data-i18n="cloudModelStatsTitle">同步聚合模型占比</strong>
+                  <small data-i18n="cloudModelStatsCopy">只上传按天汇总的模型 token，不上传单条会话。</small>
+                </span>
+              </label>
+              <div class="cloud-device-list" id="cloudSyncDeviceList"></div>
               <div class="leaderboard-actions">
-                <button class="secondary-button" id="cloudSyncEnableButton" type="button" data-i18n="cloudSyncEnable">开启同步</button>
-                <button class="secondary-button" id="cloudSyncJoinButton" type="button" data-i18n="cloudSyncJoin">接着已有小树</button>
-                <button class="secondary-button" id="cloudSyncNowButton" type="button" data-i18n="syncNow">立即同步</button>
+                <button class="secondary-button" id="cloudSyncActionButton" type="button" data-i18n="cloudSyncConnectAndSync">连接并同步小树</button>
               </div>
             </div>
           </section>
@@ -344,8 +350,8 @@ export function appShellHtml(viewMode: ViewMode) {
                 <p data-i18n="leaderboardPrivacyExit">您可以随时选择退出，退出后，您的信息将被完全删除。</p>
               </div>
               <div class="leaderboard-actions">
-                <button class="secondary-button" id="leaderboardMembershipButton" type="button" data-i18n="joinLeaderboard">加入排行</button>
-                <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncNow">立即同步</button>
+                <button class="secondary-button" id="leaderboardMembershipButton" type="button">加入排行</button>
+                <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncLeaderboardNow">同步排行</button>
               </div>
             </div>
           </section>
