@@ -44,6 +44,7 @@ const api = {
   startNewTree: () => ipcRenderer.invoke("cloud-sync:start-new") as Promise<CloudSyncStatus>,
   enableCloudSync: () => ipcRenderer.invoke("cloud-sync:enable") as Promise<CloudSyncStatus>,
   joinExistingTree: () => ipcRenderer.invoke("cloud-sync:join-existing") as Promise<CloudSyncStatus>,
+  cancelCloudAuth: () => ipcRenderer.invoke("cloud-sync:cancel-auth") as Promise<CloudSyncStatus>,
   syncCloudTree: () => ipcRenderer.invoke("cloud-sync:sync") as Promise<CloudSyncStatus>,
   getAchievements: () => ipcRenderer.invoke("achievements:get") as Promise<AchievementState>,
   unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>

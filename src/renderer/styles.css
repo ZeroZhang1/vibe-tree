@@ -1066,14 +1066,15 @@ html[lang^="en"] .side-tabs {
   z-index: 26;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 28px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 90%, transparent)),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 72%, transparent), color-mix(in srgb, var(--bg) 94%, transparent)),
     repeating-linear-gradient(
       0deg,
-      color-mix(in srgb, var(--app-grid) 86%, transparent) 0 1px,
-      transparent 1px 10px
+      color-mix(in srgb, var(--app-grid) 70%, transparent) 0 1px,
+      transparent 1px 12px
     );
+  backdrop-filter: blur(4px);
 }
 
 .tree-start-modal[hidden] {
@@ -1081,26 +1082,34 @@ html[lang^="en"] .side-tabs {
 }
 
 .tree-start-card {
-  width: min(760px, calc(100vw - 40px));
+  width: min(820px, calc(100vw - 40px));
   display: grid;
-  gap: 18px;
-  padding: 24px;
+  grid-template-columns: minmax(0, 1fr) 168px;
+  gap: 18px 22px;
+  padding: 26px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   color: var(--ink);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, var(--bg-light)), var(--bg-card)),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 96%, var(--bg-light)), var(--bg-card)),
     var(--bg-card);
-  box-shadow: var(--pixel-shadow-lg), 0 0 0 1px color-mix(in srgb, var(--leaf) 10%, transparent);
+  box-shadow: var(--pixel-shadow-lg), 0 0 0 1px color-mix(in srgb, var(--leaf) 14%, transparent);
+}
+
+.tree-start-copy {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 10px;
 }
 
 .tree-start-card h2 {
   margin: 0;
-  font-size: 2rem;
+  font-size: clamp(1.7rem, 4vw, 2.2rem);
   line-height: 1.1;
 }
 
-.tree-start-card > p:not(.eyebrow) {
+.tree-start-card .tree-start-copy > p:not(.eyebrow) {
   max-width: 62ch;
   margin: 0;
   color: var(--ink-soft);
@@ -1108,8 +1117,60 @@ html[lang^="en"] .side-tabs {
   line-height: 1.65;
 }
 
-.tree-start-feedback {
+.tree-start-preview {
+  min-height: 150px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-light) 82%, transparent), color-mix(in srgb, var(--bg) 86%, transparent)),
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-grid) 70%, transparent) 0 1px,
+      transparent 1px 14px
+    );
+  overflow: hidden;
+}
+
+.tree-start-preview img {
+  width: 112px;
+  height: 112px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 14px 18px rgba(0, 0, 0, 0.28));
+}
+
+.tree-start-preview span {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--leaf) 70%, var(--border-strong));
+  border-radius: 3px;
+  color: var(--bg);
+  background: var(--leaf);
+  font-size: 0.72rem;
+  font-weight: 950;
+  line-height: 1;
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.26);
+}
+
+.tree-start-feedback-row {
+  grid-column: 1 / -1;
   min-height: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.tree-start-feedback-row:has(.tree-start-feedback:empty) {
+  display: none;
+}
+
+.tree-start-feedback {
   display: flex;
   align-items: center;
   padding: 0 10px;
@@ -1125,10 +1186,37 @@ html[lang^="en"] .side-tabs {
   display: none;
 }
 
+.tree-start-cancel {
+  min-width: 88px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--bg-light) 78%, transparent);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.tree-start-cancel:hover,
+.tree-start-cancel:focus-visible {
+  border-color: var(--leaf);
+  color: var(--leaf);
+}
+
+.tree-start-cancel[hidden] {
+  display: none;
+}
+
 .tree-start-feedback[data-tone="busy"] {
   border-color: color-mix(in srgb, var(--leaf) 32%, var(--border));
   color: var(--leaf);
   background: color-mix(in srgb, var(--leaf) 8%, transparent);
+}
+
+.tree-start-feedback[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--leaf) 42%, var(--border));
+  color: var(--ink);
+  background: color-mix(in srgb, var(--leaf) 12%, transparent);
 }
 
 .tree-start-feedback[data-tone="error"] {
@@ -1138,6 +1226,7 @@ html[lang^="en"] .side-tabs {
 }
 
 .tree-start-options {
+  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
   gap: 12px;
@@ -1145,11 +1234,11 @@ html[lang^="en"] .side-tabs {
 
 .tree-start-option {
   min-height: 122px;
+  position: relative;
   display: grid;
-  grid-template-columns: 42px 1fr;
   align-items: start;
-  gap: 14px;
-  padding: 18px;
+  gap: 10px;
+  padding: 18px 20px 18px 22px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   color: var(--ink);
@@ -1158,35 +1247,29 @@ html[lang^="en"] .side-tabs {
     var(--bg-card);
   box-shadow: var(--pixel-shadow);
   text-align: left;
+  overflow: hidden;
 }
 
-.tree-start-option-mark {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border: 2px solid currentColor;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, currentColor 24%, transparent) 0 50%, transparent 50%),
-    color-mix(in srgb, currentColor 10%, transparent);
-  box-shadow: inset 5px 5px 0 color-mix(in srgb, #ffffff 14%, transparent);
-}
-
-.tree-start-option-mark::after {
+.tree-start-option::before {
   content: "";
-  width: 12px;
-  height: 12px;
-  background: currentColor;
-  box-shadow:
-    0 -8px 0 -3px currentColor,
-    8px 0 0 -3px currentColor,
-    0 8px 0 -3px currentColor,
-    -8px 0 0 -3px currentColor;
+  position: absolute;
+  inset: 16px auto 16px 0;
+  width: 4px;
+  border-radius: 0 2px 2px 0;
+  background: color-mix(in srgb, currentColor 34%, transparent);
 }
 
 .tree-start-option-text {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+}
+
+.tree-start-option-kicker {
+  color: currentColor;
+  font-size: 0.64rem;
+  font-weight: 950;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .tree-start-option strong {
@@ -1198,10 +1281,12 @@ html[lang^="en"] .side-tabs {
   color: var(--muted);
   font-size: 0.76rem;
   line-height: 1.45;
+  word-break: keep-all;
 }
 
 .tree-start-option:hover,
-.tree-start-option:focus-visible {
+.tree-start-option:focus-visible,
+.tree-start-option.is-pending {
   color: var(--leaf);
   border-color: var(--leaf);
   transform: translate(-1px, -1px);
@@ -1219,17 +1304,36 @@ html[lang^="en"] .side-tabs {
   color: var(--muted);
 }
 
+.tree-start-option:disabled {
+  cursor: default;
+}
+
+.tree-start-option:disabled:not(.is-pending) {
+  opacity: 0.68;
+  transform: none;
+}
+
 @media (max-width: 720px) {
   .tree-start-card {
+    grid-template-columns: 1fr;
     padding: 18px;
   }
 
-  .tree-start-card h2 {
-    font-size: 1.6rem;
+  .tree-start-preview {
+    min-height: 118px;
+  }
+
+  .tree-start-preview img {
+    width: 88px;
+    height: 88px;
   }
 
   .tree-start-options {
     grid-template-columns: 1fr;
+  }
+
+  .tree-start-option-copy {
+    word-break: normal;
   }
 }
 
@@ -1713,6 +1817,51 @@ html[lang^="en"] .side-tabs {
 .cloud-device-list {
   display: grid;
   gap: 6px;
+}
+
+.cloud-device-share {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--leaf) 30%, var(--border));
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--leaf) 9%, transparent), transparent 62%),
+    color-mix(in srgb, var(--bg-light) 78%, transparent);
+}
+
+.cloud-device-share-header,
+.cloud-device-share-values {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cloud-device-share-header span,
+.cloud-device-share-values span {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.cloud-device-share-header strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.cloud-device-share-meter {
+  height: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  overflow: hidden;
+}
+
+.cloud-device-share-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--leaf), var(--leaf-hi));
 }
 
 .cloud-device-row {

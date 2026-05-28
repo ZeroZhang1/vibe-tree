@@ -79,21 +79,32 @@ export function appShellHtml(viewMode: ViewMode) {
 
       <section class="tree-start-modal" id="treeStartModal" hidden>
         <div class="tree-start-card">
-          <p class="eyebrow" data-i18n="treeStartEyebrow">First run</p>
-          <h2 data-i18n="treeStartTitle">你想怎么开始？</h2>
-          <p data-i18n="treeStartCopy">可以从这台设备开始，也可以登录同一账号同步云端小树。</p>
-          <div class="tree-start-feedback" id="treeStartFeedback" aria-live="polite"></div>
+          <div class="tree-start-copy">
+            <p class="eyebrow" data-i18n="treeStartEyebrow">First run</p>
+            <h2 data-i18n="treeStartTitle">你想怎么开始？</h2>
+            <p data-i18n="treeStartCopy">可以从这台设备开始，也可以登录同一账号同步云端小树。</p>
+          </div>
+          <div class="tree-start-preview" aria-hidden="true">
+            <img id="treeStartTreeImage" alt="" />
+            <span>Lv.1</span>
+          </div>
+          <div class="tree-start-feedback-row">
+            <div class="tree-start-feedback" id="treeStartFeedback" aria-live="polite"></div>
+            <button class="tree-start-cancel" id="treeStartCancelButton" type="button" data-i18n="treeStartCancelSync" hidden>
+              取消同步
+            </button>
+          </div>
           <div class="tree-start-options">
             <button class="tree-start-option" id="treeStartNewButton" type="button">
-              <span class="tree-start-option-mark" aria-hidden="true"></span>
               <span class="tree-start-option-text">
+                <span class="tree-start-option-kicker" data-i18n="treeStartNewKicker">本机新开始</span>
                 <strong data-i18n="treeStartNewTitle">新养一棵树</strong>
                 <span class="tree-start-option-copy" data-i18n="treeStartNewCopy">只统计这台设备之后产生的新 token。</span>
               </span>
             </button>
             <button class="tree-start-option is-primary" id="treeStartExistingButton" type="button">
-              <span class="tree-start-option-mark" aria-hidden="true"></span>
               <span class="tree-start-option-text">
+                <span class="tree-start-option-kicker" data-i18n="treeStartExistingKicker">云端同步</span>
                 <strong data-i18n="treeStartExistingTitle">同步云端小树</strong>
                 <span class="tree-start-option-copy" data-i18n="treeStartExistingCopy">登录同一账号，合并其他设备的 Token、等级和成就。</span>
               </span>

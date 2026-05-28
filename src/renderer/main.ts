@@ -125,6 +125,7 @@ const UI_THEME_STORAGE_KEY = "vibe-tree:ui-theme";
 const LEADERBOARD_CACHE_STORAGE_KEY = "vibe-tree:leaderboard-cache";
 const LEADERBOARD_CACHE_TTL_MS = 60 * 60 * 1000;
 const LEADERBOARD_CACHE_DISPLAY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const TREE_START_FEEDBACK_HOLD_MS = 700;
 const initialUiTheme = viewMode === "toast" ? "night" : readCachedUiTheme();
 const platformName = rendererPlatform();
 document.documentElement.dataset.platform = platformName;
@@ -239,6 +240,7 @@ let historyFilter: HistoryFilter = "all";
 let lastHistoryChartKey = "";
 let sourceScope: SourceScope = "today";
 let dashboardTab: DashboardTab = "home";
+let treeStartPendingAction: "new" | "cloud" | null = null;
 let achievementCategoryFilter: AchievementCategoryFilter = "growth";
 let achievementStatusFilter: AchievementStatusFilter = "all";
 let seenAchievementIds = new Set<string>();
@@ -327,7 +329,9 @@ const shareExportButton = document.querySelector<HTMLButtonElement>("#shareExpor
 const treeStartModal = document.querySelector<HTMLElement>("#treeStartModal");
 const treeStartNewButton = document.querySelector<HTMLButtonElement>("#treeStartNewButton");
 const treeStartExistingButton = document.querySelector<HTMLButtonElement>("#treeStartExistingButton");
+const treeStartCancelButton = document.querySelector<HTMLButtonElement>("#treeStartCancelButton");
 const treeStartFeedback = document.querySelector<HTMLElement>("#treeStartFeedback");
+const treeStartTreeImage = document.querySelector<HTMLImageElement>("#treeStartTreeImage");
 const cloudSyncStatusText = document.querySelector<HTMLElement>("#cloudSyncStatusText");
 const cloudSyncActionButton = document.querySelector<HTMLButtonElement>("#cloudSyncActionButton");
 const cloudSyncDeviceList = document.querySelector<HTMLElement>("#cloudSyncDeviceList");
@@ -763,6 +767,10 @@ function renderInitialTreePreview() {
     previewTreeImage.src = assetUrl(stage.image);
     previewTreeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
   }
+  if (treeStartTreeImage) {
+    treeStartTreeImage.src = assetUrl(stage.image);
+    treeStartTreeImage.alt = "";
+  }
 }
 
 async function refreshTreeConfig() {
@@ -982,26 +990,46 @@ function bindEvents() {
 
   treeStartNewButton?.addEventListener("click", async () => {
     setTreeStartFeedback(t("treeStartSaving"), "busy");
-    treeStartNewButton.disabled = true;
-    cloudSyncStatus = await window.bonsai.startNewTree();
-    ledger = await window.bonsai.getLedger();
-    treeStartNewButton.disabled = false;
-    setTreeStartFeedback("");
+    setTreeStartPending("new");
+    try {
+      cloudSyncStatus = await window.bonsai.startNewTree();
+      setTreeStartFeedback(t("treeStartSaved"), "success");
+      await wait(TREE_START_FEEDBACK_HOLD_MS);
+      ledger = await window.bonsai.getLedger();
+    } catch (error) {
+      setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
+    } finally {
+      clearTreeStartPending();
+    }
     render();
   });
 
   treeStartExistingButton?.addEventListener("click", async () => {
     setTreeStartFeedback(t("treeStartJoining"), "busy");
-    treeStartExistingButton.disabled = true;
-    cloudSyncStatus = await window.bonsai.joinExistingTree();
-    ledger = await window.bonsai.getLedger();
-    achievementState = await window.bonsai.getAchievements();
-    treeStartExistingButton.disabled = false;
-    if (!ledger.settings.treeStartMode) {
-      setTreeStartFeedback(cloudSyncStatus.error || cloudSyncStatusCopy(), "error");
-    } else {
-      setTreeStartFeedback("");
+    setTreeStartPending("cloud");
+    try {
+      cloudSyncStatus = await window.bonsai.joinExistingTree();
+      ledger = await window.bonsai.getLedger();
+      achievementState = await window.bonsai.getAchievements();
+      if (!ledger.settings.treeStartMode) {
+        setTreeStartFeedback(cloudSyncStatus.error || cloudSyncStatusCopy(), "error");
+      } else {
+        setTreeStartFeedback(t("treeStartJoined"), "success");
+        await wait(TREE_START_FEEDBACK_HOLD_MS);
+      }
+    } catch (error) {
+      setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
+    } finally {
+      clearTreeStartPending();
     }
+    render();
+  });
+
+  treeStartCancelButton?.addEventListener("click", async () => {
+    if (treeStartPendingAction !== "cloud") return;
+    setTreeStartFeedback(t("treeStartCancelled"), "error");
+    cloudSyncStatus = await window.bonsai.cancelCloudAuth();
+    clearTreeStartPending();
     render();
   });
 
@@ -3385,16 +3413,56 @@ function renderTreeStartModal() {
   const visible = !ledger.settings.treeStartMode;
   treeStartModal.hidden = !visible;
   if (!visible) setTreeStartFeedback("");
+  if (visible && treeStartTreeImage && tree) {
+    const stage = tree.stages[0];
+    if (stage) treeStartTreeImage.src = assetUrl(stage.image);
+  }
+  if (visible && treeStartNewButton) {
+    treeStartNewButton.disabled = treeStartPendingAction !== null;
+    treeStartNewButton.classList.toggle("is-pending", treeStartPendingAction === "new");
+  }
   if (visible && treeStartExistingButton) {
-    treeStartExistingButton.disabled = !cloudSyncStatus.configured || cloudSyncStatus.syncing;
+    const unavailable = !cloudSyncStatus.configured || cloudSyncStatus.syncing;
+    treeStartExistingButton.disabled = treeStartPendingAction !== null || unavailable;
     treeStartExistingButton.classList.toggle("is-disabled", !cloudSyncStatus.configured);
+    treeStartExistingButton.classList.toggle("is-pending", treeStartPendingAction === "cloud");
+  }
+  if (treeStartCancelButton) {
+    treeStartCancelButton.hidden = treeStartPendingAction !== "cloud";
   }
 }
 
-function setTreeStartFeedback(message: string, tone: "busy" | "error" | "" = "") {
+function setTreeStartFeedback(message: string, tone: "busy" | "success" | "error" | "" = "") {
   if (!treeStartFeedback) return;
   treeStartFeedback.textContent = message;
   treeStartFeedback.dataset.tone = tone;
+}
+
+function setTreeStartPending(action: "new" | "cloud") {
+  treeStartPendingAction = action;
+  [treeStartNewButton, treeStartExistingButton].forEach((button) => {
+    if (!button) return;
+    button.disabled = true;
+    button.classList.toggle(
+      "is-pending",
+      (action === "new" && button === treeStartNewButton) || (action === "cloud" && button === treeStartExistingButton),
+    );
+  });
+  if (treeStartCancelButton) treeStartCancelButton.hidden = action !== "cloud";
+}
+
+function clearTreeStartPending() {
+  treeStartPendingAction = null;
+  [treeStartNewButton, treeStartExistingButton].forEach((button) => {
+    if (!button) return;
+    button.disabled = false;
+    button.classList.remove("is-pending");
+  });
+  if (treeStartCancelButton) treeStartCancelButton.hidden = true;
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
 
 function renderCloudSyncSettings() {
@@ -3420,6 +3488,7 @@ function renderCloudSyncSettings() {
     const devices = showAdvancedSync ? (cloudSyncStatus.devices ?? []) : [];
     cloudSyncDeviceList.innerHTML = devices.length
       ? `
+        ${renderCloudDeviceShare(devices)}
         ${devices
           .slice(0, 6)
           .map((device) => {
@@ -3442,6 +3511,31 @@ function renderCloudSyncSettings() {
       `
       : "";
   }
+}
+
+function renderCloudDeviceShare(devices: NonNullable<CloudSyncStatus["devices"]>) {
+  const totalTokens = devices.reduce((sum, device) => sum + Math.max(0, device.tokens), 0);
+  const currentDeviceTokens = devices
+    .filter((device) => device.deviceId === cloudSyncStatus.deviceId)
+    .reduce((sum, device) => sum + Math.max(0, device.tokens), 0);
+  const remoteDeviceTokens = Math.max(0, totalTokens - currentDeviceTokens);
+  const localPercent = totalTokens > 0 ? Math.round(clamp((currentDeviceTokens / totalTokens) * 100, 0, 100)) : 0;
+  const remotePercent = totalTokens > 0 ? 100 - localPercent : 0;
+  return `
+    <div class="cloud-device-share">
+      <div class="cloud-device-share-header">
+        <span>${escapeHtml(t("cloudDeviceShareTitle"))}</span>
+        <strong>${escapeHtml(t("cloudDeviceLocalShare"))} ${localPercent}% · ${escapeHtml(t("cloudDeviceRemoteShare"))} ${remotePercent}%</strong>
+      </div>
+      <div class="cloud-device-share-meter" aria-hidden="true">
+        <span style="width:${localPercent}%"></span>
+      </div>
+      <div class="cloud-device-share-values">
+        <span>${escapeHtml(t("cloudDeviceLocalShare"))} ${formatCompact(currentDeviceTokens)} token</span>
+        <span>${escapeHtml(t("cloudDeviceRemoteShare"))} ${formatCompact(remoteDeviceTokens)} token</span>
+      </div>
+    </div>
+  `;
 }
 
 function cloudSyncStatusCopy() {

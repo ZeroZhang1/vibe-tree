@@ -65,6 +65,8 @@ const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
 const APP_ID = "com.vibetree.app";
 const SMOKE_TEST = process.env.VIBE_TREE_SMOKE_TEST === "1";
+const USER_DATA_DIR_OVERRIDE = process.env.VIBE_TREE_USER_DATA_DIR?.trim();
+if (USER_DATA_DIR_OVERRIDE) app.setPath("userData", USER_DATA_DIR_OVERRIDE);
 const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes", "cloud"] as const;
 const LOCAL_STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
 const APP_ICON_PATHS = [
@@ -2705,6 +2707,7 @@ ipcMain.handle("cloud-sync:join-existing", async () => {
   }
   return status;
 });
+ipcMain.handle("cloud-sync:cancel-auth", () => leaderboardService.cancelAuth());
 ipcMain.handle("cloud-sync:sync", () => leaderboardService.syncCloudTree({ force: true }));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>

@@ -108,6 +108,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   let lastCloudUploadedCount = 0;
   let lastCloudDownloadedCount = 0;
   let authServer: http.Server | null = null;
+  let cancelPendingAuth: ((message?: string) => boolean) | null = null;
   let lastSyncAttemptAt: string | undefined;
 
   const configured = Boolean(options.apiUrl);
@@ -160,6 +161,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
     syncTimer = null;
     cloudSyncTimer = null;
+    cancelPendingAuth?.(text("leaderboardLoginCancelled"));
     authServer?.close();
     authServer = null;
   }
@@ -355,6 +357,11 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     } catch (error) {
       return cloudStatus(error instanceof Error ? error.message : text("leaderboardLoginFailed"));
     }
+  }
+
+  function cancelAuth(message = text("leaderboardLoginCancelled")): CloudSyncStatus {
+    cancelPendingAuth?.(message);
+    return cloudStatus(message);
   }
 
   async function syncCloudTree(
@@ -593,6 +600,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   }
 
   function waitForToken(): Promise<string> {
+    cancelPendingAuth?.(text("leaderboardLoginCancelled"));
     const state = crypto.randomUUID();
     const codeVerifier = randomPkceValue();
     const codeChallenge = codeChallengeForVerifier(codeVerifier);
@@ -606,10 +614,12 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       let settled = false;
       let callbackUrl = "";
       let timeout: ReturnType<typeof setTimeout>;
+      let cancelCurrentAuth: ((message?: string) => boolean) | null = null;
       const cleanup = () => {
         clearTimeout(timeout);
         authServer?.close();
         authServer = null;
+        if (cancelPendingAuth === cancelCurrentAuth) cancelPendingAuth = null;
       };
       const finish = (callback: () => void) => {
         if (settled) return;
@@ -617,6 +627,12 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         callback();
         cleanup();
       };
+      cancelCurrentAuth = (message = text("leaderboardLoginCancelled")) => {
+        if (settled) return false;
+        finish(() => reject(new Error(message)));
+        return true;
+      };
+      cancelPendingAuth = cancelCurrentAuth;
       timeout = setTimeout(() => {
         finish(() => reject(new Error(text("leaderboardLoginTimedOut"))));
       }, options.authTimeoutMs);
@@ -901,6 +917,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     setEnabled,
     syncUsage,
     cloudStatus,
+    cancelAuth,
     enableCloudSync,
     joinCloudTree,
     syncCloudTree,

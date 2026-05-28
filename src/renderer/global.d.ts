@@ -40,6 +40,7 @@ declare global {
       startNewTree: () => Promise<CloudSyncStatus>;
       enableCloudSync: () => Promise<CloudSyncStatus>;
       joinExistingTree: () => Promise<CloudSyncStatus>;
+      cancelCloudAuth: () => Promise<CloudSyncStatus>;
       syncCloudTree: () => Promise<CloudSyncStatus>;
       getAchievements: () => Promise<AchievementState>;
       unlockAchievements: (items: Array<{ id: string; trigger?: Record<string, unknown> }>) => Promise<AchievementUnlockResult>;

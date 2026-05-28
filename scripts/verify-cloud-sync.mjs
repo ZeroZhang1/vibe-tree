@@ -182,17 +182,26 @@ function optionalCount(value) {
   return Number.isFinite(number) && number >= 0 ? number : undefined;
 }
 
-function createDevice(name, deviceId, cloud, { entries = [], achievements = [] } = {}) {
-  const files = new Map([
-    [
-      `${name}:auth`,
-      {
-        token: "token",
-        profile,
-        createdAt: "2026-05-27T00:00:00.000Z",
-      },
-    ],
-  ]);
+function createDevice(
+  name,
+  deviceId,
+  cloud,
+  { entries = [], achievements = [], authenticated = true, openExternal } = {},
+) {
+  const files = new Map(
+    authenticated
+      ? [
+          [
+            `${name}:auth`,
+            {
+              token: "token",
+              profile,
+              createdAt: "2026-05-27T00:00:00.000Z",
+            },
+          ],
+        ]
+      : [],
+  );
   const ledger = {
     installedAt: "2026-05-27T00:00:00.000Z",
     settings: {
@@ -291,9 +300,9 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
     dateKey: (date) => date.toISOString().slice(0, 10),
     currentAppVersion: () => "0.5.5-test",
     mainText,
-    openExternal: async () => {
+    openExternal: openExternal ?? (async () => {
       throw new Error("GitHub auth should not open during contract verification");
-    },
+    }),
     readJsonFile: (path) => clone(files.get(path)),
     writeJsonAtomic: (path, value) => {
       files.set(path, clone(value));
@@ -318,6 +327,7 @@ function mainText(key) {
     leaderboardServiceNotConfigured: "service not configured",
     leaderboardLoginRequired: "login required",
     leaderboardLoginFailed: "login failed",
+    leaderboardLoginCancelled: "login canceled",
     leaderboardSyncFailed: "sync failed",
     leaderboardLoadFailed: "load failed",
     leaderboardLoggedOut: "logged out",
@@ -460,6 +470,25 @@ const safeCloudSources = new Set([
   "hermes-session",
   "cloud-sync",
 ]);
+
+const authCancelCloud = createFakeCloud();
+let authOpened = false;
+const authCancelDevice = createDevice("auth-cancel", "auth-cancel-device", authCancelCloud, {
+  authenticated: false,
+  openExternal: async () => {
+    authOpened = true;
+  },
+});
+const authJoinPromise = authCancelDevice.service.joinCloudTree();
+for (let attempt = 0; attempt < 10 && !authOpened; attempt += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+assert(authOpened, "joining a cloud tree should open GitHub auth when no token exists");
+const cancelStatus = authCancelDevice.service.cancelAuth();
+assert(cancelStatus.error === "login canceled", "canceling auth should return a canceled cloud status");
+const canceledJoinStatus = await authJoinPromise;
+assert(canceledJoinStatus.error === "login canceled", "canceling auth should release the pending join request");
+assert(authCancelDevice.ledger.settings.cloudSyncEnabled === false, "canceled auth should not enable cloud sync");
 
 const emptyCloud = createFakeCloud();
 const emptyMac = createDevice("empty-mac", "mac-empty", emptyCloud);
@@ -717,5 +746,5 @@ assert(status.lastSyncedAt, "joining the leaderboard should wait for the first d
 leaderboardDevice.service.stop();
 
 console.log(
-  "Cloud sync contract verified: two-device merge, zero-token cloud tree join, dedupe, authoritative cloud tokens, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
+  "Cloud sync contract verified: auth cancellation, two-device merge, zero-token cloud tree join, dedupe, authoritative cloud tokens, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
 );
