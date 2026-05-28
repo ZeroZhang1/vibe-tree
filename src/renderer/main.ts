@@ -3486,10 +3486,11 @@ function renderCloudSyncSettings() {
   }
   if (cloudSyncDeviceList) {
     const devices = showAdvancedSync ? (cloudSyncStatus.devices ?? []) : [];
-    cloudSyncDeviceList.innerHTML = devices.length
+    const visibleDevices = visibleCloudDevices(devices);
+    cloudSyncDeviceList.innerHTML = visibleDevices.length
       ? `
         ${renderCloudDeviceShare(devices)}
-        ${devices
+        ${visibleDevices
           .slice(0, 6)
           .map((device) => {
             const isCurrent = device.deviceId === cloudSyncStatus.deviceId;
@@ -3513,6 +3514,17 @@ function renderCloudSyncSettings() {
   }
 }
 
+function visibleCloudDevices(devices: NonNullable<CloudSyncStatus["devices"]>) {
+  return [...devices]
+    .filter((device) => device.deviceId === cloudSyncStatus.deviceId || Math.max(0, device.tokens) > 0)
+    .sort((left, right) => {
+      const leftCurrent = left.deviceId === cloudSyncStatus.deviceId;
+      const rightCurrent = right.deviceId === cloudSyncStatus.deviceId;
+      if (leftCurrent !== rightCurrent) return leftCurrent ? -1 : 1;
+      return Math.max(0, right.tokens) - Math.max(0, left.tokens);
+    });
+}
+
 function renderCloudDeviceShare(devices: NonNullable<CloudSyncStatus["devices"]>) {
   const totalTokens = devices.reduce((sum, device) => sum + Math.max(0, device.tokens), 0);
   const currentDeviceTokens = devices
@@ -3528,7 +3540,8 @@ function renderCloudDeviceShare(devices: NonNullable<CloudSyncStatus["devices"]>
         <strong>${escapeHtml(t("cloudDeviceLocalShare"))} ${localPercent}% · ${escapeHtml(t("cloudDeviceRemoteShare"))} ${remotePercent}%</strong>
       </div>
       <div class="cloud-device-share-meter" aria-hidden="true">
-        <span style="width:${localPercent}%"></span>
+        <span class="is-local" style="width:${localPercent}%"></span>
+        <span class="is-remote" style="width:${remotePercent}%"></span>
       </div>
       <div class="cloud-device-share-values">
         <span>${escapeHtml(t("cloudDeviceLocalShare"))} ${formatCompact(currentDeviceTokens)} token</span>
