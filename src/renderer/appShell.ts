@@ -19,7 +19,7 @@ export function appShellHtml(viewMode: ViewMode) {
             <span class="badge-face badge-back">0</span>
           </span>
         </div>
-        <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开 Vibe Tree"></button>
+        <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开管理窗口" data-i18n-aria="openManager"></button>
       </section>
     </main>
   `;
@@ -81,16 +81,22 @@ export function appShellHtml(viewMode: ViewMode) {
         <div class="tree-start-card">
           <p class="eyebrow" data-i18n="treeStartEyebrow">First run</p>
           <h2 data-i18n="treeStartTitle">你想怎么开始？</h2>
-          <p data-i18n="treeStartCopy">可以新养一棵树，也可以登录后接着已有的小树继续成长。</p>
+          <p data-i18n="treeStartCopy">可以从这台设备开始，也可以登录同一账号同步云端小树。</p>
           <div class="tree-start-feedback" id="treeStartFeedback" aria-live="polite"></div>
           <div class="tree-start-options">
             <button class="tree-start-option" id="treeStartNewButton" type="button">
-              <strong data-i18n="treeStartNewTitle">新养一棵树</strong>
-              <span data-i18n="treeStartNewCopy">从这台设备的新 token 开始统计。</span>
+              <span class="tree-start-option-mark" aria-hidden="true"></span>
+              <span class="tree-start-option-text">
+                <strong data-i18n="treeStartNewTitle">新养一棵树</strong>
+                <span class="tree-start-option-copy" data-i18n="treeStartNewCopy">只统计这台设备之后产生的新 token。</span>
+              </span>
             </button>
             <button class="tree-start-option is-primary" id="treeStartExistingButton" type="button">
-              <strong data-i18n="treeStartExistingTitle">接着养已有小树</strong>
-              <span data-i18n="treeStartExistingCopy">登录同一个账号，拉取云端等级和成就。</span>
+              <span class="tree-start-option-mark" aria-hidden="true"></span>
+              <span class="tree-start-option-text">
+                <strong data-i18n="treeStartExistingTitle">同步云端小树</strong>
+                <span class="tree-start-option-copy" data-i18n="treeStartExistingCopy">登录同一账号，合并其他设备的 Token、等级和成就。</span>
+              </span>
             </button>
           </div>
         </div>

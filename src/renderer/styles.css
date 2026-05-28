@@ -1068,11 +1068,11 @@ html[lang^="en"] .side-tabs {
   place-items: center;
   padding: 24px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 74%, transparent), color-mix(in srgb, var(--bg) 88%, transparent)),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 90%, transparent)),
     repeating-linear-gradient(
       0deg,
-      color-mix(in srgb, var(--leaf) 10%, transparent) 0 1px,
-      transparent 1px 9px
+      color-mix(in srgb, var(--app-grid) 86%, transparent) 0 1px,
+      transparent 1px 10px
     );
 }
 
@@ -1081,20 +1081,23 @@ html[lang^="en"] .side-tabs {
 }
 
 .tree-start-card {
-  width: min(720px, calc(100vw - 40px));
+  width: min(760px, calc(100vw - 40px));
   display: grid;
-  gap: 16px;
-  padding: 22px;
+  gap: 18px;
+  padding: 24px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   color: var(--ink);
-  background: var(--bg-card);
-  box-shadow: var(--pixel-shadow-lg), 0 0 0 1px color-mix(in srgb, var(--leaf) 12%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 94%, var(--bg-light)), var(--bg-card)),
+    var(--bg-card);
+  box-shadow: var(--pixel-shadow-lg), 0 0 0 1px color-mix(in srgb, var(--leaf) 10%, transparent);
 }
 
 .tree-start-card h2 {
-  font-size: clamp(1.5rem, 3vw, 2.2rem);
-  line-height: 1.08;
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.1;
 }
 
 .tree-start-card > p:not(.eyebrow) {
@@ -1136,16 +1139,17 @@ html[lang^="en"] .side-tabs {
 
 .tree-start-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
   gap: 12px;
 }
 
 .tree-start-option {
-  min-height: 132px;
+  min-height: 122px;
   display: grid;
-  align-content: end;
-  gap: 8px;
-  padding: 16px;
+  grid-template-columns: 42px 1fr;
+  align-items: start;
+  gap: 14px;
+  padding: 18px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   color: var(--ink);
@@ -1156,13 +1160,33 @@ html[lang^="en"] .side-tabs {
   text-align: left;
 }
 
-.tree-start-option::before {
-  content: "";
-  width: 22px;
-  height: 22px;
+.tree-start-option-mark {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
   border: 2px solid currentColor;
-  background: color-mix(in srgb, currentColor 18%, transparent);
-  box-shadow: inset 4px 4px 0 color-mix(in srgb, #ffffff 16%, transparent);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, currentColor 24%, transparent) 0 50%, transparent 50%),
+    color-mix(in srgb, currentColor 10%, transparent);
+  box-shadow: inset 5px 5px 0 color-mix(in srgb, #ffffff 14%, transparent);
+}
+
+.tree-start-option-mark::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  box-shadow:
+    0 -8px 0 -3px currentColor,
+    8px 0 0 -3px currentColor,
+    0 8px 0 -3px currentColor,
+    -8px 0 0 -3px currentColor;
+}
+
+.tree-start-option-text {
+  display: grid;
+  gap: 8px;
 }
 
 .tree-start-option strong {
@@ -1170,7 +1194,7 @@ html[lang^="en"] .side-tabs {
   font-size: 1rem;
 }
 
-.tree-start-option span {
+.tree-start-option-copy {
   color: var(--muted);
   font-size: 0.76rem;
   line-height: 1.45;
@@ -1193,6 +1217,20 @@ html[lang^="en"] .side-tabs {
 
 .tree-start-option.is-disabled {
   color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .tree-start-card {
+    padding: 18px;
+  }
+
+  .tree-start-card h2 {
+    font-size: 1.6rem;
+  }
+
+  .tree-start-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 .settings-modal {

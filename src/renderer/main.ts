@@ -263,11 +263,6 @@ let activePetPointer: null | {
   y: number;
   moved: boolean;
 } = null;
-let lastPetTap: null | {
-  time: number;
-  x: number;
-  y: number;
-} = null;
 let appLanguage: AppLanguage = browserLanguage();
 const statsCache = new StatsCache();
 
@@ -813,15 +808,14 @@ function bindEvents() {
       void window.bonsai.setExpanded(true);
     });
 
-    petHitbox.addEventListener("dblclick", () => {
-      void window.bonsai.setExpanded(true);
+    petHitbox.addEventListener("click", (event) => {
+      if (event.detail === 0) void window.bonsai.setExpanded(true);
     });
 
     petStage.addEventListener("pointerdown", async (event) => {
       if (event.button !== 0 || ledger?.settings.locked) return;
       if ((event.target as HTMLElement).closest("#petLevelBadge")) return;
       if (event.detail >= 2) {
-        lastPetTap = null;
         activePetPointer = null;
         void endPetDrag();
         void window.bonsai.setExpanded(true);
@@ -863,9 +857,9 @@ function bindEvents() {
     });
 
     petStage.addEventListener("pointerup", (event) => {
-      const isDoubleTap = consumePetTap(event);
+      const isTap = consumePetTap(event);
       void endPetDrag();
-      if (isDoubleTap) void window.bonsai.setExpanded(true);
+      if (isTap) void window.bonsai.setExpanded(true);
     });
     petStage.addEventListener("pointercancel", () => void resetPetPointer());
     petStage.addEventListener("lostpointercapture", () => void endPetDrag());
@@ -1206,7 +1200,6 @@ async function endPetDrag() {
 
 async function resetPetPointer() {
   activePetPointer = null;
-  lastPetTap = null;
   await endPetDrag();
 }
 
@@ -1214,17 +1207,9 @@ function consumePetTap(event: PointerEvent) {
   const pointer = activePetPointer;
   activePetPointer = null;
   if (!pointer || pointer.pointerId !== event.pointerId || pointer.moved || pointerDistance(pointer, event) > 8) {
-    lastPetTap = null;
     return false;
   }
-
-  const now = Date.now();
-  const isDoubleTap =
-    Boolean(lastPetTap) &&
-    now - lastPetTap!.time <= 420 &&
-    Math.hypot(event.screenX - lastPetTap!.x, event.screenY - lastPetTap!.y) <= 12;
-  lastPetTap = isDoubleTap ? null : { time: now, x: event.screenX, y: event.screenY };
-  return isDoubleTap;
+  return true;
 }
 
 function pointerDistance(start: { x: number; y: number }, event: PointerEvent) {
@@ -3401,6 +3386,7 @@ function renderTreeStartModal() {
   treeStartModal.hidden = !visible;
   if (!visible) setTreeStartFeedback("");
   if (visible && treeStartExistingButton) {
+    treeStartExistingButton.disabled = !cloudSyncStatus.configured || cloudSyncStatus.syncing;
     treeStartExistingButton.classList.toggle("is-disabled", !cloudSyncStatus.configured);
   }
 }
@@ -3903,14 +3889,14 @@ function getModelBreakdown(sourceKey: string, enabledSources = enabledStatsSourc
   const unresolvedCloudRows = new Map<string, SourceBreakdown>();
   for (const entry of getSourceScopeEntries(ledger.entries)) {
     if (!entryMatchesSourceKey(entry, sourceKey)) continue;
-    const model = entry.model || entry.provider || "unknown";
+    const model = entry.model || entry.provider;
     const breakdown = breakdownForEntry(entry, enabledSources);
-    if (model === "unknown" && (entry.syncedFromCloud || entry.source === "cloud-sync") && entry.deviceId) {
+    if (!model && (entry.syncedFromCloud || entry.source === "cloud-sync") && entry.deviceId) {
       const key = cloudModelStatKey(entry.deviceId, dateKey(new Date(entry.createdAt)), mirrorSourceForModelStats(entry));
       addBreakdown(unresolvedCloudRows, key, key, breakdown);
       continue;
     }
-    addBreakdown(rows, model, model, breakdown);
+    addBreakdown(rows, model ?? "unknown", model ?? t("modelUncategorized"), breakdown);
   }
   resolveCloudModelBreakdown(rows, unresolvedCloudRows, sourceKey);
   return [...rows.values()].filter((row) => row.xp > 0).sort((a, b) => b.xp - a.xp);
@@ -3922,7 +3908,7 @@ function resolveCloudModelBreakdown(
   sourceKey: string,
 ) {
   if (!cloudSyncStatus.modelStats?.length || !unresolvedCloudRows.size) {
-    for (const row of unresolvedCloudRows.values()) addBreakdown(rows, "unknown", "unknown", row);
+    for (const row of unresolvedCloudRows.values()) addBreakdown(rows, "unknown", t("modelUncategorized"), row);
     return;
   }
 
@@ -3940,7 +3926,7 @@ function resolveCloudModelBreakdown(
     const stats = statsByKey.get(key) ?? [];
     const statsTotal = stats.reduce((total, stat) => total + safeTokens(stat.tokens), 0);
     if (statsTotal <= 0) {
-      addBreakdown(rows, "unknown", "unknown", unknown);
+      addBreakdown(rows, "unknown", t("modelUncategorized"), unknown);
       continue;
     }
     const scale = unknown.xp > 0 && statsTotal > unknown.xp ? unknown.xp / statsTotal : 1;
@@ -3964,7 +3950,7 @@ function resolveCloudModelBreakdown(
     const leftover = unknown.xp - resolvedXp;
     if (leftover > 0) {
       const ratio = unknown.xp > 0 ? leftover / unknown.xp : 0;
-      addBreakdown(rows, "unknown", "unknown", scaleBreakdown(unknown, ratio));
+      addBreakdown(rows, "unknown", t("modelUncategorized"), scaleBreakdown(unknown, ratio));
     }
   }
 }
