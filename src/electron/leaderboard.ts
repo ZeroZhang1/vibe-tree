@@ -520,7 +520,6 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   }
 
   async function syncCloudDeviceSnapshot() {
-    const modelStatsEnabled = ledger().settings.cloudSyncModelStatsEnabled;
     await requestJson(apiUrl("/api/tree/events"), {
       method: "POST",
       token: auth.token,
@@ -528,8 +527,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         deviceId: options.deviceId(),
         device: options.deviceInfo(),
         entries: [],
-        modelStatsEnabled,
-        modelStats: modelStatsEnabled ? options.cloudModelStats() : undefined,
+        modelStats: options.cloudModelStats(),
         appVersion: options.currentAppVersion(),
       },
     });

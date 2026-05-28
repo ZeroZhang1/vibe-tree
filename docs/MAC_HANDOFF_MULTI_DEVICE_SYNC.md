@@ -56,7 +56,7 @@ This branch adds the first implementation pass for cloud tree sync, plus a Mac-s
 - `Continue existing tree` now requires a non-empty remote tree; otherwise it keeps first-run mode active and shows an error.
 - Cloud tree sync strips local agent/note/trigger details and does not upload prompt, reply, session text, file content, or local paths.
 - Pulled cloud events preserve safe source categories such as `codex-session`, `openclaw-session`, and `claude-session`, so remote growth is merged into its real source rather than shown as a separate Cloud Tree source.
-- Per-event model/provider remains local by default. Optional aggregate model sync uploads only daily totals grouped by device/source/model, not individual sessions.
+- Per-event model/provider remains local by default. Aggregate model sync uploads only daily totals grouped by device/source/model, not individual sessions.
 - Leaving the leaderboard now deletes only remote leaderboard daily totals/preferences and keeps the shared cloud tree archive intact.
 - A local contract verification script simulates Windows and Mac sharing one fake cloud tree.
 
@@ -96,7 +96,7 @@ This branch adds the first implementation pass for cloud tree sync, plus a Mac-s
   Rebuilds existing D1 cloud tree tables without historical `agent`, `provider`, `model`, `note`, or achievement `trigger_json` columns.
 
 - `server/leaderboard-worker/migrations/20260528_cloud_tree_device_model_stats.sql`
-  Adds cloud tree device summaries and optional aggregate model-stat tables.
+  Adds cloud tree device summaries and aggregate model-stat tables.
 
 - `scripts/verify-cloud-sync.mjs`
   Verifies two-device merge, de-dupe, empty remote-tree guard, leaderboard leave safety, and the cloud payload privacy whitelist against a fake cloud API.

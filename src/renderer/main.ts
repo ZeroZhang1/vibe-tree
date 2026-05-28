@@ -337,7 +337,6 @@ const treeStartExistingButton = document.querySelector<HTMLButtonElement>("#tree
 const treeStartFeedback = document.querySelector<HTMLElement>("#treeStartFeedback");
 const cloudSyncStatusText = document.querySelector<HTMLElement>("#cloudSyncStatusText");
 const cloudSyncActionButton = document.querySelector<HTMLButtonElement>("#cloudSyncActionButton");
-const cloudModelStatsInput = document.querySelector<HTMLInputElement>("#cloudModelStatsInput");
 const cloudSyncDeviceList = document.querySelector<HTMLElement>("#cloudSyncDeviceList");
 
 if (viewMode === "manager") {
@@ -1023,18 +1022,6 @@ function bindEvents() {
     achievementState = await window.bonsai.getAchievements();
     cloudSyncActionButton.disabled = false;
     render();
-  });
-
-  cloudModelStatsInput?.addEventListener("change", async () => {
-    if (!ledger) return;
-    ledger = await window.bonsai.updateSettings({
-      cloudSyncModelStatsEnabled: cloudModelStatsInput.checked,
-    });
-    render();
-    if (cloudSyncStatus.enabled) {
-      cloudSyncStatus = await window.bonsai.syncCloudTree();
-      render();
-    }
   });
 
   leaderboardMembershipButton?.addEventListener("click", async () => {
@@ -2338,7 +2325,6 @@ function render() {
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
     syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
-    if (cloudModelStatsInput) cloudModelStatsInput.checked = ledger.settings.cloudSyncModelStatsEnabled;
     if (leaderboardPreferencesPublicInput) {
       leaderboardPreferencesPublicInput.checked = ledger.settings.leaderboardPreferencesPublic;
     }
@@ -3352,9 +3338,6 @@ function renderCloudSyncSettings() {
   const showAdvancedSync = cloudSyncStatus.enabled;
   const cloudSyncSettings = cloudSyncStatusText?.closest<HTMLElement>(".cloud-sync-settings");
   if (cloudSyncSettings) cloudSyncSettings.dataset.connected = String(showAdvancedSync);
-  if (cloudModelStatsInput) {
-    cloudModelStatsInput.disabled = !showAdvancedSync || cloudSyncStatus.syncing;
-  }
   if (cloudSyncActionButton) {
     cloudSyncActionButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
     cloudSyncActionButton.textContent = cloudSyncStatus.syncing

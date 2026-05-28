@@ -316,15 +316,8 @@ export function appShellHtml(viewMode: ViewMode) {
               <div class="leaderboard-status" id="cloudSyncStatusText"></div>
               <div class="leaderboard-help">
                 <strong data-i18n="cloudSyncPrivacyTitle">同步内容</strong>
-                <p data-i18n="cloudSyncPrivacyCopy">只同步 token 事件、设备 id 和成就状态，不上传提示词、回复、文件内容或本地路径。</p>
+                <p data-i18n="cloudSyncPrivacyCopy">同步 token 事件、设备 id、成就状态和按天汇总的模型 token。不会上传提示词、回复、文件内容、本地路径或单条会话。</p>
               </div>
-              <label class="toggle-row cloud-model-stats-row">
-                <input id="cloudModelStatsInput" type="checkbox" />
-                <span>
-                  <strong data-i18n="cloudModelStatsTitle">同步聚合模型占比</strong>
-                  <small data-i18n="cloudModelStatsCopy">只上传按天汇总的模型 token，不上传单条会话。</small>
-                </span>
-              </label>
               <div class="cloud-device-list" id="cloudSyncDeviceList"></div>
               <div class="leaderboard-actions">
                 <button class="secondary-button" id="cloudSyncActionButton" type="button" data-i18n="cloudSyncConnectAndSync">连接并同步小树</button>

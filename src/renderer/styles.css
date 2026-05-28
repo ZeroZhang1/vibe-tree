@@ -1564,25 +1564,8 @@ html[lang^="en"] .side-tabs {
 }
 
 .cloud-sync-settings:not([data-connected="true"]) .leaderboard-help,
-.cloud-sync-settings:not([data-connected="true"]) .cloud-model-stats-row,
 .cloud-sync-settings:not([data-connected="true"]) .cloud-device-list {
   display: none;
-}
-
-.cloud-model-stats-row {
-  align-items: flex-start;
-  padding: 9px 10px;
-}
-
-.cloud-model-stats-row span {
-  display: grid;
-  gap: 3px;
-}
-
-.cloud-model-stats-row small {
-  color: var(--muted);
-  font-size: 0.68rem;
-  line-height: 1.3;
 }
 
 .cloud-device-list {

@@ -58,7 +58,6 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
       deviceId: "mac-device",
       device: { alias: "Mac", platform: "mac" },
       appVersion: "0.5.5-test",
-      modelStatsEnabled: true,
       modelStats: [
         {
           date: utcToday,
@@ -147,7 +146,7 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assert(achievement?.id === "sprout", "cloud tree should return the uploaded achievement");
   assertNoForbiddenKeys(achievement, "GET /api/tree achievement");
   assert(device?.deviceId === "mac-device" && device.platform === "mac", "cloud tree should return device metadata");
-  assert(modelStat?.model === "private-model" && modelStat.tokens === 1234, "cloud tree should return opt-in aggregate model stats");
+  assert(modelStat?.model === "private-model" && modelStat.tokens === 1234, "cloud tree should return aggregate model stats");
   assert(!("prompt" in modelStat) && !("localPath" in modelStat), "cloud model stats should not leak raw session data");
 
   await requestJson("/api/usage/daily", {

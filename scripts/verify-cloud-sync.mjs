@@ -82,12 +82,12 @@ function createFakeCloud() {
         entryCount: 0,
         tokens: 0,
       });
-      if (body?.modelStatsEnabled === true || body?.modelStatsEnabled === false) {
+      if (Array.isArray(body?.modelStats) || body?.modelStatsEnabled === false) {
         for (const key of [...modelStats.keys()].filter((key) => key.startsWith(`${body.deviceId}|`))) {
           modelStats.delete(key);
         }
       }
-      if (body?.modelStatsEnabled === true && Array.isArray(body?.modelStats)) {
+      if (Array.isArray(body?.modelStats)) {
         for (const stat of body.modelStats) {
           assert(!("prompt" in stat), "model stats should not leak prompt");
           assert(!("reply" in stat), "model stats should not leak reply");
@@ -196,7 +196,6 @@ function createDevice(name, deviceId, cloud, { entries = [], achievements = [] }
     settings: {
       cloudSyncEnabled: false,
       cloudSyncDeviceId: deviceId,
-      cloudSyncModelStatsEnabled: false,
       leaderboardProfile: profile,
       leaderboardPreferencesPublic: false,
       treeStartMode: undefined,
@@ -471,14 +470,9 @@ assert(cloud.events.size === 1, "windows initial sync should upload one event");
 assert(cloud.achievements.size === 1, "windows initial sync should upload one achievement");
 assert(cloud.events.get("win-event-1").source === "codex-session", "cloud should preserve safe source categories");
 assert(cloud.devices.get("win-device")?.platform === "windows", "cloud should track device platform metadata");
-assert(cloud.modelStats.size === 0, "cloud should not upload model stats until the user enables aggregate model sync");
-
-windows.ledger.settings.cloudSyncModelStatsEnabled = true;
-status = await windows.service.syncCloudTree({ force: true });
-assert(!status.error, `windows aggregate model sync failed: ${status.error}`);
 assert(
   [...cloud.modelStats.values()].some((row) => row.deviceId === "win-device" && row.model === "private-model"),
-  "cloud should store opt-in aggregate model totals",
+  "cloud should store default aggregate model totals",
 );
 
 const mac = createDevice("mac", "mac-device", cloud);

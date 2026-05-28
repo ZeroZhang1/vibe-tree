@@ -556,8 +556,8 @@ async function syncCloudTreeEvents(request: Request, env: Env) {
         deviceId?: string;
         device?: unknown;
         entries?: unknown[];
-        modelStatsEnabled?: boolean;
         modelStats?: unknown[];
+        modelStatsEnabled?: boolean;
         appVersion?: string;
       }
     | undefined;
@@ -885,12 +885,13 @@ function normalizeCloudModelStatStatements(
   now: string,
   env: Env,
 ) {
-  if (body?.modelStatsEnabled !== true && body?.modelStatsEnabled !== false && !Array.isArray(body?.modelStats)) {
+  const rawRows = Array.isArray(body?.modelStats) ? body.modelStats : undefined;
+  if (!rawRows && body?.modelStatsEnabled !== false) {
     return { statements: [], count: 0 };
   }
 
-  const rows = body?.modelStatsEnabled === true && Array.isArray(body?.modelStats)
-    ? body.modelStats.slice(0, 1000).map(normalizeCloudModelStat).filter(Boolean)
+  const rows = rawRows
+    ? rawRows.slice(0, 1000).map(normalizeCloudModelStat).filter(Boolean)
     : [];
   return {
     statements: [

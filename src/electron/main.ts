@@ -93,7 +93,6 @@ const DEFAULT_SETTINGS: Settings = {
   cloudSyncDeviceId: undefined,
   cloudSyncLastSyncedAt: undefined,
   cloudSyncLastPulledAt: undefined,
-  cloudSyncModelStatsEnabled: false,
   treeStartMode: undefined,
   launchOnStartup: false,
   silentStartup: false,
@@ -565,7 +564,6 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     cloudSyncDeviceId: cleanDeviceId(settings.cloudSyncDeviceId),
     cloudSyncLastSyncedAt,
     cloudSyncLastPulledAt,
-    cloudSyncModelStatsEnabled: Boolean(settings.cloudSyncModelStatsEnabled),
     treeStartMode: settings.treeStartMode === "new" || settings.treeStartMode === "cloud" ? settings.treeStartMode : undefined,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
@@ -1521,7 +1519,6 @@ function updateSettings(partial: Partial<Settings>) {
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
     previous.cloudSyncEnabled !== ledger.settings.cloudSyncEnabled ||
-    previous.cloudSyncModelStatsEnabled !== ledger.settings.cloudSyncModelStatsEnabled ||
     previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id
   ) {
     leaderboardService.startSync();
@@ -1531,8 +1528,7 @@ function updateSettings(partial: Partial<Settings>) {
     partial.leaderboardLastSyncedAt !== undefined ||
     partial.cloudSyncEnabled !== undefined ||
     partial.cloudSyncLastSyncedAt !== undefined ||
-    partial.cloudSyncLastPulledAt !== undefined ||
-    partial.cloudSyncModelStatsEnabled !== undefined
+    partial.cloudSyncLastPulledAt !== undefined
   ) {
     leaderboardService.broadcast();
   }

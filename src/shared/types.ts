@@ -137,7 +137,6 @@ export interface Settings {
   cloudSyncDeviceId?: string;
   cloudSyncLastSyncedAt?: string;
   cloudSyncLastPulledAt?: string;
-  cloudSyncModelStatsEnabled: boolean;
   treeStartMode?: "new" | "cloud";
   launchOnStartup: boolean;
   silentStartup: boolean;
