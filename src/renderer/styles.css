@@ -1850,7 +1850,7 @@ html[lang^="en"] .side-tabs {
 }
 
 .cloud-device-share-meter {
-  height: 8px;
+  height: 10px;
   display: flex;
   border: 1px solid color-mix(in srgb, var(--border-strong) 80%, transparent);
   border-radius: 999px;
@@ -1871,8 +1871,12 @@ html[lang^="en"] .side-tabs {
   background: linear-gradient(90deg, var(--leaf), var(--leaf-hi));
 }
 
+.cloud-device-share-meter.has-both .is-local {
+  box-shadow: inset -2px 0 0 var(--bg-light);
+}
+
 .cloud-device-share-meter .is-remote {
-  background: color-mix(in srgb, var(--sky) 58%, var(--border-strong));
+  background: linear-gradient(90deg, var(--rain), color-mix(in srgb, var(--rain) 72%, var(--bg-light)));
 }
 
 .cloud-device-row {
@@ -4388,6 +4392,7 @@ label {
   height: 14px;
   min-height: 14px;
   margin: 0;
+  accent-color: var(--leaf);
 }
 
 .agent-source-toggle span {
