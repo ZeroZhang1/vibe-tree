@@ -127,6 +127,7 @@ const LEADERBOARD_CACHE_STORAGE_KEY = "vibe-tree:leaderboard-cache";
 const LEADERBOARD_CACHE_TTL_MS = 60 * 60 * 1000;
 const LEADERBOARD_CACHE_DISPLAY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const TREE_START_FEEDBACK_HOLD_MS = 700;
+const TREE_START_CLOUD_HELP_MS = 8_000;
 const initialUiTheme = viewMode === "toast" ? "night" : readCachedUiTheme();
 const platformName = rendererPlatform();
 document.documentElement.dataset.platform = platformName;
@@ -242,6 +243,7 @@ let lastHistoryChartKey = "";
 let sourceScope: SourceScope = "today";
 let dashboardTab: DashboardTab = "home";
 let treeStartPendingAction: "new" | "cloud" | null = null;
+let treeStartCloudHelpTimer: number | undefined;
 let achievementCategoryFilter: AchievementCategoryFilter = "growth";
 let achievementStatusFilter: AchievementStatusFilter = "all";
 let seenAchievementIds = new Set<string>();
@@ -1008,6 +1010,7 @@ function bindEvents() {
   treeStartExistingButton?.addEventListener("click", async () => {
     setTreeStartFeedback(t("treeStartJoining"), "busy");
     setTreeStartPending("cloud");
+    scheduleTreeStartCloudHelp();
     try {
       cloudSyncStatus = await window.bonsai.joinExistingTree();
       ledger = await window.bonsai.getLedger();
@@ -1028,10 +1031,16 @@ function bindEvents() {
 
   treeStartCancelButton?.addEventListener("click", async () => {
     if (treeStartPendingAction !== "cloud") return;
+    clearTreeStartCloudHelp();
     setTreeStartFeedback(t("treeStartCancelled"), "error");
     cloudSyncStatus = await window.bonsai.cancelCloudAuth();
     clearTreeStartPending();
     render();
+  });
+
+  window.addEventListener("focus", remindTreeStartCloudPending);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) remindTreeStartCloudPending();
   });
 
   cloudSyncActionButton?.addEventListener("click", async () => {
@@ -3435,7 +3444,10 @@ function renderTreeStartModal() {
   if (!treeStartModal || !ledger) return;
   const visible = !ledger.settings.treeStartMode;
   treeStartModal.hidden = !visible;
-  if (!visible) setTreeStartFeedback("");
+  if (!visible) {
+    clearTreeStartCloudHelp();
+    setTreeStartFeedback("");
+  }
   if (visible && treeStartTreeImage && tree) {
     const stage = tree.stages[0];
     if (stage) treeStartTreeImage.src = assetUrl(stage.image);
@@ -3461,6 +3473,29 @@ function setTreeStartFeedback(message: string, tone: "busy" | "success" | "error
   treeStartFeedback.dataset.tone = tone;
 }
 
+function scheduleTreeStartCloudHelp() {
+  clearTreeStartCloudHelp();
+  treeStartCloudHelpTimer = window.setTimeout(() => {
+    showTreeStartCloudHelp();
+  }, TREE_START_CLOUD_HELP_MS);
+}
+
+function clearTreeStartCloudHelp() {
+  if (treeStartCloudHelpTimer === undefined) return;
+  window.clearTimeout(treeStartCloudHelpTimer);
+  treeStartCloudHelpTimer = undefined;
+}
+
+function remindTreeStartCloudPending() {
+  if (treeStartPendingAction !== "cloud") return;
+  showTreeStartCloudHelp();
+}
+
+function showTreeStartCloudHelp() {
+  if (treeStartPendingAction !== "cloud") return;
+  setTreeStartFeedback(t("treeStartStillWaiting"), "busy");
+}
+
 function setTreeStartPending(action: "new" | "cloud") {
   treeStartPendingAction = action;
   [treeStartNewButton, treeStartExistingButton].forEach((button) => {
@@ -3475,6 +3510,7 @@ function setTreeStartPending(action: "new" | "cloud") {
 }
 
 function clearTreeStartPending() {
+  clearTreeStartCloudHelp();
   treeStartPendingAction = null;
   [treeStartNewButton, treeStartExistingButton].forEach((button) => {
     if (!button) return;
