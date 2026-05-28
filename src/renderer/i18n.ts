@@ -403,9 +403,10 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     leaderboardPrivacyExit: "退出排行榜会删除远端排行榜数据，不会删除同养小树云档。",
     leaderboardOnlyDailyTokens: "只同步每日 Token",
     leaveLeaderboard: "退出排行榜",
+    leaderboardJoinConfirm:
+      "加入排行榜会上传每日 Token 总量、本地首次使用日期和时区。若在设置里开启公开使用偏好，还会上传聚合后的 Agent、模型、偏爱时段和峰值 Token。不会上传提示词、会话记录、文件或路径。确认加入排行榜吗？",
     leaderboardLeaveConfirm: "退出排行榜后，远端每日 token 和公开偏好会被删除；同养小树云档不会删除。确定要退出排行榜吗？",
     syncNow: "立即同步",
-    syncLeaderboardNow: "同步排行",
     leaderboardRefreshing: "正在刷新榜单",
     leaderboardSyncingAndRefreshing: "正在同步排行并刷新",
     leaderboardServiceNotConfigured: "排行榜服务暂未配置",
@@ -666,9 +667,10 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     leaderboardPrivacyExit: "Leaving deletes remote leaderboard data, not your shared cloud tree.",
     leaderboardOnlyDailyTokens: "Daily tokens only",
     leaveLeaderboard: "Leave Leaderboard",
+    leaderboardJoinConfirm:
+      "Joining uploads daily token totals, your local first-use date, and timezone. If sharing usage preferences is enabled in Settings, it also uploads aggregated agent, model, preferred time, and peak token rate. Prompts, sessions, files, and paths are never uploaded. Join the leaderboard?",
     leaderboardLeaveConfirm: "Leaving the leaderboard deletes remote daily tokens and public preferences. Your shared cloud tree will not be deleted. Leave the leaderboard?",
     syncNow: "Sync Now",
-    syncLeaderboardNow: "Sync Ranking",
     leaderboardRefreshing: "Refreshing",
     leaderboardSyncingAndRefreshing: "Syncing ranking and refreshing",
     leaderboardServiceNotConfigured: "Leaderboard service is not configured",

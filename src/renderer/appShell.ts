@@ -342,10 +342,6 @@ export function appShellHtml(viewMode: ViewMode) {
                 <p data-i18n="leaderboardPrivacyPreference">开启公开使用偏好后，会额外上传使用的 Agent、模型、时段和峰值 Token，不会包含任何提示词、会话记录、文件、路径或其他敏感信息。</p>
                 <p data-i18n="leaderboardPrivacyExit">您可以随时选择退出，退出后，您的信息将被完全删除。</p>
               </div>
-              <div class="leaderboard-actions">
-                <button class="secondary-button" id="leaderboardMembershipButton" type="button">加入排行</button>
-                <button class="secondary-button" id="leaderboardSettingsSyncButton" type="button" data-i18n="syncLeaderboardNow">同步排行</button>
-              </div>
             </div>
           </section>
 

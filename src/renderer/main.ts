@@ -323,8 +323,6 @@ const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermes
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
 const leaderboardPreferencesPublicInput = document.querySelector<HTMLInputElement>("#leaderboardPreferencesPublicInput");
-const leaderboardMembershipButton = document.querySelector<HTMLButtonElement>("#leaderboardMembershipButton");
-const leaderboardSettingsSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardSettingsSyncButton");
 const leaderboardPageRefreshButton = document.querySelector<HTMLButtonElement>("#leaderboardPageRefreshButton");
 const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardPageSyncButton");
 const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
@@ -1024,14 +1022,6 @@ function bindEvents() {
     render();
   });
 
-  leaderboardMembershipButton?.addEventListener("click", async () => {
-    await toggleLeaderboardMembership();
-  });
-
-  leaderboardSettingsSyncButton?.addEventListener("click", () => {
-    void syncLeaderboard({ force: true });
-  });
-
   leaderboardPreferencesPublicInput?.addEventListener("change", async () => {
     if (!ledger) return;
     ledger = await window.bonsai.updateSettings({
@@ -1050,7 +1040,7 @@ function bindEvents() {
       await leaveLeaderboard();
       return;
     }
-    await toggleLeaderboardMembership();
+    await joinLeaderboardWithPrompt();
   });
 
   badgeFrontMetricSelect?.addEventListener("change", async () => {
@@ -1347,6 +1337,11 @@ async function toggleLeaderboardMembership() {
   await refreshLeaderboardIfVisible();
 }
 
+async function joinLeaderboardWithPrompt() {
+  if (!window.confirm(t("leaderboardJoinConfirm"))) return;
+  await toggleLeaderboardMembership();
+}
+
 async function leaveLeaderboard() {
   if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
   leaderboardStatus = await window.bonsai.logoutLeaderboard();
@@ -1368,14 +1363,6 @@ function setSettingsOpen(open: boolean) {
   if (!settingsModal) return;
   settingsModal.classList.toggle("open", open);
   settingsModal.setAttribute("aria-hidden", String(!open));
-}
-
-function openLeaderboardSettings() {
-  setSettingsOpen(true);
-  window.requestAnimationFrame(() => {
-    leaderboardMembershipButton?.scrollIntoView({ block: "center", behavior: "smooth" });
-    leaderboardMembershipButton?.focus({ preventScroll: true });
-  });
 }
 
 async function exportShareImage() {
@@ -3390,19 +3377,6 @@ function renderLeaderboardSettings() {
   const renderKey = leaderboardSettingsSignature();
   if (renderKey === leaderboardSettingsRenderKey) return;
   leaderboardSettingsRenderKey = renderKey;
-  if (leaderboardMembershipButton) {
-    leaderboardMembershipButton.disabled =
-      leaderboardStatus.syncing ||
-      !leaderboardStatus.configured ||
-      (leaderboardStatus.joined && !leaderboardStatus.authenticated);
-    leaderboardMembershipButton.textContent = leaderboardStatus.joined ? t("leaveLeaderboard") : t("joinLeaderboard");
-    leaderboardMembershipButton.classList.toggle("danger-button", leaderboardStatus.joined);
-  }
-  if (leaderboardSettingsSyncButton) {
-    leaderboardSettingsSyncButton.disabled =
-      leaderboardStatus.syncing || !leaderboardStatus.configured || !leaderboardStatus.joined;
-    leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncLeaderboardNow");
-  }
   if (leaderboardPageRefreshButton) {
     leaderboardPageRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
     leaderboardPageRefreshButton.textContent = leaderboardLoading
