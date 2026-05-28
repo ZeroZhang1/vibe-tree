@@ -1,19 +1,19 @@
 # Mac Handoff: Multi-device Tree Sync
 
-Date: 2026-05-27
+Date: 2026-05-28
 Branch: `codex/multi-device-tree-sync`
 
 This branch is a handoff snapshot for continuing real multi-device Vibe Tree sync on a Mac.
 
-Latest Mac checkpoint: 2026-05-27, after the first privacy and first-run hardening pass.
+Latest Mac checkpoint: 2026-05-28, after the cloud sync, model aggregate, leaderboard UX, and device-only cloud tree passes.
 
 ## Product Goal
 
 The desired user flow is:
 
-1. A first-time user chooses either `Grow a new tree` or `Continue existing tree`.
-2. `Grow a new tree` starts a local tree and can optionally enable cloud sync later.
-3. `Continue existing tree` signs in with the same GitHub account, pulls the cloud tree archive, and keeps growing the same tree across Windows and macOS.
+1. A first-time user chooses either `新养一棵树` / `Grow a new tree` or `同步云端小树` / `Sync cloud tree`.
+2. `新养一棵树` starts counting only new token events created after the choice and can optionally enable cloud sync later.
+3. `同步云端小树` signs in with the same GitHub account, pulls the cloud tree archive, and keeps growing the same tree across Windows and macOS.
 4. Sync must not upload prompts, replies, code, files, local paths, or session contents.
 
 The synced payload should stay limited to:
@@ -21,10 +21,12 @@ The synced payload should stay limited to:
 - Token ledger events.
 - A local device id.
 - Achievement unlock state.
+- Coarse device summary such as `Mac`, `Windows`, last sync time, event count, and token contribution.
+- Aggregate daily model stats grouped by device/source/model.
 
 ## Current State
 
-This branch adds the first implementation pass for cloud tree sync, plus a Mac-side hardening pass:
+This branch adds the current implementation pass for cloud tree sync, plus Mac/Windows hardening:
 
 - `LedgerEntry` now supports `deviceId`.
 - `Settings` now includes:
@@ -41,7 +43,7 @@ This branch adds the first implementation pass for cloud tree sync, plus a Mac-s
   - `enableCloudSync`
   - `joinExistingTree`
   - `syncCloudTree`
-- Renderer has a first-run choice modal and a settings panel section named `One tree, many devices`.
+- Renderer has a first-run choice modal and a settings panel section named `同养一棵树` / `One tree, many devices`.
 - Cloudflare Worker has new routes:
   - `GET /api/tree`
   - `POST /api/tree/events`
@@ -51,12 +53,15 @@ This branch adds the first implementation pass for cloud tree sync, plus a Mac-s
   - `tree_achievements`
   - `tree_devices`
   - `tree_model_stats`
-- First-run usage watchers now wait for the user to choose `Grow a new tree` or `Continue existing tree`, so old local history is not imported before consent.
-- `Grow a new tree` resets `installedAt` to the choice time and only counts new local token events.
-- `Continue existing tree` now requires a non-empty remote tree; otherwise it keeps first-run mode active and shows an error.
+- First-run usage watchers now wait for the user to choose `新养一棵树` or `同步云端小树`, so old local history is not imported before consent.
+- `新养一棵树` resets `installedAt` to the choice time and only counts new local token events.
+- `同步云端小树` requires an existing remote cloud tree; otherwise it keeps first-run mode active and shows an error.
+- A remote tree counts as existing when it has token events, achievements, device snapshots, or aggregate model stats. This lets a second device join a cloud tree that was just enabled on the first device before any token was produced.
 - Cloud tree sync strips local agent/note/trigger details and does not upload prompt, reply, session text, file content, or local paths.
 - Pulled cloud events preserve safe source categories such as `codex-session`, `openclaw-session`, and `claude-session`, so remote growth is merged into its real source rather than shown as a separate Cloud Tree source.
 - Per-event model/provider remains local by default. Aggregate model sync uploads only daily totals grouped by device/source/model, not individual sessions.
+- The homepage data-source model share falls back to `未归类模型` / `Uncategorized model` instead of showing raw `unknown`.
+- The leaderboard page owns `同步并刷新`, `加入排行`, and `退出排行榜`; settings keeps only public preference and data-safety copy.
 - Leaving the leaderboard now deletes only remote leaderboard daily totals/preferences and keeps the shared cloud tree archive intact.
 - A local contract verification script simulates Windows and Mac sharing one fake cloud tree.
 
@@ -99,10 +104,10 @@ This branch adds the first implementation pass for cloud tree sync, plus a Mac-s
   Adds cloud tree device summaries and aggregate model-stat tables.
 
 - `scripts/verify-cloud-sync.mjs`
-  Verifies two-device merge, de-dupe, empty remote-tree guard, leaderboard leave safety, and the cloud payload privacy whitelist against a fake cloud API.
+  Verifies two-device merge, zero-token cloud tree join, de-dupe, authoritative cloud tokens, empty remote-tree guard, leaderboard leave safety, and the cloud payload privacy whitelist against a fake cloud API.
 
 - `server/leaderboard-worker/scripts/verify-worker-api.mjs`
-  Starts a local Wrangler Worker with local D1 and verifies `/api/tree`, `/api/tree/events`, `/api/tree/achievements`, and leaderboard leave behavior over HTTP.
+  Starts a local Wrangler Worker with local D1 and verifies `/api/tree`, device-only cloud trees, `/api/tree/events`, `/api/tree/achievements`, and leaderboard leave behavior over HTTP.
 
 ## Running On Mac
 
@@ -178,12 +183,12 @@ VIBE_TREE_LEADERBOARD_API_URL=https://your-worker.workers.dev npm run start
 
 - The current branch is not a finished release. It is a checkpoint for continuing on Mac.
 - The first-run modal previously appeared for an existing Windows user while old dev processes were still serving stale renderer assets. If UI changes do not appear, stop all old Vite/Electron processes and restart from a clean build.
-- `Continue existing tree` requires GitHub auth and a Worker with the new `/api/tree` routes deployed. Without that, the UI should show an error rather than silently doing nothing.
-- `cloudStatus.hasRemoteTree` is still primitive and mostly based on local sync state. `Continue existing tree` validates the remote tree during join, but a nicer onboarding flow could query remote state before the user clicks.
+- `同步云端小树` requires GitHub auth and a Worker with the new `/api/tree` routes deployed. Without that, the UI should show an error rather than silently doing nothing.
+- The first-run flow still validates remote tree existence after click/login. A later nicety could preflight the remote account state before the user chooses.
 - Remote sync currently merges entries by event id and achievements by achievement id. It now stores per-device contribution summaries, but it still does not provide a full conflict UI or reset/relink flow.
 - Cloud tree sync reuses the leaderboard auth/profile. This is convenient but product copy should keep leaderboard publishing separate from private tree sync.
 - The Worker README still describes leaderboard as the main feature. It should be updated if this branch becomes the main sync architecture.
-- The first-run copy should be revisited once the final cloud sync behavior is decided.
+- Full packaged release validation is still separate from this branch-level sync/UX verification.
 
 ## Verification Done On Mac
 
@@ -205,6 +210,9 @@ Additional runtime checks:
 - No `usage-events.jsonl` was created before the first-run choice.
 - Clicking `Grow a new tree` wrote `treeStartMode: "new"` and reset `usage-meta.json` `installedAt` to the click time.
 - The source/history UI no longer shows `Cloud Tree` for an account with no cloud sync and no cloud entries.
+- The homepage source list merges synced remote data into `Codex`, `OpenClaw`, and `Claude Code`; it does not show a separate cloud source row.
+- A remote source that is not installed locally is labeled as data from another device rather than as a broken local install.
+- The leaderboard page shows `同步并刷新` for joined users and keeps join/leave actions on the leaderboard page.
 - The D1 privacy migration was syntax-tested with local `sqlite3`; old private columns were dropped while token/device/achievement data remained.
 
 ## Verification Done On Windows
@@ -227,10 +235,10 @@ If a UI appears unchanged after rebuild, stop all project-local `node`, `electro
 
 ## Suggested Mac Next Steps
 
-1. Deploy the Worker and run both `schema.sql` and `migrations/20260527_trim_cloud_tree_privacy.sql` against D1.
+1. Deploy the Worker and run `schema.sql`, `migrations/20260527_trim_cloud_tree_privacy.sql`, and `migrations/20260528_cloud_tree_device_model_stats.sql` against D1.
 2. Test GitHub login on macOS and confirm `leaderboard-auth.json` is written.
-3. On Windows, choose/enable cloud sync and verify `/api/tree/events` receives only token counts, device id, and timestamps.
-4. On Mac, use `Continue existing tree` and verify Windows entries are pulled into local `usage-events.jsonl` as `cloud-sync`.
-5. Generate a new Mac token event, sync, then verify Windows pulls it back without duplicate entries.
+3. On Windows, choose/enable cloud sync and verify `/api/tree/events` receives only token counts, safe source, device id, timestamps, achievements, and aggregate model stats.
+4. On Mac, use `同步云端小树` and verify Windows entries are pulled into local `usage-events.jsonl` with original safe source categories and `syncedFromCloud: true`.
+5. Generate a new Mac token event, sync, then verify Windows pulls it back without duplicate entries or cache-read inflation.
 6. Confirm achievements merge without replaying unlock toast storms.
-7. Decide whether to add remote-tree discovery before the first-run button click; current behavior validates only after click/login.
+7. Verify the zero-token cloud tree edge case: enable sync on one device before producing token, then join from another device.
