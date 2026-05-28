@@ -1338,12 +1338,34 @@ async function toggleLeaderboardMembership() {
 }
 
 async function joinLeaderboardWithPrompt() {
-  if (!window.confirm(t("leaderboardJoinConfirm"))) return;
+  const confirmed = await showAppConfirm({
+    title: t("leaderboardJoinConfirmTitle"),
+    body: t("leaderboardJoinConfirmBody"),
+    confirmText: t("leaderboardJoinConfirmAction"),
+    checkbox: {
+      label: t("leaderboardJoinPreferenceTitle"),
+      description: t("leaderboardJoinPreferenceCopy"),
+      checked: ledger?.settings.leaderboardPreferencesPublic === true,
+    },
+  });
+  if (!confirmed.confirmed) return;
+  if (ledger && confirmed.checked !== ledger.settings.leaderboardPreferencesPublic) {
+    ledger = await window.bonsai.updateSettings({
+      leaderboardPreferencesPublic: confirmed.checked,
+    });
+    render();
+  }
   await toggleLeaderboardMembership();
 }
 
 async function leaveLeaderboard() {
-  if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
+  const confirmed = await showAppConfirm({
+    title: t("leaderboardLeaveConfirmTitle"),
+    body: t("leaderboardLeaveConfirmBody"),
+    confirmText: t("leaderboardLeaveConfirmAction"),
+    tone: "danger",
+  });
+  if (!confirmed.confirmed) return;
   leaderboardStatus = await window.bonsai.logoutLeaderboard();
   leaderboardData = { range: leaderboardRange, entries: [] };
   clearLeaderboardCache();
@@ -1351,6 +1373,81 @@ async function leaveLeaderboard() {
   leaderboardRenderKey = "";
   renderLeaderboardSettings();
   renderLeaderboard();
+}
+
+function showAppConfirm(options: {
+  title: string;
+  body: string;
+  confirmText: string;
+  cancelText?: string;
+  tone?: "normal" | "danger";
+  checkbox?: {
+    label: string;
+    description?: string;
+    checked?: boolean;
+  };
+}) {
+  return new Promise<{ confirmed: false } | { confirmed: true; checked: boolean }>((resolve) => {
+    const existing = document.querySelector(".app-confirm-modal");
+    if (existing) existing.remove();
+
+    const checkboxHtml = options.checkbox
+      ? `
+        <label class="app-confirm-check">
+          <input class="app-confirm-checkbox" type="checkbox"${options.checkbox.checked ? " checked" : ""} />
+          <span>
+            <strong>${escapeHtml(options.checkbox.label)}</strong>
+            ${options.checkbox.description ? `<small>${escapeHtml(options.checkbox.description)}</small>` : ""}
+          </span>
+        </label>
+      `
+      : "";
+    const modal = document.createElement("section");
+    modal.className = "app-confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "appConfirmTitle");
+    modal.innerHTML = `
+      <div class="app-confirm-backdrop"></div>
+      <article class="app-confirm-panel">
+        <header>
+          <p class="eyebrow">${escapeHtml(t("globalLeaderboard"))}</p>
+          <h3 id="appConfirmTitle">${escapeHtml(options.title)}</h3>
+          <button class="icon-button app-confirm-close" type="button" aria-label="${escapeHtml(t("close"))}">×</button>
+        </header>
+        <p>${escapeHtml(options.body)}</p>
+        ${checkboxHtml}
+        <footer>
+          <button class="secondary-button app-confirm-cancel" type="button">${escapeHtml(options.cancelText ?? t("cancel"))}</button>
+          <button class="${options.tone === "danger" ? "secondary-button danger-button" : "primary-button"} app-confirm-ok" type="button">${escapeHtml(options.confirmText)}</button>
+        </footer>
+      </article>
+    `;
+    document.body.append(modal);
+
+    let settled = false;
+    const settle = (value: { confirmed: false } | { confirmed: true; checked: boolean }) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown);
+      modal.remove();
+      resolve(value);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") settle({ confirmed: false });
+    };
+    document.addEventListener("keydown", onKeyDown);
+    modal.querySelector(".app-confirm-backdrop")?.addEventListener("click", () => settle({ confirmed: false }));
+    modal.querySelector(".app-confirm-close")?.addEventListener("click", () => settle({ confirmed: false }));
+    modal.querySelector(".app-confirm-cancel")?.addEventListener("click", () => settle({ confirmed: false }));
+    modal.querySelector(".app-confirm-ok")?.addEventListener("click", () => {
+      settle({
+        confirmed: true,
+        checked: modal.querySelector<HTMLInputElement>(".app-confirm-checkbox")?.checked === true,
+      });
+    });
+    modal.querySelector<HTMLButtonElement>(".app-confirm-ok")?.focus();
+  });
 }
 
 async function syncLeaderboard(options: { force?: boolean } = {}) {

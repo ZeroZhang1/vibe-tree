@@ -1535,6 +1535,110 @@ html[lang^="en"] .side-tabs {
   gap: 10px;
 }
 
+.app-confirm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.app-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 12, 18, 0.58);
+  backdrop-filter: blur(3px);
+}
+
+.app-confirm-panel {
+  position: relative;
+  width: min(430px, calc(100vw - 40px));
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card), 0 0 0 1px color-mix(in srgb, var(--leaf) 10%, transparent);
+}
+
+.app-confirm-panel header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 12px;
+  align-items: start;
+}
+
+.app-confirm-panel header .eyebrow {
+  grid-column: 1;
+  margin: 0;
+}
+
+.app-confirm-panel h3 {
+  grid-column: 1;
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.app-confirm-close {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.app-confirm-panel p:not(.eyebrow) {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.app-confirm-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-light) 82%, transparent);
+  color: var(--ink);
+}
+
+.app-confirm-check input {
+  width: 15px;
+  min-height: 15px;
+  margin-top: 1px;
+  padding: 0;
+  accent-color: var(--leaf);
+}
+
+.app-confirm-check span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.app-confirm-check strong {
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.app-confirm-check small {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.app-confirm-panel footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .leaderboard-settings {
   display: grid;
   gap: 8px;
