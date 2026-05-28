@@ -93,6 +93,8 @@ electron_mirror=https://npmmirror.com/mirrors/electron/
 
 Vibe Tree 优先做本地统计。默认不会上传代码、提示词、文件名、路径、会话内容或完整小时热力图。
 
+完整说明见 [PRIVACY.md](PRIVACY.md)。
+
 加入排行榜时，默认只同步每日 token 总量和本地首次使用日期，用于计算今日、7 天、30 天和全部榜单。开启「公开使用偏好」后，才会额外上传聚合后的四项信息：
 
 - 最常用 Agent
