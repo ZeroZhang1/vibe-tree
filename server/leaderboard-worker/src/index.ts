@@ -9,7 +9,7 @@ export interface Env {
   SESSION_SECRET: string;
 }
 
-type LeaderboardRange = "today" | "7d" | "30d" | "all";
+type LeaderboardRange = "24h" | "7d" | "30d" | "all";
 type UsagePreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
 type RateLimitName = "PUBLIC_READ_RATE_LIMITER" | "AUTH_RATE_LIMITER" | "WRITE_RATE_LIMITER";
 type SecurityEventType =
@@ -22,9 +22,11 @@ type SecurityEventType =
 
 const MAX_DAILY_ACCEPTED_TOKENS = 1_000_000_000_000_000;
 const MAX_BACKFILL_DAYS = 30;
+const MAX_HOURLY_BACKFILL_HOURS = 72;
+const LEGACY_DAILY_FALLBACK_HOURS = 26;
 const SYNC_COOLDOWN_SECONDS = 30;
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
-const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+const LEADERBOARD_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
 
 interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -398,9 +400,11 @@ async function getMe(request: Request, env: Env) {
 async function deleteMe(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   await ensureCloudTreeTables(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_events WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_achievements WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_devices WHERE user_id = ?").bind(user.userId),
@@ -418,8 +422,10 @@ async function deleteMe(request: Request, env: Env) {
 async function leaveLeaderboard(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
   ]);
@@ -604,6 +610,7 @@ async function syncDailyUsage(request: Request, env: Env) {
   const body = await request.json().catch(() => undefined) as
     | {
         days?: Array<{ date?: string; tokens?: number; xp?: number }>;
+        hours?: Array<{ hourStartUtc?: string; hourStart?: string; tokens?: number; xp?: number }>;
         appVersion?: string;
         usageStartDate?: string;
         forceSync?: boolean;
@@ -613,13 +620,17 @@ async function syncDailyUsage(request: Request, env: Env) {
     | undefined;
   if (body?.forceSync !== true) await enforceSyncCooldown(user.userId, env);
   const days = Array.isArray(body?.days) ? body.days.slice(0, MAX_BACKFILL_DAYS) : [];
+  const hasHourlyUsage = Array.isArray(body?.hours);
+  const hours = hasHourlyUsage ? body.hours?.slice(0, MAX_HOURLY_BACKFILL_HOURS + 2) ?? [] : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
   const usageStartDate = normalizeUsageStartDate(body?.usageStartDate);
   const usagePreferencesPublic = body?.usagePreferencesPublic === true;
   const usagePreferenceInput = Array.isArray(body?.usagePreferences) ? body.usagePreferences : [];
   const now = new Date().toISOString();
   const syncWindow = dailySyncWindow(usageStartDate);
+  const hourWindow = hourlySyncWindow(new Date());
   const normalizedDays = normalizeDailyUsageRows(days, syncWindow);
+  const normalizedHours = hasHourlyUsage ? normalizeHourlyUsageRows(hours, hourWindow) : [];
   const preferenceRows = usagePreferencesPublic ? normalizeUsagePreferenceRows(usagePreferenceInput) : [];
   const statements = normalizedDays.map((day) =>
     env.DB.prepare(
@@ -630,6 +641,16 @@ async function syncDailyUsage(request: Request, env: Env) {
          app_version = excluded.app_version,
          updated_at = excluded.updated_at`,
     ).bind(user.userId, day.date, day.xp, appVersion, now),
+  );
+  const hourlyStatements = normalizedHours.map((hour) =>
+    env.DB.prepare(
+      `INSERT INTO hourly_usage (user_id, hour_start_utc, tokens, app_version, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, hour_start_utc) DO UPDATE SET
+         tokens = excluded.tokens,
+         app_version = excluded.app_version,
+         updated_at = excluded.updated_at`,
+    ).bind(user.userId, hour.hourStartUtc, hour.tokens, appVersion, now),
   );
   const preferenceStatements = preferenceRows.map((preference) =>
     env.DB.prepare(
@@ -662,14 +683,24 @@ async function syncDailyUsage(request: Request, env: Env) {
   );
 
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date >= ? AND date <= ?")
       .bind(user.userId, syncWindow.earliest, syncWindow.latest),
+    ...(hasHourlyUsage
+      ? [
+          env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ? AND hour_start_utc >= ? AND hour_start_utc <= ?")
+            .bind(user.userId, hourWindow.earliest, hourWindow.latest),
+          env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ? AND hour_start_utc < ?")
+            .bind(user.userId, hourWindow.earliest),
+        ]
+      : []),
     ...(usageStartDate
       ? [env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date < ?").bind(user.userId, usageStartDate)]
       : []),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     ...statements,
+    ...hourlyStatements,
     ...preferenceStatements,
     env.DB.prepare(
       `INSERT INTO sync_limits (user_id, last_synced_at)
@@ -681,6 +712,7 @@ async function syncDailyUsage(request: Request, env: Env) {
     {
       ok: true,
       synced: statements.length,
+      syncedHours: hourlyStatements.length,
       syncedPreferences: preferenceStatements.length,
       leaderboardType: "community",
       usageStartDate,
@@ -731,6 +763,24 @@ async function ensureUsagePreferencesTable(env: Env) {
       )`,
     ),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_usage_preferences_user ON usage_preferences(user_id)"),
+  ]);
+}
+
+async function ensureHourlyUsageTable(env: Env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS hourly_usage (
+        user_id TEXT NOT NULL,
+        hour_start_utc TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, hour_start_utc),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour ON hourly_usage(hour_start_utc)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_user ON hourly_usage(user_id)"),
   ]);
 }
 
@@ -1066,6 +1116,35 @@ function normalizeDailyUsageRows(
   }));
 }
 
+function normalizeHourlyUsageRows(
+  hours: Array<{ hourStartUtc?: string; hourStart?: string; tokens?: number; xp?: number }>,
+  window: { earliest: string; latest: string },
+) {
+  const byHour = new Map<string, number>();
+
+  for (const hour of hours) {
+    const hourStartUtc = normalizeHourStartUtc(hour.hourStartUtc ?? hour.hourStart);
+    if (!hourStartUtc || hourStartUtc < window.earliest || hourStartUtc > window.latest) continue;
+
+    const rawTokens = Math.round(Number(hour.tokens ?? hour.xp));
+    if (!Number.isFinite(rawTokens) || rawTokens < 0) {
+      throw new HttpError(400, "Hourly tokens must be a non-negative integer.", {}, "invalid_payload");
+    }
+    if (rawTokens > MAX_DAILY_ACCEPTED_TOKENS) {
+      throw new HttpError(400, `Hourly tokens are above the accepted safety limit of ${MAX_DAILY_ACCEPTED_TOKENS}.`, {
+        safetyMaxDailyTokens: MAX_DAILY_ACCEPTED_TOKENS,
+      }, "invalid_payload");
+    }
+
+    byHour.set(hourStartUtc, Math.max(byHour.get(hourStartUtc) ?? 0, rawTokens));
+  }
+
+  return [...byHour.entries()].map(([hourStartUtc, tokens]) => ({
+    hourStartUtc,
+    tokens,
+  }));
+}
+
 function normalizeUsagePreferenceRows(rawRows: unknown[]) {
   const rows = new Map<LeaderboardRange, UsagePreferenceRow>();
   for (const raw of rawRows.slice(0, 4)) {
@@ -1112,14 +1191,18 @@ function dailySyncWindow(usageStartDate: string | undefined) {
 
 async function getLeaderboard(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   const url = new URL(request.url);
+  const rawRange = url.searchParams.get("range");
   const range = normalizeRange(url.searchParams.get("range"));
   const requestUser = await optionalAuth(request, env);
-  return json(await leaderboardDataForRange(range, requestUser, env, new Date().toISOString()), env);
+  const data = await leaderboardDataForRange(range, requestUser, env, new Date().toISOString());
+  return json(rawRange === "today" ? { ...data, range: "today" } : data, env);
 }
 
 async function getLeaderboards(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   const requestUser = await optionalAuth(request, env);
   const updatedAt = new Date().toISOString();
   const pairs = await Promise.all(
@@ -1127,12 +1210,16 @@ async function getLeaderboards(request: Request, env: Env) {
       async (range) => [range, await leaderboardDataForRange(range, requestUser, env, updatedAt)] as const,
     ),
   );
+  const ranges = Object.fromEntries(pairs) as Record<
+    LeaderboardRange,
+    Awaited<ReturnType<typeof leaderboardDataForRange>>
+  >;
   return json(
     {
-      ranges: Object.fromEntries(pairs) as Record<
-        LeaderboardRange,
-        Awaited<ReturnType<typeof leaderboardDataForRange>>
-      >,
+      ranges: {
+        today: { ...ranges["24h"], range: "today" },
+        ...ranges,
+      },
       updatedAt,
     },
     env,
@@ -1145,59 +1232,119 @@ async function leaderboardDataForRange(
   env: Env,
   updatedAt: string,
 ) {
-  const query =
-    range === "all"
-      ? `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
-           SUM(d.xp) AS tokens,
-           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
-           p.favorite_agent_label AS favoriteAgentLabel,
-           p.favorite_agent_percent AS favoriteAgentPercent,
-           p.favorite_model AS favoriteModel,
-           p.favorite_period AS favoritePeriod,
-           p.favorite_period_start AS favoritePeriodStart,
-           p.favorite_period_end AS favoritePeriodEnd,
-           p.peak_tokens_per_minute AS peakTokensPerMinute,
-           p.updated_at AS preferenceUpdatedAt
+  let result: D1Result<Record<string, unknown>>;
+  if (range === "all") {
+    result = await env.DB.prepare(
+      `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+         SUM(d.xp) AS tokens,
+         (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+         p.favorite_agent_label AS favoriteAgentLabel,
+         p.favorite_agent_percent AS favoriteAgentPercent,
+         p.favorite_model AS favoriteModel,
+         p.favorite_period AS favoritePeriod,
+         p.favorite_period_start AS favoritePeriodStart,
+         p.favorite_period_end AS favoritePeriodEnd,
+         p.peak_tokens_per_minute AS peakTokensPerMinute,
+         p.updated_at AS preferenceUpdatedAt
+       FROM daily_usage d
+       JOIN users u ON u.user_id = d.user_id
+       LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(range).all<Record<string, unknown>>();
+  } else if (range === "24h") {
+    const hourWindow = rollingLeaderboardHourWindow(new Date());
+    const currentWindow = currentLocalDateWindow(new Date());
+    const legacyUpdatedAfter = addUtcHours(floorUtcHour(new Date()), -LEGACY_DAILY_FALLBACK_HOURS).toISOString();
+    result = await env.DB.prepare(
+      `WITH hourly_any AS (
+         SELECT DISTINCT user_id FROM hourly_usage
+       ),
+       hourly_totals AS (
+         SELECT user_id, SUM(tokens) AS tokens
+         FROM hourly_usage
+         WHERE hour_start_utc >= ? AND hour_start_utc <= ?
+         GROUP BY user_id
+       ),
+       legacy_current_date AS (
+         SELECT d.user_id, MAX(d.date) AS currentDate
          FROM daily_usage d
-         JOIN users u ON u.user_id = d.user_id
-         LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
-         GROUP BY u.user_id
-         HAVING tokens > 0
-         ORDER BY tokens DESC
-         LIMIT 100`
-      : `WITH user_current_date AS (
-           SELECT user_id, MAX(date) AS currentDate
-           FROM daily_usage
-           WHERE date >= ? AND date <= ?
-           GROUP BY user_id
-         )
-         SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
-           SUM(d.xp) AS tokens,
-           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
-           p.favorite_agent_label AS favoriteAgentLabel,
-           p.favorite_agent_percent AS favoriteAgentPercent,
-           p.favorite_model AS favoriteModel,
-           p.favorite_period AS favoritePeriod,
-           p.favorite_period_start AS favoritePeriodStart,
-           p.favorite_period_end AS favoritePeriodEnd,
-           p.peak_tokens_per_minute AS peakTokensPerMinute,
-           p.updated_at AS preferenceUpdatedAt
-         FROM user_current_date c
-         JOIN daily_usage d ON d.user_id = c.user_id
-         JOIN users u ON u.user_id = d.user_id
-         LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
-         WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
-         GROUP BY u.user_id
-         HAVING tokens > 0
-         ORDER BY tokens DESC
-         LIMIT 100`;
-  const currentWindow = currentLocalDateWindow(new Date());
-  const result =
-    range === "all"
-      ? await env.DB.prepare(query).bind(range).all()
-      : await env.DB.prepare(query)
-        .bind(currentWindow.earliest, currentWindow.latest, range, rangeDateModifier(range))
-        .all();
+         LEFT JOIN hourly_any h ON h.user_id = d.user_id
+         WHERE h.user_id IS NULL
+           AND d.date >= ? AND d.date <= ?
+           AND d.updated_at >= ?
+         GROUP BY d.user_id
+       ),
+       legacy_daily AS (
+         SELECT c.user_id, SUM(d.xp) AS tokens
+         FROM legacy_current_date c
+         JOIN daily_usage d ON d.user_id = c.user_id AND d.date = c.currentDate
+         GROUP BY c.user_id
+       ),
+       range_totals AS (
+         SELECT user_id, tokens FROM hourly_totals
+         UNION ALL
+         SELECT user_id, tokens FROM legacy_daily
+       )
+       SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+         SUM(r.tokens) AS tokens,
+         (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+         p.favorite_agent_label AS favoriteAgentLabel,
+         p.favorite_agent_percent AS favoriteAgentPercent,
+         p.favorite_model AS favoriteModel,
+         p.favorite_period AS favoritePeriod,
+         p.favorite_period_start AS favoritePeriodStart,
+         p.favorite_period_end AS favoritePeriodEnd,
+         p.peak_tokens_per_minute AS peakTokensPerMinute,
+         p.updated_at AS preferenceUpdatedAt
+       FROM range_totals r
+       JOIN users u ON u.user_id = r.user_id
+       LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(
+      hourWindow.earliest,
+      hourWindow.latest,
+      currentWindow.earliest,
+      currentWindow.latest,
+      legacyUpdatedAfter,
+      range,
+    ).all<Record<string, unknown>>();
+  } else {
+    const currentWindow = currentLocalDateWindow(new Date());
+    result = await env.DB.prepare(
+      `WITH user_current_date AS (
+         SELECT user_id, MAX(date) AS currentDate
+         FROM daily_usage
+         WHERE date >= ? AND date <= ?
+         GROUP BY user_id
+       )
+       SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+         SUM(d.xp) AS tokens,
+         (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+         p.favorite_agent_label AS favoriteAgentLabel,
+         p.favorite_agent_percent AS favoriteAgentPercent,
+         p.favorite_model AS favoriteModel,
+         p.favorite_period AS favoritePeriod,
+         p.favorite_period_start AS favoritePeriodStart,
+         p.favorite_period_end AS favoritePeriodEnd,
+         p.peak_tokens_per_minute AS peakTokensPerMinute,
+         p.updated_at AS preferenceUpdatedAt
+       FROM user_current_date c
+       JOIN daily_usage d ON d.user_id = c.user_id
+       JOIN users u ON u.user_id = d.user_id
+       LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(currentWindow.earliest, currentWindow.latest, range, rangeDateModifier(range)).all<Record<string, unknown>>();
+  }
   const entries = (result.results || []).map((row, index) => ({
     rank: index + 1,
     userId: String(row.userId),
@@ -1415,11 +1562,13 @@ function isDateKey(value: string) {
 }
 
 function normalizeRange(value: string | null): LeaderboardRange {
-  return value === "today" || value === "30d" || value === "all" ? value : "7d";
+  if (value === "today" || value === "24h") return "24h";
+  return value === "30d" || value === "all" ? value : "7d";
 }
 
 function normalizePreferenceRange(value: unknown): LeaderboardRange | undefined {
-  return value === "today" || value === "7d" || value === "30d" || value === "all" ? value : undefined;
+  if (value === "today" || value === "24h") return "24h";
+  return value === "7d" || value === "30d" || value === "all" ? value : undefined;
 }
 
 function normalizePreferencePeriod(value: unknown): UsagePreferencePeriod | undefined {
@@ -1458,10 +1607,25 @@ function normalizePreferenceCount(value: unknown) {
 }
 
 function rangeDateModifier(range: LeaderboardRange) {
-  if (range === "today") return "0 days";
   if (range === "30d") return "-29 days";
   if (range === "7d") return "-6 days";
   return "-99999 days";
+}
+
+function rollingLeaderboardHourWindow(now: Date) {
+  const latestHour = floorUtcHour(now);
+  return {
+    earliest: addUtcHours(latestHour, -23).toISOString(),
+    latest: latestHour.toISOString(),
+  };
+}
+
+function hourlySyncWindow(now: Date) {
+  const latestHour = addUtcHours(floorUtcHour(now), 1);
+  return {
+    earliest: addUtcHours(latestHour, -MAX_HOURLY_BACKFILL_HOURS).toISOString(),
+    latest: latestHour.toISOString(),
+  };
 }
 
 function currentLocalDateWindow(now: Date) {
@@ -1476,6 +1640,26 @@ function normalizeUsageStartDate(value: unknown) {
   if (typeof value !== "string" || !isDateKey(value)) return undefined;
   const latest = addDays(localDateKey(new Date()), 1);
   return value <= latest ? value : undefined;
+}
+
+function normalizeHourStartUtc(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  const hourStartUtc = floorUtcHour(date).toISOString();
+  return value === hourStartUtc || value === hourStartUtc.replace(".000Z", "Z") ? hourStartUtc : undefined;
+}
+
+function floorUtcHour(date: Date) {
+  const hour = new Date(date);
+  hour.setUTCMinutes(0, 0, 0);
+  return hour;
+}
+
+function addUtcHours(date: Date, hours: number) {
+  const next = new Date(date);
+  next.setUTCHours(next.getUTCHours() + hours);
+  return next;
 }
 
 function maxDateKey(left: string, right: string) {

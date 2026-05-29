@@ -98,7 +98,7 @@ When "One tree, many devices" is enabled, it syncs only the growth data needed f
 
 See [PRIVACY.md](PRIVACY.md) for the full data-handling details.
 
-When joining the leaderboard, it syncs daily token totals and the local first-use date so the service can compute today, 7-day, 30-day, and all-time rankings. If "Public usage preferences" is enabled, it additionally syncs four aggregated fields:
+When joining the leaderboard, it syncs daily token totals, recent hourly token aggregates, and the local first-use date so the service can compute 24h, 7-day, 30-day, and all-time rankings. If "Public usage preferences" is enabled, it additionally syncs four aggregated fields:
 
 - Favorite agent
 - Favorite model

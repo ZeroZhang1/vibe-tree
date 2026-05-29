@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS daily_usage (
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS hourly_usage (
+  user_id TEXT NOT NULL,
+  hour_start_utc TEXT NOT NULL,
+  tokens INTEGER NOT NULL,
+  app_version TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, hour_start_utc),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS tree_events (
   user_id TEXT NOT NULL,
   event_id TEXT NOT NULL,
@@ -127,6 +137,8 @@ CREATE TABLE IF NOT EXISTS security_events (
 
 CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date);
 CREATE INDEX IF NOT EXISTS idx_daily_usage_user ON daily_usage(user_id);
+CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour ON hourly_usage(hour_start_utc);
+CREATE INDEX IF NOT EXISTS idx_hourly_usage_user ON hourly_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_tree_events_user_created ON tree_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tree_events_device ON tree_events(user_id, device_id);
 CREATE INDEX IF NOT EXISTS idx_tree_achievements_user ON tree_achievements(user_id);

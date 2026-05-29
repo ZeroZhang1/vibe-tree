@@ -165,7 +165,7 @@ let leaderboardData: LeaderboardData = {
   entries: [],
 };
 let leaderboardLoadedRange: LeaderboardRange | null = null;
-const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+const LEADERBOARD_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
 const leaderboardDataCache = new Map<LeaderboardRange, LeaderboardData>();
 let leaderboardDataCacheSavedAt: number | null = null;
 let leaderboardLoading = false;
@@ -435,9 +435,13 @@ function hydrateLeaderboardCache() {
     if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > LEADERBOARD_CACHE_DISPLAY_MAX_AGE_MS) return;
     if (!parsed.ranges || typeof parsed.ranges !== "object") return;
 
+    const rawRanges = parsed.ranges as Record<string, unknown>;
     leaderboardDataCache.clear();
     for (const range of LEADERBOARD_RANGES) {
-      const data = (parsed.ranges as Partial<Record<LeaderboardRange, unknown>>)[range];
+      const legacyToday = range === "24h" && rawRanges.today && typeof rawRanges.today === "object"
+        ? { ...(rawRanges.today as Record<string, unknown>), range: "24h" }
+        : undefined;
+      const data = rawRanges[range] ?? legacyToday;
       if (isCacheableLeaderboardData(data, range)) leaderboardDataCache.set(range, data);
     }
     leaderboardDataCacheSavedAt = cachedAt;
@@ -3866,7 +3870,7 @@ function leaderboardPeriodText(period: NonNullable<LeaderboardEntry["usagePrefer
 
 function leaderboardRangeLabel(range: LeaderboardRange) {
   const labels: Record<LeaderboardRange, string> = {
-    today: t("leaderboardToday"),
+    "24h": t("leaderboard24h"),
     "7d": t("leaderboard7d"),
     "30d": t("leaderboard30d"),
     all: t("leaderboardAllTime"),
@@ -4247,7 +4251,8 @@ function normalizeTotalDisplayUnit(value: string): TotalDisplayUnit {
 }
 
 function normalizeLeaderboardRange(value: unknown): LeaderboardRange {
-  return value === "today" || value === "30d" || value === "all" ? value : "7d";
+  if (value === "today" || value === "24h") return "24h";
+  return value === "30d" || value === "all" ? value : "7d";
 }
 
 function formatByUnit(value: number, unit: TotalDisplayUnit) {

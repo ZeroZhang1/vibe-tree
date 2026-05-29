@@ -57,7 +57,7 @@ Vibe Tree 会在 Electron 的应用数据目录中保存本地统计和设置，
 
 - GitHub 用户 ID、用户名、头像 URL、profile URL；
 - 经过哈希处理的排行榜 session token；
-- 每日 token 总量，用于计算今日、7 天、30 天和全部排行榜；
+- 每日 token 总量和近 24h 小时级 token 汇总，用于计算近 24h、7 天、30 天和全部排行榜；
 - app version。
 
 同步请求会发送本地首次使用日期，用于清理安装日前的历史行；也可能包含时区信息。当前 Worker 不会把首次使用日期或时区持久化为独立数据库字段。
@@ -86,8 +86,8 @@ Vibe Tree 会在 Electron 的应用数据目录中保存本地统计和设置，
 
 ### 如何关闭
 
-- **关闭排行榜**：在设置里退出排行榜。退出会请求远端删除你的排行榜账号、session、同步状态、每日 token 数据、公开偏好数据，以及和该用户关联的安全事件。
-- **关闭公开偏好**：关闭“公开使用偏好”开关，并再次同步。之后排行榜只保留每日 token 聚合数据。
+- **关闭排行榜**：在设置里退出排行榜。退出会请求远端删除你的排行榜账号、session、同步状态、排行榜聚合 token 数据、公开偏好数据，以及和该用户关联的安全事件。
+- **关闭公开偏好**：关闭“公开使用偏好”开关，并再次同步。之后排行榜只保留聚合 token 数据。
 - **排除某个 Agent 的统计**：在设置面板的 Agent 路径区域取消勾选对应来源。未勾选的来源不会计入成长、图表或排行榜同步。
 - **控制读取位置**：在设置面板中把某个 Agent 的路径改成你明确选择的目录或文件。
 - **删除本地数据**：退出 Vibe Tree 后删除系统中的 Vibe Tree 应用数据目录。目录名和位置由 Electron / 操作系统决定。
@@ -145,7 +145,7 @@ After joining, the remote service stores:
 
 - GitHub user ID, username, avatar URL, and profile URL;
 - a hashed leaderboard session token;
-- daily token totals used for today, 7-day, 30-day, and all-time rankings;
+- daily token totals and recent hourly token aggregates used for 24h, 7-day, 30-day, and all-time rankings;
 - app version.
 
 Sync requests send the local first-use date to clean rows before the local install date, and may include timezone information. The current Worker does not persist first-use date or timezone as standalone database fields.
@@ -174,8 +174,8 @@ These logs do not include prompts, code, local filenames, local paths, or raw se
 
 ### How To Turn Things Off
 
-- **Leave the leaderboard**: use the settings UI to leave the leaderboard. This requests remote deletion of your leaderboard account, sessions, sync state, daily token rows, public preference rows, and security events linked to that user.
-- **Disable public preferences**: turn off "Public usage preferences" and sync again. The leaderboard will keep only daily token aggregates.
+- **Leave the leaderboard**: use the settings UI to leave the leaderboard. This requests remote deletion of your leaderboard account, sessions, sync state, aggregate leaderboard token rows, public preference rows, and security events linked to that user.
+- **Disable public preferences**: turn off "Public usage preferences" and sync again. The leaderboard will keep only aggregate token rows.
 - **Exclude an agent from stats**: uncheck that source in the Agent Paths settings. Unchecked sources are excluded from growth, charts, and leaderboard sync.
 - **Control source locations**: set an agent path to a directory or file you explicitly choose.
 - **Delete local data**: quit Vibe Tree and remove the Vibe Tree app data directory created by Electron / your operating system.

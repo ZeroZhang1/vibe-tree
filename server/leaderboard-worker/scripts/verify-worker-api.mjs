@@ -181,7 +181,7 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
       usagePreferencesPublic: true,
       usagePreferences: [
         {
-          range: "all",
+          range: "24h",
           favoriteAgent: { label: "Codex", percent: 100 },
           favoriteModel: "private-model",
           favoritePeriod: { id: "morning", startHour: 6, endHour: 12 },
@@ -190,12 +190,15 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
       ],
     },
   });
-  let todayLeaderboard = await requestJson("/api/leaderboard?range=today");
+  let dayLeaderboard = await requestJson("/api/leaderboard?range=today");
   assert(
-    todayLeaderboard.entries?.[0]?.tokens === 4321,
-    "leaderboard today should use a user's latest local daily row, not UTC today plus tomorrow",
+    dayLeaderboard.entries?.[0]?.tokens === 4321,
+    "legacy clients without hourly buckets should still have a recent daily fallback for the 24h leaderboard",
   );
 
+  const currentHour = hourKey(new Date());
+  const previousHour = hourKey(addHours(new Date(), -1));
+  const oldHour = hourKey(addHours(new Date(), -25));
   await requestJson("/api/usage/daily", {
     method: "POST",
     body: {
@@ -206,10 +209,21 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
         { date: utcToday, tokens: 1234 },
         { date: eastOfUtcToday, tokens: 5000 },
       ],
+      hours: [
+        { hourStartUtc: previousHour, tokens: 1111 },
+        { hourStartUtc: currentHour, tokens: 2222 },
+        { hourStartUtc: oldHour, tokens: 999999 },
+      ],
     },
   });
-  todayLeaderboard = await requestJson("/api/leaderboard?range=today");
-  assert(todayLeaderboard.entries?.[0]?.tokens === 5000, "forced leaderboard sync should update the local today row");
+  dayLeaderboard = await requestJson("/api/leaderboard?range=24h");
+  assert(dayLeaderboard.range === "24h", "leaderboard should expose the rolling 24h range");
+  assert(dayLeaderboard.entries?.[0]?.tokens === 3333, "rolling 24h leaderboard should use hourly buckets");
+  dayLeaderboard = await requestJson("/api/leaderboard?range=today");
+  assert(dayLeaderboard.entries?.[0]?.tokens === 3333, "legacy today range should alias to rolling 24h");
+  const leaderboardCollection = await requestJson("/api/leaderboards");
+  assert(leaderboardCollection.ranges?.["24h"]?.entries?.[0]?.tokens === 3333, "leaderboard collection should expose 24h");
+  assert(leaderboardCollection.ranges?.today?.entries?.[0]?.tokens === 3333, "leaderboard collection should keep a legacy today alias");
 
   await assertRejects(
     () =>
@@ -219,6 +233,7 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
           appVersion: "0.5.5-test",
           usageStartDate: utcToday,
           days: [{ date: eastOfUtcToday, tokens: 5678 }],
+          hours: [{ hourStartUtc: currentHour, tokens: 5678 }],
         },
       }),
     "non-forced leaderboard sync should still honor cooldown",
@@ -229,7 +244,7 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assert(cloudTree.summary?.entryCount === 1, "leaving leaderboard must not delete cloud tree events");
   assert(cloudTree.summary?.achievementCount === 1, "leaving leaderboard must not delete cloud tree achievements");
 
-  console.log("Worker API verified: device-only cloud trees, tree sync privacy, achievement privacy, and leaderboard leave safety passed.");
+  console.log("Worker API verified: device-only cloud trees, tree sync privacy, achievement privacy, 24h leaderboard buckets, legacy fallback, and leaderboard leave safety passed.");
 } finally {
   if (devProcess) await terminate(devProcess);
   rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
@@ -399,6 +414,18 @@ function addDays(value, days) {
   const date = new Date(`${value}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return dateKey(date);
+}
+
+function addHours(value, hours) {
+  const date = new Date(value);
+  date.setUTCHours(date.getUTCHours() + hours);
+  return date;
+}
+
+function hourKey(value) {
+  const date = new Date(value);
+  date.setUTCMinutes(0, 0, 0);
+  return date.toISOString();
 }
 
 async function assertRejects(action, message) {

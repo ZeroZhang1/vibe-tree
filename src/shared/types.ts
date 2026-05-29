@@ -19,7 +19,7 @@ export interface LedgerEntry {
 export type AppLanguage = "zh-CN" | "en-US";
 export type UiTheme = "day" | "night" | "soft";
 
-export type LeaderboardRange = "today" | "7d" | "30d" | "all";
+export type LeaderboardRange = "24h" | "7d" | "30d" | "all";
 
 export interface LeaderboardProfile {
   id: string;

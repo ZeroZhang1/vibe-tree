@@ -737,6 +737,10 @@ assert(
   dailyUsageUpload.days.some((day) => day.date === "2026-05-21" && day.tokens === 4200),
   "leaderboard sync should upload older cloud history rows",
 );
+assert(
+  dailyUsageUpload.hours?.some((hour) => typeof hour.hourStartUtc === "string" && hour.tokens >= 0),
+  "leaderboard sync should upload recent hourly rows for the 24h leaderboard",
+);
 const allPreference = dailyUsageUpload.usagePreferences?.find((item) => item.range === "all");
 assert(
   allPreference?.favoriteModel === "remote-favorite-model",
@@ -746,5 +750,5 @@ assert(status.lastSyncedAt, "joining the leaderboard should wait for the first d
 leaderboardDevice.service.stop();
 
 console.log(
-  "Cloud sync contract verified: auth cancellation, two-device merge, zero-token cloud tree join, dedupe, authoritative cloud tokens, empty-account guard, leaderboard leave safety, and privacy payload whitelist passed.",
+  "Cloud sync contract verified: auth cancellation, two-device merge, zero-token cloud tree join, dedupe, authoritative cloud tokens, empty-account guard, hourly leaderboard upload, leaderboard leave safety, and privacy payload whitelist passed.",
 );

@@ -296,6 +296,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         token: auth.token,
         body: {
           days: dailyUsage(),
+          hours: hourlyUsage(),
           appVersion: options.currentAppVersion(),
           usageStartDate: usageStartDate(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -737,6 +738,30 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       });
   }
 
+  function hourlyUsage() {
+    const byHour = new Map<string, number>();
+    const cutoff = new Date();
+    cutoff.setTime(cutoff.getTime() - HOURLY_USAGE_UPLOAD_HOURS * 60 * 60 * 1000);
+
+    for (const entry of ledger().entries) {
+      const createdAt = new Date(entry.createdAt);
+      if (!Number.isFinite(createdAt.getTime()) || createdAt < cutoff) continue;
+      const tokens = options.xpForEntry(entry);
+      if (!tokens) continue;
+      const key = utcHourKey(createdAt);
+      byHour.set(key, (byHour.get(key) ?? 0) + tokens);
+    }
+    const currentHour = utcHourKey(new Date());
+    if (!byHour.has(currentHour)) byHour.set(currentHour, 0);
+
+    return [...byHour.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([hourStartUtc, tokens]) => {
+        const rounded = Math.round(tokens);
+        return { hourStartUtc, tokens: rounded, xp: rounded };
+      });
+  }
+
   function usagePreferences() {
     return LEADERBOARD_PREFERENCE_RANGES.map((range) => {
       const preference = usagePreferenceForRange(range);
@@ -1135,10 +1160,12 @@ function chunkArray<T>(items: T[], size: number) {
 }
 
 function normalizeRange(value: unknown): LeaderboardRange {
-  return value === "today" || value === "30d" || value === "all" ? value : "7d";
+  if (value === "today" || value === "24h") return "24h";
+  return value === "30d" || value === "all" ? value : "7d";
 }
 
-const LEADERBOARD_PREFERENCE_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+const LEADERBOARD_PREFERENCE_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
+const HOURLY_USAGE_UPLOAD_HOURS = 48;
 
 const AGENT_LABELS: Record<string, string> = {
   codex: "Codex",
@@ -1167,10 +1194,20 @@ const PREFERENCE_PERIODS: Array<{
 function preferenceRangeStart(range: LeaderboardRange, now: Date) {
   if (range === "all") return undefined;
   const start = new Date(now);
+  if (range === "24h") {
+    start.setTime(now.getTime() - 24 * 60 * 60 * 1000);
+    return start;
+  }
   start.setHours(0, 0, 0, 0);
   if (range === "7d") start.setDate(start.getDate() - 6);
   if (range === "30d") start.setDate(start.getDate() - 29);
   return start;
+}
+
+function utcHourKey(date: Date) {
+  const hour = new Date(date);
+  hour.setUTCMinutes(0, 0, 0);
+  return hour.toISOString();
 }
 
 function topPreferenceEntry(values: Map<string, number>) {
@@ -1258,9 +1295,12 @@ function normalizeData(value: unknown, fallbackRange: LeaderboardRange): Leaderb
 
 function normalizeCollection(value: unknown): LeaderboardCollection {
   const collection = value as Partial<LeaderboardCollection> | undefined;
-  const rawRanges = collection?.ranges as Partial<Record<LeaderboardRange, unknown>> | undefined;
+  const rawRanges = collection?.ranges as Record<string, unknown> | undefined;
   const ranges = Object.fromEntries(
-    LEADERBOARD_PREFERENCE_RANGES.map((range) => [range, normalizeData(rawRanges?.[range], range)]),
+    LEADERBOARD_PREFERENCE_RANGES.map((range) => [
+      range,
+      normalizeData(rawRanges?.[range] ?? (range === "24h" ? rawRanges?.today : undefined), range),
+    ]),
   ) as Record<LeaderboardRange, LeaderboardData>;
   const updatedAt =
     typeof collection?.updatedAt === "string" && Number.isFinite(Date.parse(collection.updatedAt))

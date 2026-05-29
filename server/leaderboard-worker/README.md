@@ -5,13 +5,13 @@ Cloudflare Worker + D1 backend for two opt-in cloud features:
 - Private shared tree sync, so one GitHub account can keep growing the same tree across devices.
 - Optional global leaderboard publishing.
 
-The desktop app never uploads prompts, replies, code files, local paths, session text, raw notes, or per-event model/provider labels. Shared tree sync sends token ledger events with safe source categories, device id, achievement unlock state, coarse device summaries, and daily aggregate model totals grouped by device/source/model. Leaderboard sync sends daily token totals and the local first-use date; if a user explicitly enables public usage preferences, it also sends range-scoped aggregate preferences only: top agent percentage, top model, preferred coding period, and peak token/min.
+The desktop app never uploads prompts, replies, code files, local paths, session text, raw notes, or per-event model/provider labels. Shared tree sync sends token ledger events with safe source categories, device id, achievement unlock state, coarse device summaries, and daily aggregate model totals grouped by device/source/model. Leaderboard sync sends daily token totals, recent hourly token aggregates, and the local first-use date; if a user explicitly enables public usage preferences, it also sends range-scoped aggregate preferences only: top agent percentage, top model, preferred coding period, and peak token/min.
 
 The first release is community-oriented, not strict cheat-proof scoring. The backend keeps only broad safety rails:
 
 - Daily payloads above `1,000,000,000,000,000` tokens are rejected as obviously invalid dirty data.
 - Each GitHub user can sync at most once every 30 seconds.
-- Leaderboard sync accepts only the latest 30 daily rows, while the database retains older rows that were synced in previous windows for the all-time leaderboard.
+- Leaderboard sync accepts only the latest 30 daily rows plus recent hourly rows for the rolling 24h leaderboard, while the database retains older daily rows that were synced in previous windows for the all-time leaderboard.
 - Cloudflare Worker rate limit bindings throttle leaderboard reads, OAuth entry points, and write APIs per IP and route.
 - Suspicious events are written as structured Workers Logs. High-signal non-rate-limit events are also stored in D1 `security_events` with hashed IP values; rate-limit and normal sync-cooldown hits stay out of D1 to avoid turning button mashing into write load.
 
@@ -45,8 +45,8 @@ Remote tree existence is true when the account has any tree events, achievements
 
 ### Leaderboard
 
-- `POST /api/usage/daily` upserts daily token aggregates and, when opted in, range-scoped aggregate usage preferences.
-- `GET /api/leaderboard?range=today|7d|30d|all` returns the top 100 users plus public preference details when the user opted in.
+- `POST /api/usage/daily` upserts daily token aggregates, recent hourly token aggregates, and, when opted in, range-scoped aggregate usage preferences.
+- `GET /api/leaderboard?range=24h|7d|30d|all` returns the top 100 users plus public preference details when the user opted in. `range=today` is accepted as a legacy alias for `24h`.
 - `GET /api/leaderboards` returns all four leaderboard ranges in one response.
 
 ## Setup
