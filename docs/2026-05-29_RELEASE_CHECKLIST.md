@@ -4,6 +4,8 @@
 
 当前候选分支：`codex/multi-device-tree-sync`
 
+长期发布规则见 `docs/RELEASE_PROCESS.md`；本文件只记录本次 `v0.6.0` 候选版本的具体核对项。
+
 ## 发布定位
 
 这次版本的用户价值是：
