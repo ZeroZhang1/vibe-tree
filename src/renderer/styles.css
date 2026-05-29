@@ -2914,9 +2914,49 @@ label {
   font-size: 0.72rem;
 }
 
+.social-mode-tabs {
+  width: fit-content;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(86px, auto));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-mode-tabs button {
+  min-width: 86px;
+  height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.social-mode-tabs button.active {
+  background: var(--leaf);
+  color: #10200e;
+  box-shadow: 0 0 18px rgba(188, 255, 92, 0.24);
+}
+
+.social-panel {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.social-panel[hidden] {
+  display: none;
+}
+
 .social-action-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -2948,6 +2988,11 @@ label {
 
 .social-summary {
   min-height: 40px;
+}
+
+.social-friends-panel {
+  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  align-items: start;
 }
 
 .social-friend-list {
@@ -4816,6 +4861,7 @@ label {
   }
 
   .social-layout,
+  .social-friends-panel,
   .social-action-grid {
     grid-template-columns: 1fr;
   }

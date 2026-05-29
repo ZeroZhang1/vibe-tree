@@ -174,6 +174,7 @@ const LEADERBOARD_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
 const leaderboardDataCache = new Map<LeaderboardRange, LeaderboardData>();
 let leaderboardDataCacheSavedAt: number | null = null;
 let leaderboardLoading = false;
+let socialPanel: "friends" | "groups" = "friends";
 let socialFriends: SocialFriend[] = [];
 let socialFriendsUpdatedAt: string | undefined;
 let socialGroups: SocialGroup[] = [];
@@ -348,6 +349,9 @@ const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRa
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
 const leaderboardRows = document.querySelector<HTMLElement>("#leaderboardRows");
 const socialRefreshButton = document.querySelector<HTMLButtonElement>("#socialRefreshButton");
+const socialModeTabs = document.querySelector<HTMLElement>("#socialModeTabs");
+const socialFriendsPanel = document.querySelector<HTMLElement>("#socialFriendsPanel");
+const socialGroupsPanel = document.querySelector<HTMLElement>("#socialGroupsPanel");
 const socialAddFriendForm = document.querySelector<HTMLFormElement>("#socialAddFriendForm");
 const socialFriendUsernameInput = document.querySelector<HTMLInputElement>("#socialFriendUsernameInput");
 const socialFriendList = document.querySelector<HTMLElement>("#socialFriendList");
@@ -1278,6 +1282,19 @@ function bindEvents() {
 
   socialRefreshButton?.addEventListener("click", () => {
     void refreshSocial({ syncFirst: true });
+  });
+
+  socialModeTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-panel]");
+    if (!button) return;
+    const nextPanel = button.dataset.socialPanel === "groups" ? "groups" : "friends";
+    if (nextPanel === socialPanel) return;
+    socialPanel = nextPanel;
+    socialRenderKey = "";
+    renderSocial();
+    if (socialPanel === "groups" && socialSelectedGroupId && !socialGroupLeaderboard) {
+      void refreshSocialGroupLeaderboard();
+    }
   });
 
   socialAddFriendForm?.addEventListener("submit", (event) => {
@@ -4196,6 +4213,8 @@ function renderLeaderboard() {
 function renderSocial() {
   if (
     !socialSummary ||
+    !socialFriendsPanel ||
+    !socialGroupsPanel ||
     !socialFriendList ||
     !socialGroupList ||
     !socialGroupDetail ||
@@ -4212,6 +4231,13 @@ function renderSocial() {
   const canManageGroup = group?.role === "leader" || group?.role === "officer";
 
   socialRefreshButton && (socialRefreshButton.disabled = socialLoading);
+  socialModeTabs?.querySelectorAll<HTMLButtonElement>("[data-social-panel]").forEach((button) => {
+    const active = button.dataset.socialPanel === socialPanel;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  socialFriendsPanel.hidden = socialPanel !== "friends";
+  socialGroupsPanel.hidden = socialPanel !== "groups";
   socialAddFriendForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
     element.disabled = socialLoading;
   });
@@ -4235,15 +4261,22 @@ function renderSocial() {
   if (!leaderboardStatus.configured) {
     socialSummary.innerHTML = `<strong>${t("leaderboardServiceNotConfigured")}</strong><span>${t("socialNoService")}</span>`;
   } else if (socialLoading) {
-    socialSummary.innerHTML = `<strong>${t("socialLoading")}</strong><span>${leaderboardRangeLabel(socialGroupRange)}</span>`;
+    socialSummary.innerHTML = `<strong>${t("socialLoading")}</strong><span>${socialPanel === "groups" ? leaderboardRangeLabel(socialGroupRange) : t("socialPanelFriends")}</span>`;
   } else if (socialError) {
     socialSummary.innerHTML = `<strong>${escapeHtml(socialError)}</strong><span>${t("socialRefresh")}</span>`;
-  } else if (socialFriends.length || socialGroups.length) {
-    const updatedAt = socialGroupsUpdatedAt ?? socialFriendsUpdatedAt;
+  } else if (socialPanel === "friends" && socialFriends.length) {
+    const updatedAt = socialFriendsUpdatedAt;
     const updated = updatedAt ? `${t("socialUpdated")} ${formatRelativeTime(updatedAt)}` : "";
-    socialSummary.innerHTML = `<strong>${socialFriends.length} ${t("socialFriendsCount")} · ${socialGroups.length} ${t("socialGroupsCount")}</strong><span>${escapeHtml(updated)}</span>`;
+    socialSummary.innerHTML = `<strong>${socialFriends.length} ${t("socialFriendsCount")}</strong><span>${escapeHtml(updated)}</span>`;
+  } else if (socialPanel === "groups" && socialGroups.length) {
+    const updated = socialGroupsUpdatedAt ? `${t("socialUpdated")} ${formatRelativeTime(socialGroupsUpdatedAt)}` : "";
+    socialSummary.innerHTML = `<strong>${socialGroups.length} ${t("socialGroupsCount")}</strong><span>${escapeHtml(updated)}</span>`;
   } else if (!leaderboardStatus.authenticated) {
     socialSummary.innerHTML = `<strong>${t("leaderboardLoginRequired")}</strong><span>${t("socialLoginHint")}</span>`;
+  } else if (socialPanel === "friends") {
+    socialSummary.innerHTML = `<strong>${t("socialFriendsEmpty")}</strong><span>${t("socialFriendTargetRequired")}</span>`;
+  } else if (socialPanel === "groups") {
+    socialSummary.innerHTML = `<strong>${t("socialGroupsEmpty")}</strong><span>${t("socialCreateOrJoin")}</span>`;
   } else {
     socialSummary.innerHTML = `<strong>${t("socialEmpty")}</strong><span>${t("socialCreateOrJoin")}</span>`;
   }
@@ -5020,6 +5053,7 @@ function socialRenderSignature() {
   return JSON.stringify({
     language: currentLanguage(),
     bucket: relativeRenderBucket(30_000),
+    panel: socialPanel,
     loading: socialLoading,
     error: socialError,
     selectedGroupId: socialSelectedGroupId,
