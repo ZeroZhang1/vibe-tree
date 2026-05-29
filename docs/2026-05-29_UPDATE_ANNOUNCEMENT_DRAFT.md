@@ -22,7 +22,8 @@ Vibe Tree v0.6.0
 - 登录同一个 GitHub 账号后，可以在多台设备共同养同一棵树。
 - 开启同步后，会同步等级、累计 Token、成就和设备贡献。
 - 其他设备的数据会按 Codex、OpenClaw、Claude Code 等真实来源合并展示。
-- 排行榜改为 24h / 7 天 / 30 天 / 全部，更适合查看最近活跃度。
+- 排行榜新增滚动 24h 视角，更适合查看最近活跃度，也减少时区带来的“今日”口径差异。
+- 可选开启每小时自动同步小树和排行榜。
 
 体验改进
 - 设置页重新整理，同步、更新、路径等选项更容易找到。
@@ -45,7 +46,7 @@ Vibe Tree v0.6.0
 - Added optional shared-tree sync across devices. Users can sign in with the same GitHub account to grow one tree across Windows, Mac, and other devices.
 - Added shared tree first-run choices: start locally on this device, or sign in to sync an existing tree.
 - Added device contribution summaries for shared trees.
-- Added rolling `24h` leaderboard range, alongside `7d`, `30d`, and `all`.
+- Added rolling `24h` leaderboard range, alongside `7d`, `30d`, and `all`, to show recent activity with less timezone ambiguity than a calendar-day `today` range.
 - Added hourly auto-sync options for the leaderboard and shared tree sync.
 
 ## Changed
