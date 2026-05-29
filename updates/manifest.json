@@ -18,14 +18,14 @@
           "登录同一个 GitHub 账号后，可以在多台设备共同养同一棵树。",
           "开启同步后，会同步等级、累计 Token、成就和设备贡献。",
           "其他设备的数据会按 Codex、OpenClaw、Claude Code 等真实来源合并展示。",
-          "排行榜改为 24h / 7 天 / 30 天 / 全部，更适合查看最近活跃度。",
+          "排行榜新增滚动 24h 视角，更适合查看最近活跃度，也减少时区带来的“今日”口径差异。",
           "可选开启每小时自动同步小树和排行榜。"
         ],
         "en-US": [
           "Sign in with the same GitHub account to grow one tree across multiple devices.",
           "After sync is enabled, levels, total Tokens, achievements, and device contribution can be shared.",
           "Remote device data is merged back into real sources such as Codex, OpenClaw, and Claude Code.",
-          "The leaderboard now uses 24h / 7d / 30d / all ranges for a better recent-activity view.",
+          "The leaderboard adds a rolling 24h view for recent activity and less timezone ambiguity around Today.",
           "Optionally sync the shared tree and leaderboard every hour."
         ]
       },
