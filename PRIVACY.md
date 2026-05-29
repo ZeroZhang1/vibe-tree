@@ -57,7 +57,7 @@ Vibe Tree 会在 Electron 的应用数据目录中保存本地统计和设置，
 
 - GitHub 用户 ID、用户名、头像 URL、profile URL；
 - 经过哈希处理的排行榜 session token；
-- 每日 token 总量和近 24h 小时级 token 汇总，用于计算近 24h、7 天、30 天和全部排行榜；
+- 每日 token 总量和 24h 小时级 token 汇总，用于计算 24h、7 天、30 天和全部排行榜；
 - app version。
 
 同步请求会发送本地首次使用日期，用于清理安装日前的历史行；也可能包含时区信息。当前 Worker 不会把首次使用日期或时区持久化为独立数据库字段。

@@ -396,9 +396,9 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     refreshLeaderboard: "刷新榜单",
     refreshAndSyncLeaderboard: "同步并刷新",
     leaderboardPrivacyNote:
-      "数据安全说明：默认只同步每日 Token 总量、近 24h 小时级 Token 汇总和本地首次使用日期。开启公开使用偏好后，会额外上传使用的 Agent、模型、时段和峰值 Token，不会包含任何提示词、会话记录、文件、路径或其他敏感信息。您可以随时退出排行榜，退出后会删除远端排行榜数据，不会删除同养小树云档。",
+      "数据安全说明：默认只同步每日 Token 总量、24h 小时级 Token 汇总和本地首次使用日期。开启公开使用偏好后，会额外上传使用的 Agent、模型、时段和峰值 Token，不会包含任何提示词、会话记录、文件、路径或其他敏感信息。您可以随时退出排行榜，退出后会删除远端排行榜数据，不会删除同养小树云档。",
     leaderboardPrivacyTitle: "数据安全说明",
-    leaderboardPrivacyDefault: "默认只同步每日 Token 总量、近 24h 小时级 Token 汇总和本地首次使用日期。",
+    leaderboardPrivacyDefault: "默认只同步每日 Token 总量、24h 小时级 Token 汇总和本地首次使用日期。",
     leaderboardPrivacyPreference:
       "开启公开使用偏好后，会额外上传使用的 Agent、模型、时段和峰值 Token，不会包含任何提示词、会话记录、文件、路径或其他敏感信息。",
     leaderboardPrivacyExit: "退出排行榜会删除远端排行榜数据，不会删除同养小树云档。",
@@ -406,7 +406,7 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     leaveLeaderboard: "退出排行榜",
     leaderboardJoinConfirmTitle: "加入全球排行榜？",
     leaderboardJoinConfirmBody:
-      "加入后会上传每日 Token 总量、近 24h 小时级 Token 汇总、本地首次使用日期和时区。不会上传提示词、会话记录、文件或路径。",
+      "加入后会上传每日 Token 总量、24h 小时级 Token 汇总、本地首次使用日期和时区。不会上传提示词、会话记录、文件或路径。",
     leaderboardJoinPreferenceTitle: "公开使用偏好",
     leaderboardJoinPreferenceCopy: "额外公开聚合后的 Agent、模型、偏爱时段和峰值 Token。",
     leaderboardJoinConfirmAction: "确认加入",
@@ -425,7 +425,7 @@ export const UI_TEXT: Record<AppLanguage, Record<string, string>> = {
     leaderboardSyncing: "正在同步排行榜",
     leaderboardLoadFailed: "排行榜加载失败",
     leaderboardLastSynced: "上次同步",
-    leaderboard24h: "近 24h",
+    leaderboard24h: "24h",
     leaderboard7d: "7 天",
     leaderboard30d: "30 天",
     leaderboardAllTime: "全部",

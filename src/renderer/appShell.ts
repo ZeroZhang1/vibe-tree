@@ -188,7 +188,7 @@ export function appShellHtml(viewMode: ViewMode) {
             </div>
           </div>
           <div class="leaderboard-range-tabs" id="leaderboardRangeTabs" role="tablist" aria-label="全球排行榜范围" data-i18n-aria="leaderboardAria">
-            <button type="button" data-leaderboard-range="24h" data-i18n="leaderboard24h">近 24h</button>
+            <button type="button" data-leaderboard-range="24h" data-i18n="leaderboard24h">24h</button>
             <button type="button" data-leaderboard-range="7d" data-i18n="leaderboard7d">7 天</button>
             <button type="button" data-leaderboard-range="30d" data-i18n="leaderboard30d">30 天</button>
             <button type="button" data-leaderboard-range="all" data-i18n="leaderboardAllTime">全部</button>
@@ -347,7 +347,7 @@ export function appShellHtml(viewMode: ViewMode) {
               </label>
               <div class="leaderboard-help" aria-label="数据安全说明" data-i18n-aria="leaderboardPrivacyTitle">
                 <strong data-i18n="leaderboardPrivacyTitle">数据安全说明</strong>
-                <p data-i18n="leaderboardPrivacyDefault">默认只同步每日 Token 总量、近 24h 小时级 Token 汇总和本地首次使用日期。</p>
+                <p data-i18n="leaderboardPrivacyDefault">默认只同步每日 Token 总量、24h 小时级 Token 汇总和本地首次使用日期。</p>
                 <p data-i18n="leaderboardPrivacyPreference">开启公开使用偏好后，会额外上传使用的 Agent、模型、时段和峰值 Token，不会包含任何提示词、会话记录、文件、路径或其他敏感信息。</p>
                 <p data-i18n="leaderboardPrivacyExit">您可以随时选择退出，退出后，您的信息将被完全删除。</p>
               </div>
