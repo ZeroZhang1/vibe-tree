@@ -11,12 +11,15 @@ export interface LedgerEntry {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  deviceId?: string;
+  syncedFromCloud?: boolean;
+  eventFingerprint?: string;
 }
 
 export type AppLanguage = "zh-CN" | "en-US";
 export type UiTheme = "day" | "night" | "soft";
 
-export type LeaderboardRange = "today" | "7d" | "30d" | "all";
+export type LeaderboardRange = "24h" | "7d" | "30d" | "all";
 
 export interface LeaderboardProfile {
   id: string;
@@ -32,6 +35,45 @@ export interface LeaderboardStatus {
   profile?: LeaderboardProfile;
   lastSyncedAt?: string;
   error?: string;
+}
+
+export interface CloudSyncStatus {
+  configured: boolean;
+  authenticated: boolean;
+  enabled: boolean;
+  syncing: boolean;
+  hasRemoteTree?: boolean;
+  deviceId?: string;
+  profile?: LeaderboardProfile;
+  lastSyncedAt?: string;
+  lastPulledAt?: string;
+  lastUploadedCount?: number;
+  lastDownloadedCount?: number;
+  devices?: CloudDeviceSummary[];
+  modelStats?: CloudModelStat[];
+  error?: string;
+}
+
+export interface CloudDeviceSummary {
+  deviceId: string;
+  alias?: string;
+  platform?: string;
+  lastSyncedAt?: string;
+  appVersion?: string;
+  entryCount: number;
+  tokens: number;
+}
+
+export interface CloudModelStat {
+  deviceId: string;
+  date: string;
+  source: string;
+  model: string;
+  tokens: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 export type LeaderboardPreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
@@ -90,7 +132,14 @@ export interface Settings {
   leaderboardEnabled: boolean;
   leaderboardProfile?: LeaderboardProfile;
   leaderboardLastSyncedAt?: string;
+  leaderboardAutoSyncEnabled: boolean;
   leaderboardPreferencesPublic: boolean;
+  cloudSyncEnabled: boolean;
+  cloudSyncDeviceId?: string;
+  cloudSyncLastSyncedAt?: string;
+  cloudSyncLastPulledAt?: string;
+  cloudSyncAutoSyncEnabled: boolean;
+  treeStartMode?: "new" | "cloud";
   launchOnStartup: boolean;
   silentStartup: boolean;
   proxyUrl?: string;
@@ -131,6 +180,12 @@ export interface AchievementUnlockResult {
   state: AchievementState;
   unlocked: AchievementUnlock[];
 }
+
+export type ToastPlacement = "left" | "right";
+
+export type TreeToastItem =
+  | { type: "achievement"; id: string }
+  | { type: "level"; from: number; to: number };
 
 export interface UpdateStatus {
   checking: boolean;

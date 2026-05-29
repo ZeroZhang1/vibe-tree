@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, Notificati
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import * as https from "node:https";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { MenuItemConstructorOptions } from "electron";
 import type {
@@ -9,10 +10,14 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   AppLanguage,
+  CloudModelStat,
+  CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
   LeaderboardProfile,
   Settings,
+  ToastPlacement,
+  TreeToastItem,
   UpdateStatus,
   UsageEvent,
   UsageStatus,
@@ -31,7 +36,7 @@ import { MAIN_TEXT, WEATHER_LABELS } from "./i18n.js";
 import type { WeatherId } from "./i18n.js";
 import { createLeaderboardService } from "./leaderboard.js";
 import type { LeaderboardRequestJsonOptions } from "./leaderboard.js";
-import { countedTokensForEntry } from "../shared/tokenAccounting.js";
+import { countedInputTokensForEntry, countedTokensForEntry } from "../shared/tokenAccounting.js";
 
 const PET_BASE = { width: 192, height: 208 };
 const PET_STAGE_OFFSET = { x: 28, y: 0 };
@@ -40,6 +45,8 @@ const ACHIEVEMENT_TOAST_OVERLAP_PER_SCALE = 48;
 const ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE = 18;
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
+const LEVEL_TOAST_DEDUPE_MS = 4_000;
+const HOURLY_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
@@ -50,10 +57,13 @@ const UPDATE_SMOKE_TIMEOUT_MS = 45_000;
 const UPDATE_LATEST_RELEASE_URL = "https://api.github.com/repos/Olorinm/vibe-tree/releases/latest";
 const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per_page=20";
 const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
+const DEFAULT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Olorinm/vibe-tree/main/updates/manifest.json";
+const UPDATE_MANIFEST_URL = (process.env.VIBE_TREE_UPDATE_MANIFEST_URL ?? DEFAULT_UPDATE_MANIFEST_URL).trim();
 const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
 const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
 const LEADERBOARD_API_URL = (process.env.VIBE_TREE_LEADERBOARD_API_URL ?? DEFAULT_LEADERBOARD_API_URL).replace(/\/+$/, "");
-const LEADERBOARD_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const LEADERBOARD_SYNC_INTERVAL_MS = HOURLY_SYNC_INTERVAL_MS;
+const CLOUD_SYNC_INTERVAL_MS = HOURLY_SYNC_INTERVAL_MS;
 const LEADERBOARD_AUTH_TIMEOUT_MS = 2 * 60 * 1000;
 const LEADERBOARD_CALLBACK_PATH = "/leaderboard/auth/callback";
 const MAC_TRAY_ICON_SIZE = 18;
@@ -62,7 +72,10 @@ const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
 const APP_ID = "com.vibetree.app";
 const SMOKE_TEST = process.env.VIBE_TREE_SMOKE_TEST === "1";
-const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
+const USER_DATA_DIR_OVERRIDE = process.env.VIBE_TREE_USER_DATA_DIR?.trim();
+if (USER_DATA_DIR_OVERRIDE) app.setPath("userData", USER_DATA_DIR_OVERRIDE);
+const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes", "cloud"] as const;
+const LOCAL_STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
 const APP_ICON_PATHS = [
   join(__dirname, "../renderer/assets/app-icon.png"),
   join(__dirname, "../renderer/assets/app-icon.ico"),
@@ -84,7 +97,14 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardEnabled: false,
   leaderboardProfile: undefined,
   leaderboardLastSyncedAt: undefined,
+  leaderboardAutoSyncEnabled: true,
   leaderboardPreferencesPublic: false,
+  cloudSyncEnabled: false,
+  cloudSyncDeviceId: undefined,
+  cloudSyncLastSyncedAt: undefined,
+  cloudSyncLastPulledAt: undefined,
+  cloudSyncAutoSyncEnabled: true,
+  treeStartMode: undefined,
   launchOnStartup: false,
   silentStartup: false,
   proxyUrl: undefined,
@@ -114,7 +134,9 @@ let achievementToastWindow: BrowserWindow | null = null;
 let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let achievementToastFallbackHideAt = 0;
 let achievementToastRendererReady = false;
-let achievementToastPendingIds: string[] = [];
+let achievementToastPendingItems: TreeToastItem[] = [];
+let lastLevelToastKey = "";
+let lastLevelToastAt = 0;
 let updateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateStatus: UpdateStatus = {
   checking: false,
@@ -198,11 +220,19 @@ const leaderboardService = createLeaderboardService({
   apiUrl: LEADERBOARD_API_URL,
   appName: APP_NAME,
   syncIntervalMs: LEADERBOARD_SYNC_INTERVAL_MS,
+  cloudSyncIntervalMs: CLOUD_SYNC_INTERVAL_MS,
   authTimeoutMs: LEADERBOARD_AUTH_TIMEOUT_MS,
   callbackPath: LEADERBOARD_CALLBACK_PATH,
   authPath: leaderboardAuthPath,
+  cloudSyncPath,
+  deviceId: () => ensureCloudSyncDeviceId(),
+  deviceInfo: () => cloudSyncDeviceInfo(),
+  cloudModelStats: () => cloudModelStats(),
   getLedger: () => ledger,
   updateSettings,
+  appendRemoteEntries,
+  getAchievements: () => achievementState,
+  mergeRemoteAchievements,
   xpForEntry,
   dateKey,
   currentAppVersion,
@@ -236,6 +266,10 @@ function achievementsPath() {
 
 function leaderboardAuthPath() {
   return join(app.getPath("userData"), "leaderboard-auth.json");
+}
+
+function cloudSyncPath() {
+  return join(app.getPath("userData"), "cloud-sync.json");
 }
 
 function sanitizeShareImageFilename(value: unknown) {
@@ -328,7 +362,6 @@ function proxyRulesFromValue(rawProxy: string | undefined) {
 function readLedger(): LedgerFile {
   const legacy = readLegacyLedger();
   const installedAt = readInstalledAt(legacy);
-  const settings = readDeviceSettings(legacy?.settings);
   let entries = readUsageEntries();
 
   if (!entries.length && legacy?.entries?.length) {
@@ -337,12 +370,34 @@ function readLedger(): LedgerFile {
       appendUsageEntryToStore(entry);
     }
   }
+  const deduped = dedupeCloudMirroredEntries(entries);
+  const dedupedEntries = deduped.entries;
+  if (deduped.removedCount) rewriteUsageEntriesStore(dedupedEntries);
+  const filteredEntries = dedupedEntries.filter((entry) => entryBelongsToCurrentTree(entry, installedAt));
+  const settings = readDeviceSettings(legacy?.settings, filteredEntries.length > 0);
 
   return {
-    entries: entries.filter((entry) => entryTime(entry) >= Date.parse(installedAt)),
+    entries: filteredEntries,
     settings,
     installedAt,
   };
+}
+
+function entryBelongsToCurrentTree(entry: LedgerEntry, installedAt: string) {
+  const startedAt = Date.parse(installedAt);
+  if (!Number.isFinite(startedAt)) return true;
+  if (entry.deviceId) return true;
+  return entryTime(entry) >= startedAt;
+}
+
+function setTreeStartMode(mode: "new" | "cloud") {
+  const installedAt = new Date().toISOString();
+  ledger.installedAt = installedAt;
+  writeJsonAtomic(usageMetaPath(), { version: 1, installedAt });
+  ledger.entries = ledger.entries.filter((entry) =>
+    mode === "cloud" ? entryBelongsToCurrentTree(entry, installedAt) : entryTime(entry) >= Date.parse(installedAt),
+  );
+  updateSettings({ treeStartMode: mode });
 }
 
 function readLegacyLedger(): Partial<LedgerFile> | undefined {
@@ -381,16 +436,21 @@ function legacyInstallDate() {
   return new Date().toISOString();
 }
 
-function readDeviceSettings(legacySettings: Partial<Settings> | undefined): Settings {
+function readDeviceSettings(legacySettings: Partial<Settings> | undefined, hasLocalTreeData = false): Settings {
   const stored = readJsonFile<Partial<Settings>>(deviceSettingsPath());
   const language = normalizeLanguage(stored?.language ?? legacySettings?.language ?? detectSystemLanguage());
-  const settings = normalizeSettings({
+  let migratedTreeStartMode = false;
+  let settings = normalizeSettings({
     ...DEFAULT_SETTINGS,
     language,
     ...(legacySettings ?? {}),
     ...(stored ?? {}),
   });
-  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined) {
+  if (!settings.treeStartMode && hasLocalTreeData) {
+    settings = normalizeSettings({ ...settings, treeStartMode: "new" });
+    migratedTreeStartMode = true;
+  }
+  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined || migratedTreeStartMode) {
     writeDeviceSettings(settings);
   }
   return settings;
@@ -488,6 +548,14 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     typeof settings.leaderboardLastSyncedAt === "string" && Number.isFinite(Date.parse(settings.leaderboardLastSyncedAt))
       ? settings.leaderboardLastSyncedAt
       : undefined;
+  const cloudSyncLastSyncedAt =
+    typeof settings.cloudSyncLastSyncedAt === "string" && Number.isFinite(Date.parse(settings.cloudSyncLastSyncedAt))
+      ? settings.cloudSyncLastSyncedAt
+      : undefined;
+  const cloudSyncLastPulledAt =
+    typeof settings.cloudSyncLastPulledAt === "string" && Number.isFinite(Date.parse(settings.cloudSyncLastPulledAt))
+      ? settings.cloudSyncLastPulledAt
+      : undefined;
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
@@ -505,7 +573,14 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardEnabled: Boolean(settings.leaderboardEnabled && leaderboardProfile),
     leaderboardProfile,
     leaderboardLastSyncedAt,
+    leaderboardAutoSyncEnabled: settings.leaderboardAutoSyncEnabled !== false,
     leaderboardPreferencesPublic: Boolean(settings.leaderboardPreferencesPublic),
+    cloudSyncEnabled: Boolean(settings.cloudSyncEnabled && leaderboardProfile),
+    cloudSyncDeviceId: cleanDeviceId(settings.cloudSyncDeviceId),
+    cloudSyncLastSyncedAt,
+    cloudSyncLastPulledAt,
+    cloudSyncAutoSyncEnabled: settings.cloudSyncAutoSyncEnabled !== false,
+    treeStartMode: settings.treeStartMode === "new" || settings.treeStartMode === "cloud" ? settings.treeStartMode : undefined,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
     proxyUrl: cleanProxyUrl(settings.proxyUrl),
@@ -523,6 +598,10 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     geminiSessionsDir: cleanPath(settings.geminiSessionsDir),
     hermesSessionsDir: cleanPath(settings.hermesSessionsDir),
   };
+}
+
+function cleanDeviceId(value: unknown) {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{8,80}$/.test(value) ? value : undefined;
 }
 
 function normalizeUiTheme(value: unknown): Settings["uiTheme"] {
@@ -568,10 +647,11 @@ function normalizeEnabledSourceIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [...STAT_SOURCE_IDS];
   const allowed = new Set<string>(STAT_SOURCE_IDS);
   const normalized = [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))];
-  const hadAllLegacySources = ["codex", "openclaw", "opencode", "claude", "gemini", "hermes"].every((source) =>
+  const hadAllLegacySources = LOCAL_STAT_SOURCE_IDS.filter((source) => source !== "pi").every((source) =>
     normalized.includes(source),
   );
   if (hadAllLegacySources && !normalized.includes("pi")) normalized.splice(2, 0, "pi");
+  if (!normalized.includes("cloud")) normalized.push("cloud");
   return normalized;
 }
 
@@ -611,21 +691,34 @@ function cleanPath(value: unknown) {
 function readUsageEntries() {
   if (!existsSync(usageEventsPath())) return [];
   const byId = new Map<string, LedgerEntry>();
+  let parsedCount = 0;
   const raw = readFileSync(usageEventsPath(), "utf8");
   for (const line of raw.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const parsed = parseJson(line);
     if (isEntry(parsed)) {
+      parsedCount += 1;
       byId.set(parsed.id, parsed);
     }
   }
-  return [...byId.values()].sort((a, b) => entryTime(b) - entryTime(a));
+  const entries = [...byId.values()].sort((a, b) => entryTime(b) - entryTime(a));
+  if (parsedCount > entries.length) rewriteUsageEntriesStore(entries);
+  return entries;
 }
 
 function appendUsageEntryToStore(entry: LedgerEntry) {
   const path = usageEventsPath();
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
+}
+
+function rewriteUsageEntriesStore(entries: LedgerEntry[]) {
+  const path = usageEventsPath();
+  mkdirSync(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.tmp`;
+  const content = entries.map((entry) => JSON.stringify(entry)).join("\n");
+  writeFileSync(tempPath, content ? `${content}\n` : "", "utf8");
+  renameSync(tempPath, path);
 }
 
 function writeJsonAtomic(path: string, value: unknown) {
@@ -885,7 +978,7 @@ function achievementToastPlacement() {
   const leftX = petBounds.x - size.width + overlap;
   const canUseRight = rightX <= maxX;
   const canUseLeft = leftX >= minX;
-  const placement = canUseRight || !canUseLeft ? "right" : "left";
+  const placement: ToastPlacement = canUseRight || !canUseLeft ? "right" : "left";
   const rawX = placement === "right" ? rightX : leftX;
   const downOffset = Math.round(ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE * ledger.settings.scale);
   const rawY = petBounds.y - size.height + overlap + downOffset;
@@ -940,32 +1033,65 @@ function flushAchievementToastOverlay() {
     !achievementToastWindow ||
     achievementToastWindow.isDestroyed() ||
     !achievementToastRendererReady ||
-    !achievementToastPendingIds.length
+    !achievementToastPendingItems.length
   ) {
     return;
   }
 
-  const ids = achievementToastPendingIds;
-  achievementToastPendingIds = [];
+  const items = achievementToastPendingItems;
+  achievementToastPendingItems = [];
   const { bounds, placement } = achievementToastPlacement();
   achievementToastWindow.setBounds(bounds, false);
   achievementToastWindow.setAlwaysOnTop(true, "floating");
-  achievementToastWindow.webContents.send("bonsai:achievement-toast", { ids, placement });
+  achievementToastWindow.webContents.send("bonsai:achievement-toast", toastPayload(items, placement));
   achievementToastWindow.showInactive();
-  scheduleAchievementToastFallbackHide(ids.length);
+  scheduleAchievementToastFallbackHide(items.length);
 }
 
-function showAchievementToastOverlay(ids: string[]) {
-  const cleanIds = ids.filter((id) => typeof id === "string" && id.length);
-  if (!cleanIds.length) return;
+function showTreeToastOverlay(items: TreeToastItem[]) {
+  const cleanItems = items.filter(isTreeToastItem);
+  if (!cleanItems.length) return;
 
-  achievementToastPendingIds.push(...cleanIds);
+  achievementToastPendingItems.push(...cleanItems);
   const window = createAchievementToastWindow();
   const { bounds, placement } = achievementToastPlacement();
   window.setBounds(bounds, false);
   window.setAlwaysOnTop(true, "floating");
   window.webContents.send("bonsai:achievement-toast-placement", placement);
   flushAchievementToastOverlay();
+}
+
+function showAchievementToastOverlay(ids: string[]) {
+  showTreeToastOverlay(
+    ids
+      .filter((id) => typeof id === "string" && id.length)
+      .map((id) => ({ type: "achievement", id })),
+  );
+}
+
+function showLevelToastOverlay(input: { from?: unknown; to?: unknown }) {
+  const from = Math.max(1, Math.round(Number(input?.from)));
+  const to = Math.max(1, Math.round(Number(input?.to)));
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
+  const key = String(to);
+  const now = Date.now();
+  if (lastLevelToastKey === key && now - lastLevelToastAt < LEVEL_TOAST_DEDUPE_MS) return;
+  lastLevelToastKey = key;
+  lastLevelToastAt = now;
+  showTreeToastOverlay([{ type: "level", from, to }]);
+}
+
+function toastPayload(items: TreeToastItem[], placement: ToastPlacement) {
+  return {
+    items,
+    ids: items.flatMap((item) => (item.type === "achievement" ? [item.id] : [])),
+    placement,
+  };
+}
+
+function isTreeToastItem(item: TreeToastItem): item is TreeToastItem {
+  if (item.type === "achievement") return typeof item.id === "string" && item.id.length > 0;
+  return Number.isFinite(item.from) && Number.isFinite(item.to) && item.to > item.from;
 }
 
 function showManager() {
@@ -1353,15 +1479,24 @@ function xpForEntry(entry: LedgerEntry) {
 }
 
 function statSourceIdForEntry(entry: LedgerEntry): string | undefined {
-  if (entry.source === "codex-session" || entry.agent === "codex-desktop") return "codex";
-  if (entry.source === "openclaw-session" || entry.agent === "openclaw") return "openclaw";
-  if (entry.source === "pi-session" || entry.agent === "pi-agent") return "pi";
-  if (entry.source === "opencode-session" || entry.agent === "opencode" || Boolean(entry.agent?.startsWith("opencode:"))) {
+  if (entry.source === "cloud-sync") {
+    const inferred = sourceFromEventId(entry.id);
+    if (inferred) return statSourceIdForSource(inferred, entry.agent);
+    return "cloud";
+  }
+  return statSourceIdForSource(entry.source, entry.agent);
+}
+
+function statSourceIdForSource(source: string, agent?: string): string | undefined {
+  if (source === "codex-session" || agent === "codex-desktop") return "codex";
+  if (source === "openclaw-session" || agent === "openclaw") return "openclaw";
+  if (source === "pi-session" || agent === "pi-agent") return "pi";
+  if (source === "opencode-session" || agent === "opencode" || Boolean(agent?.startsWith("opencode:"))) {
     return "opencode";
   }
-  if (entry.source === "claude-session" || Boolean(entry.agent?.startsWith("claude-code"))) return "claude";
-  if (entry.source === "gemini-session" || entry.agent === "gemini") return "gemini";
-  if (entry.source === "hermes-session" || entry.agent === "hermes") return "hermes";
+  if (source === "claude-session" || Boolean(agent?.startsWith("claude-code"))) return "claude";
+  if (source === "gemini-session" || agent === "gemini") return "gemini";
+  if (source === "hermes-session" || agent === "hermes") return "hermes";
   return undefined;
 }
 
@@ -1432,13 +1567,21 @@ function updateSettings(partial: Partial<Settings>) {
   }
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
+    previous.cloudSyncEnabled !== ledger.settings.cloudSyncEnabled ||
+    previous.leaderboardAutoSyncEnabled !== ledger.settings.leaderboardAutoSyncEnabled ||
+    previous.cloudSyncAutoSyncEnabled !== ledger.settings.cloudSyncAutoSyncEnabled ||
     previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id
   ) {
     leaderboardService.startSync();
   } else if (
     partial.leaderboardEnabled !== undefined ||
+    partial.leaderboardAutoSyncEnabled !== undefined ||
     partial.leaderboardProfile !== undefined ||
-    partial.leaderboardLastSyncedAt !== undefined
+    partial.leaderboardLastSyncedAt !== undefined ||
+    partial.cloudSyncEnabled !== undefined ||
+    partial.cloudSyncAutoSyncEnabled !== undefined ||
+    partial.cloudSyncLastSyncedAt !== undefined ||
+    partial.cloudSyncLastPulledAt !== undefined
   ) {
     leaderboardService.broadcast();
   }
@@ -1457,6 +1600,86 @@ function updateSettings(partial: Partial<Settings>) {
   broadcast("bonsai:ledger", ledger);
 }
 
+function ensureCloudSyncDeviceId() {
+  if (ledger.settings.cloudSyncDeviceId) return ledger.settings.cloudSyncDeviceId;
+  const deviceId = `device_${randomUUID().replace(/-/g, "")}`;
+  ledger.settings = normalizeSettings({ ...ledger.settings, cloudSyncDeviceId: deviceId });
+  writeDeviceSettings();
+  return ledger.settings.cloudSyncDeviceId ?? deviceId;
+}
+
+function cloudSyncDeviceInfo() {
+  return {
+    deviceId: ensureCloudSyncDeviceId(),
+    alias: cloudDevicePlatformLabel(),
+    platform: cloudDevicePlatform(),
+  };
+}
+
+function cloudDevicePlatform() {
+  if (process.platform === "darwin") return "mac";
+  if (process.platform === "win32") return "windows";
+  if (process.platform === "linux") return "linux";
+  return "unknown";
+}
+
+function cloudDevicePlatformLabel() {
+  if (process.platform === "darwin") return "Mac";
+  if (process.platform === "win32") return "Windows";
+  if (process.platform === "linux") return "Linux";
+  return "Device";
+}
+
+function cloudModelStats(): CloudModelStat[] {
+  const deviceId = ensureCloudSyncDeviceId();
+  const rows = new Map<string, CloudModelStat>();
+  for (const entry of ledger.entries) {
+    const model = cleanCloudModelLabel(entry.model) ?? cleanCloudModelLabel(entry.provider);
+    if (!model) continue;
+    if (entryIsKnownRemoteCloudMirror(entry, deviceId)) continue;
+    const createdAt = new Date(entry.createdAt);
+    if (!Number.isFinite(createdAt.getTime())) continue;
+    const source = normalizeCloudEventSource(entry.source, entry.id);
+    if (source === "cloud-sync") continue;
+    const date = dateKey(createdAt);
+    const key = `${deviceId}|${date}|${source}|${model}`;
+    const existing =
+      rows.get(key) ??
+      {
+        deviceId,
+        date,
+        source,
+        model,
+        tokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      };
+    existing.tokens += countedTokensForEntry(entry);
+    existing.inputTokens = (existing.inputTokens ?? 0) + countedInputTokensForEntry(entry);
+    existing.outputTokens = (existing.outputTokens ?? 0) + safeTokens(entry.outputTokens ?? 0);
+    existing.cacheReadTokens = (existing.cacheReadTokens ?? 0) + safeTokens(entry.cacheReadTokens ?? 0);
+    existing.cacheWriteTokens = (existing.cacheWriteTokens ?? 0) + safeTokens(entry.cacheWriteTokens ?? 0);
+    rows.set(key, existing);
+  }
+  return [...rows.values()].filter((row) => row.tokens > 0).sort((a, b) => {
+    const dateOrder = a.date.localeCompare(b.date);
+    if (dateOrder) return dateOrder;
+    const sourceOrder = a.source.localeCompare(b.source);
+    return sourceOrder || a.model.localeCompare(b.model);
+  });
+}
+
+function entryIsKnownRemoteCloudMirror(entry: LedgerEntry, currentDeviceId: string) {
+  if (!entry.syncedFromCloud && entry.source !== "cloud-sync") return false;
+  return Boolean(entry.deviceId && entry.deviceId !== currentDeviceId);
+}
+
+function cleanCloudModelLabel(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 64) : undefined;
+}
+
 function appendUsageEvent(event: UsageEvent) {
   if (ledger.entries.some((entry) => entry.id === event.id)) return;
 
@@ -1473,12 +1696,306 @@ function appendUsageEvent(event: UsageEvent) {
     outputTokens: event.outputTokens,
     cacheReadTokens: event.cacheReadTokens,
     cacheWriteTokens: event.cacheWriteTokens,
+    deviceId: ensureCloudSyncDeviceId(),
   };
   entry.tokens = countedTokensForEntry(entry);
   ledger.entries.unshift(entry);
   appendUsageEntryToStore(entry);
   broadcast("bonsai:ledger", ledger);
   refreshTrayMenu();
+  leaderboardService.scheduleCloudSyncSoon();
+}
+
+function appendRemoteEntries(entries: LedgerEntry[]) {
+  const existingById = new Map(ledger.entries.map((entry) => [entry.id, entry]));
+  const existingByFingerprint = new Map<string, LedgerEntry>();
+  for (const entry of ledger.entries) {
+    const fingerprint = cloudMirrorDedupeKey(entry);
+    if (fingerprint && !existingByFingerprint.has(fingerprint)) existingByFingerprint.set(fingerprint, entry);
+  }
+  const accepted: LedgerEntry[] = [];
+  const repaired: LedgerEntry[] = [];
+  for (const entry of entries) {
+    if (!isEntry(entry)) continue;
+    const normalized = normalizeRemoteEntry(entry);
+    const existing = existingById.get(normalized.id);
+    if (existing) {
+      const merged = mergeRemoteEntry(existing, normalized);
+      if (!entriesEquivalent(existing, merged)) {
+        existingById.set(merged.id, merged);
+        repaired.push(merged);
+        appendUsageEntryToStore(merged);
+      }
+      continue;
+    }
+    const fingerprint = cloudMirrorDedupeKey(normalized);
+    const mirrored = fingerprint ? existingByFingerprint.get(fingerprint) : undefined;
+    if (fingerprint && mirrored) {
+      const eventFingerprint = normalized.eventFingerprint ?? mirrored.eventFingerprint ?? cloudEventFingerprint(normalized) ?? fingerprint;
+      const preferred = preferCloudMirrorDuplicate(mirrored, normalized);
+      const secondary = preferred === mirrored ? normalized : mirrored;
+      const merged = mergeCloudMirrorDuplicate(preferred, secondary, eventFingerprint);
+      if (!entriesEquivalent(mirrored, merged)) {
+        existingById.set(merged.id, merged);
+        existingByFingerprint.set(fingerprint, merged);
+        repaired.push(merged);
+        appendUsageEntryToStore(merged);
+      }
+      continue;
+    }
+    existingById.set(normalized.id, normalized);
+    if (fingerprint) existingByFingerprint.set(fingerprint, normalized);
+    accepted.push(normalized);
+    appendUsageEntryToStore(normalized);
+  }
+  if (!accepted.length && !repaired.length) {
+    const deduped = dedupeCloudMirroredEntries(ledger.entries);
+    if (!deduped.removedCount) return 0;
+    ledger.entries = deduped.entries;
+    rewriteUsageEntriesStore(ledger.entries);
+    broadcast("bonsai:ledger", ledger);
+    refreshTrayMenu();
+    return deduped.removedCount;
+  }
+  const repairedIds = new Set(repaired.map((entry) => entry.id));
+  const kept = ledger.entries.filter((entry) => !repairedIds.has(entry.id));
+  const deduped = dedupeCloudMirroredEntries([...accepted, ...repaired, ...kept]);
+  ledger.entries = deduped.entries;
+  if (repaired.length || deduped.removedCount) rewriteUsageEntriesStore(ledger.entries);
+  broadcast("bonsai:ledger", ledger);
+  refreshTrayMenu();
+  return accepted.length + repaired.length + deduped.removedCount;
+}
+
+function normalizeRemoteEntry(entry: LedgerEntry): LedgerEntry {
+  const source = normalizeCloudEventSource(entry.source, entry.id);
+  return {
+    ...entry,
+    source,
+    tokens: safeTokens(entry.tokens),
+    syncedFromCloud: true,
+    eventFingerprint: entry.eventFingerprint ?? cloudEventFingerprint({ ...entry, source }),
+  };
+}
+
+function mergeRemoteEntry(existing: LedgerEntry, remote: LedgerEntry): LedgerEntry {
+  if (existing.syncedFromCloud || existing.source === "cloud-sync") {
+    return mergeLocalOnlyUsageFields(remote, existing);
+  }
+  return {
+    ...existing,
+    source: existing.source === "cloud-sync" ? remote.source : existing.source,
+    tokens: remote.tokens,
+    inputTokens: remote.inputTokens ?? existing.inputTokens,
+    outputTokens: remote.outputTokens ?? existing.outputTokens,
+    cacheReadTokens: remote.cacheReadTokens ?? existing.cacheReadTokens,
+    cacheWriteTokens: remote.cacheWriteTokens ?? existing.cacheWriteTokens,
+    deviceId: existing.deviceId ?? remote.deviceId,
+    eventFingerprint: existing.eventFingerprint ?? remote.eventFingerprint,
+  };
+}
+
+function mergeLocalOnlyUsageFields(base: LedgerEntry, fallback: LedgerEntry): LedgerEntry {
+  return {
+    ...base,
+    agent: base.agent ?? fallback.agent,
+    provider: base.provider ?? fallback.provider,
+    model: base.model ?? fallback.model,
+    note: base.note ?? fallback.note,
+  };
+}
+
+function entriesEquivalent(left: LedgerEntry, right: LedgerEntry) {
+  return (
+    left.source === right.source &&
+    left.tokens === right.tokens &&
+    left.inputTokens === right.inputTokens &&
+    left.outputTokens === right.outputTokens &&
+    left.cacheReadTokens === right.cacheReadTokens &&
+    left.cacheWriteTokens === right.cacheWriteTokens &&
+    left.deviceId === right.deviceId &&
+    left.syncedFromCloud === right.syncedFromCloud &&
+    left.eventFingerprint === right.eventFingerprint &&
+    left.agent === right.agent &&
+    left.provider === right.provider &&
+    left.model === right.model &&
+    left.note === right.note
+  );
+}
+
+function dedupeCloudMirroredEntries(entries: LedgerEntry[]) {
+  const byFingerprint = new Map<string, LedgerEntry>();
+  const withoutFingerprint: LedgerEntry[] = [];
+  let removedCount = 0;
+
+  for (const entry of entries) {
+    const fingerprint = cloudMirrorDedupeKey(entry);
+    if (!fingerprint) {
+      withoutFingerprint.push(entry);
+      continue;
+    }
+
+    const existing = byFingerprint.get(fingerprint);
+    if (!existing) {
+      byFingerprint.set(fingerprint, withCloudEventFingerprint(entry));
+      continue;
+    }
+
+    removedCount += 1;
+    const preferred = preferCloudMirrorDuplicate(existing, entry);
+    const secondary = preferred === existing ? entry : existing;
+    byFingerprint.set(
+      fingerprint,
+      mergeCloudMirrorDuplicate(preferred, secondary, cloudMirrorMergeEventFingerprint(preferred, secondary) ?? fingerprint),
+    );
+  }
+
+  return {
+    entries: [...withoutFingerprint, ...byFingerprint.values()].sort((a, b) => entryTime(b) - entryTime(a)),
+    removedCount,
+  };
+}
+
+function withCloudEventFingerprint(entry: LedgerEntry): LedgerEntry {
+  const eventFingerprint = entry.eventFingerprint ?? cloudEventFingerprint(entry);
+  if (!eventFingerprint) return entry;
+  return entry.eventFingerprint === eventFingerprint ? entry : { ...entry, eventFingerprint };
+}
+
+function preferCloudMirrorDuplicate(left: LedgerEntry, right: LedgerEntry) {
+  return cloudMirrorPreferenceScore(right) > cloudMirrorPreferenceScore(left) ? right : left;
+}
+
+function cloudMirrorPreferenceScore(entry: LedgerEntry) {
+  let score = 0;
+  if (!entry.syncedFromCloud && entry.source !== "cloud-sync") score += 100;
+  if (entry.source !== "cloud-sync") score += 20;
+  if (entry.deviceId) score += 4;
+  if (entry.eventFingerprint) score += 2;
+  return score;
+}
+
+function mergeCloudMirrorDuplicate(preferred: LedgerEntry, secondary: LedgerEntry, eventFingerprint: string): LedgerEntry {
+  return {
+    ...preferred,
+    agent: preferred.agent ?? secondary.agent,
+    provider: preferred.provider ?? secondary.provider,
+    model: preferred.model ?? secondary.model,
+    note: preferred.note ?? secondary.note,
+    tokens: syncedAuthoritativeTokens(preferred, secondary),
+    inputTokens: preferred.inputTokens ?? secondary.inputTokens,
+    outputTokens: preferred.outputTokens ?? secondary.outputTokens,
+    cacheReadTokens: preferred.cacheReadTokens ?? secondary.cacheReadTokens,
+    cacheWriteTokens: preferred.cacheWriteTokens ?? secondary.cacheWriteTokens,
+    deviceId: preferred.deviceId ?? secondary.deviceId,
+    syncedFromCloud: preferred.syncedFromCloud || secondary.syncedFromCloud || secondary.source === "cloud-sync" || undefined,
+    eventFingerprint,
+  };
+}
+
+function cloudMirrorMergeEventFingerprint(preferred: LedgerEntry, secondary: LedgerEntry) {
+  if (secondary.syncedFromCloud || secondary.source === "cloud-sync") {
+    return secondary.eventFingerprint ?? cloudEventFingerprint(secondary);
+  }
+  if (preferred.syncedFromCloud || preferred.source === "cloud-sync") {
+    return preferred.eventFingerprint ?? cloudEventFingerprint(preferred);
+  }
+  return (
+    preferred.eventFingerprint ??
+    secondary.eventFingerprint ??
+    cloudEventFingerprint(preferred) ??
+    cloudEventFingerprint(secondary)
+  );
+}
+
+function cloudMirrorDedupeKey(entry: Partial<LedgerEntry>) {
+  if (!entry.createdAt) return undefined;
+  const hasBreakdown =
+    entry.inputTokens !== undefined ||
+    entry.outputTokens !== undefined ||
+    entry.cacheReadTokens !== undefined ||
+    entry.cacheWriteTokens !== undefined;
+  if (!hasBreakdown) return entry.eventFingerprint ?? cloudEventFingerprint(entry);
+  return [
+    "v1",
+    mirrorSourceForEntry(entry),
+    entry.createdAt,
+    safeTokens(entry.inputTokens ?? 0),
+    safeTokens(entry.outputTokens ?? 0),
+    safeTokens(entry.cacheReadTokens ?? 0),
+    safeTokens(entry.cacheWriteTokens ?? 0),
+  ].join("|");
+}
+
+function mirrorSourceForEntry(entry: Partial<LedgerEntry>) {
+  if (entry.source === "cloud-sync") return sourceFromEventId(entry.id) ?? "cloud-sync";
+  return normalizeCloudEventSource(entry.source, entry.id);
+}
+
+function syncedAuthoritativeTokens(preferred: LedgerEntry, secondary: LedgerEntry) {
+  if (secondary.syncedFromCloud || secondary.source === "cloud-sync") return safeTokens(secondary.tokens);
+  if (preferred.syncedFromCloud || preferred.source === "cloud-sync") return safeTokens(preferred.tokens);
+  return safeTokens(preferred.tokens);
+}
+
+function normalizeCloudEventSource(value: unknown, eventId?: unknown) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (source === "cloud-sync") return sourceFromEventId(eventId) ?? source;
+  if (SAFE_CLOUD_EVENT_SOURCES.has(source)) return source;
+  const inferred = sourceFromEventId(eventId);
+  return inferred ?? "cloud-sync";
+}
+
+function sourceFromEventId(eventId: unknown) {
+  if (typeof eventId !== "string") return undefined;
+  const prefix = eventId.includes(":") ? eventId.slice(0, eventId.indexOf(":")) : "";
+  return SAFE_CLOUD_EVENT_SOURCES.has(prefix) ? prefix : undefined;
+}
+
+function cloudEventFingerprint(entry: Partial<LedgerEntry>) {
+  if (!entry.createdAt) return undefined;
+  const source = normalizeCloudEventSource(entry.source, entry.id);
+  return [
+    "v1",
+    source,
+    entry.createdAt,
+    safeTokens(entry.tokens ?? 0),
+    safeTokens(entry.inputTokens ?? 0),
+    safeTokens(entry.outputTokens ?? 0),
+    safeTokens(entry.cacheReadTokens ?? 0),
+    safeTokens(entry.cacheWriteTokens ?? 0),
+  ].join("|");
+}
+
+const SAFE_CLOUD_EVENT_SOURCES = new Set([
+  "manual",
+  "codex-session",
+  "claude-session",
+  "openclaw-session",
+  "pi-session",
+  "opencode-session",
+  "gemini-session",
+  "hermes-session",
+  "cloud-sync",
+]);
+
+function mergeRemoteAchievements(unlocked: AchievementUnlock[]) {
+  const existing = new Set(achievementState.unlocked.map((item) => item.id));
+  const merged = [...achievementState.unlocked];
+  for (const item of unlocked) {
+    if (existing.has(item.id)) continue;
+    existing.add(item.id);
+    merged.push(item);
+  }
+  const added = merged.length - achievementState.unlocked.length;
+  if (!added) return 0;
+  achievementState = normalizeAchievementState({
+    ...achievementState,
+    unlocked: merged,
+  });
+  writeAchievementState();
+  broadcast("bonsai:achievements", achievementState, []);
+  return added;
 }
 
 function broadcast(channel: string, ...args: unknown[]) {
@@ -1604,13 +2121,16 @@ async function fetchLatestUpdate() {
       typeof (release as { tag_name?: unknown })?.tag_name === "string" ? (release as { tag_name: string }).tag_name : "",
     );
     if (releaseVersion && isSemver(releaseVersion)) {
+      const manifestEntry = await fetchUpdateManifestEntry(releaseVersion);
+      const releaseUrl =
+        manifestReleaseUrl(manifestEntry) ??
+        (typeof (release as { html_url?: unknown })?.html_url === "string"
+          ? (release as { html_url: string }).html_url
+          : UPDATE_PAGE_URL);
       return {
         version: releaseVersion,
-        releaseUrl:
-          typeof (release as { html_url?: unknown })?.html_url === "string"
-            ? (release as { html_url: string }).html_url
-            : UPDATE_PAGE_URL,
-        releaseNotes: normalizeReleaseNotes((release as { body?: unknown })?.body),
+        releaseUrl,
+        releaseNotes: updateNoticeFromManifest(manifestEntry) ?? normalizeReleaseNotes((release as { body?: unknown })?.body),
       };
     }
   } catch {
@@ -1630,11 +2150,99 @@ async function fetchLatestUpdate() {
 
   const latest = versions[0];
   if (!latest) throw new Error(mainText("updateSourceNoVersion"));
+  const manifestEntry = await fetchUpdateManifestEntry(latest.version);
   return {
     version: latest.version,
-    releaseUrl: UPDATE_PAGE_URL,
-    releaseNotes: releaseNotesFromChangelog(latest.version),
+    releaseUrl: manifestReleaseUrl(manifestEntry) ?? UPDATE_PAGE_URL,
+    releaseNotes: updateNoticeFromManifest(manifestEntry) ?? releaseNotesFromChangelog(latest.version),
   };
+}
+
+type UpdateManifestEntry = Record<string, unknown>;
+
+async function fetchUpdateManifestEntry(version: string): Promise<UpdateManifestEntry | undefined> {
+  if (!UPDATE_MANIFEST_URL) return undefined;
+  try {
+    const manifest = await fetchJson(UPDATE_MANIFEST_URL);
+    const versions = Array.isArray((manifest as { versions?: unknown })?.versions)
+      ? (manifest as { versions: unknown[] }).versions
+      : [];
+    return versions.find((entry): entry is UpdateManifestEntry => {
+      if (!entry || typeof entry !== "object") return false;
+      const rawVersion = (entry as { version?: unknown }).version;
+      return typeof rawVersion === "string" && normalizeVersion(rawVersion) === version;
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function manifestReleaseUrl(entry: UpdateManifestEntry | undefined) {
+  const url = typeof entry?.fullReleaseUrl === "string" ? entry.fullReleaseUrl.trim() : "";
+  return /^https?:\/\//.test(url) ? url : undefined;
+}
+
+function updateNoticeFromManifest(entry: UpdateManifestEntry | undefined) {
+  if (!entry) return undefined;
+  const language = currentLanguage();
+  const labels =
+    language === "zh-CN"
+      ? {
+          highlights: "主要变化",
+          fixes: "体验改进",
+          privacy: "隐私说明",
+          upgradeNotes: "升级说明",
+        }
+      : {
+          highlights: "Highlights",
+          fixes: "Improvements",
+          privacy: "Privacy",
+          upgradeNotes: "Upgrade Notes",
+        };
+  const lines: string[] = [];
+  const title = localizedManifestString(entry.title, language);
+  const summary = localizedManifestString(entry.summary, language);
+  if (title) lines.push(title, "");
+  if (summary) lines.push(summary, "");
+  appendManifestSection(lines, labels.highlights, localizedManifestList(entry.highlights, language));
+  appendManifestSection(lines, labels.fixes, localizedManifestList(entry.fixes, language));
+  appendManifestSection(lines, labels.privacy, localizedManifestList(entry.privacy, language));
+  appendManifestSection(lines, labels.upgradeNotes, localizedManifestList(entry.upgradeNotes, language));
+  return normalizeReleaseNotes(lines.join("\n"));
+}
+
+function appendManifestSection(lines: string[], title: string, items: string[] | undefined) {
+  if (!items?.length) return;
+  if (lines.length && lines[lines.length - 1] !== "") lines.push("");
+  lines.push(title);
+  for (const item of items) lines.push(`- ${item}`);
+  lines.push("");
+}
+
+function localizedManifestString(value: unknown, language: AppLanguage) {
+  if (typeof value === "string") return cleanManifestText(value);
+  if (!value || typeof value !== "object") return undefined;
+  const localized = value as Record<string, unknown>;
+  return cleanManifestText(localized[language] ?? localized["zh-CN"] ?? localized["en-US"]);
+}
+
+function localizedManifestList(value: unknown, language: AppLanguage) {
+  const raw = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? ((value as Record<string, unknown>)[language] ??
+        (value as Record<string, unknown>)["zh-CN"] ??
+        (value as Record<string, unknown>)["en-US"])
+      : undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const items = raw.map(cleanManifestText).filter((item): item is string => Boolean(item));
+  return items.length ? items : undefined;
+}
+
+function cleanManifestText(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned ? cleaned.slice(0, 280) : undefined;
 }
 
 function normalizeReleaseNotes(value: unknown) {
@@ -2045,6 +2653,11 @@ function compareVersions(left: string, right: string) {
 
 function startUsageWatchers() {
   stopUsageWatchers();
+  if (!ledger.settings.treeStartMode) {
+    broadcast("bonsai:usage-status", getUsageStatus());
+    return;
+  }
+
   const common = {
     userDataPath: app.getPath("userData"),
     historyStartAt: ledger.installedAt,
@@ -2221,6 +2834,23 @@ ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
 );
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("leaderboard:get-all", () => leaderboardService.getLeaderboards());
+ipcMain.handle("cloud-sync:get-status", (): CloudSyncStatus => leaderboardService.cloudStatus());
+ipcMain.handle("cloud-sync:start-new", () => {
+  setTreeStartMode("new");
+  startUsageWatchers();
+  return leaderboardService.cloudStatus();
+});
+ipcMain.handle("cloud-sync:enable", () => leaderboardService.enableCloudSync());
+ipcMain.handle("cloud-sync:join-existing", async () => {
+  const status = await leaderboardService.joinCloudTree();
+  if (!status.error) {
+    setTreeStartMode("cloud");
+    startUsageWatchers();
+  }
+  return status;
+});
+ipcMain.handle("cloud-sync:cancel-auth", () => leaderboardService.cancelAuth());
+ipcMain.handle("cloud-sync:sync", () => leaderboardService.syncCloudTree({ force: true }));
 ipcMain.handle("achievements:get", () => achievementState);
 ipcMain.handle("achievements:unlock", (_event, items: Array<{ id: string; trigger?: Record<string, unknown> }>) =>
   unlockAchievements(Array.isArray(items) ? items : []),
@@ -2278,11 +2908,15 @@ ipcMain.on("achievements:toast-ready", (event) => {
 ipcMain.on("achievements:toast-drained", (event) => {
   if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;
   if (event.sender !== achievementToastWindow.webContents) return;
-  if (achievementToastPendingIds.length) {
+  if (achievementToastPendingItems.length) {
     flushAchievementToastOverlay();
     return;
   }
   scheduleAchievementToastDrainedHide();
+});
+
+ipcMain.on("level:toast", (_event, input: { from?: unknown; to?: unknown }) => {
+  showLevelToastOverlay(input);
 });
 
 ipcMain.handle("ledger:add-entry", (_event, input: { tokens: number; note?: string }) => {

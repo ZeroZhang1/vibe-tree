@@ -9,7 +9,7 @@ export interface Env {
   SESSION_SECRET: string;
 }
 
-type LeaderboardRange = "today" | "7d" | "30d" | "all";
+type LeaderboardRange = "24h" | "7d" | "30d" | "all";
 type UsagePreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
 type RateLimitName = "PUBLIC_READ_RATE_LIMITER" | "AUTH_RATE_LIMITER" | "WRITE_RATE_LIMITER";
 type SecurityEventType =
@@ -22,9 +22,13 @@ type SecurityEventType =
 
 const MAX_DAILY_ACCEPTED_TOKENS = 1_000_000_000_000_000;
 const MAX_BACKFILL_DAYS = 30;
+const MAX_HOURLY_BACKFILL_HOURS = 72;
+const LEGACY_DAILY_FALLBACK_HOURS = 26;
+const LEADERBOARD_CACHE_TTL_MS = 60_000;
 const SYNC_COOLDOWN_SECONDS = 30;
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
-const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+const LEADERBOARD_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
+const leaderboardCache = new Map<LeaderboardRange, { expiresAt: number; updatedAt: string; entries: LeaderboardEntry[] }>();
 
 interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -65,6 +69,17 @@ interface UsagePreferenceRow {
   peakTokensPerMinute?: number;
 }
 
+interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  username: string;
+  avatarUrl?: string;
+  tokens: number;
+  xp: number;
+  daysActive: number;
+  usagePreference?: ReturnType<typeof rowToUsagePreference>;
+}
+
 class HttpError extends Error {
   constructor(
     public status: number,
@@ -97,6 +112,11 @@ export default {
       if (url.pathname === "/auth/session" && request.method === "POST") return await exchangeAuthSession(request, env);
       if (url.pathname === "/api/me" && request.method === "GET") return await getMe(request, env);
       if (url.pathname === "/api/me" && request.method === "DELETE") return await deleteMe(request, env);
+      if (url.pathname === "/api/leaderboard" && request.method === "DELETE") return await leaveLeaderboard(request, env);
+      if (url.pathname === "/api/tree" && request.method === "GET") return await getCloudTree(request, env);
+      if (url.pathname === "/api/tree/delta" && request.method === "GET") return await getCloudTreeDelta(request, env);
+      if (url.pathname === "/api/tree/events" && request.method === "POST") return await syncCloudTreeEvents(request, env);
+      if (url.pathname === "/api/tree/achievements" && request.method === "POST") return await syncCloudTreeAchievements(request, env);
       if (url.pathname === "/api/usage/daily" && request.method === "POST") return await syncDailyUsage(request, env);
       if (url.pathname === "/api/leaderboards" && request.method === "GET") return await getLeaderboards(request, env);
       if (url.pathname === "/api/leaderboard" && request.method === "GET") return await getLeaderboard(request, env);
@@ -172,7 +192,15 @@ function rateLimitPolicy(request: Request): { name: RateLimitName; keyPrefix: st
   if (route === "POST /auth/session") {
     return { name: "AUTH_RATE_LIMITER", keyPrefix: "auth:/auth/session" };
   }
-  if (route === "GET /api/me" || route === "DELETE /api/me" || route === "POST /api/usage/daily") {
+  if (
+    route === "GET /api/me" ||
+    route === "DELETE /api/me" ||
+    route === "DELETE /api/leaderboard" ||
+    route === "GET /api/tree" ||
+    route === "POST /api/tree/events" ||
+    route === "POST /api/tree/achievements" ||
+    route === "POST /api/usage/daily"
+  ) {
     return { name: "WRITE_RATE_LIMITER", keyPrefix: `api:${url.pathname}` };
   }
 
@@ -386,8 +414,16 @@ async function getMe(request: Request, env: Env) {
 async function deleteMe(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
+  await ensureCloudTreeTables(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_events WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_achievements WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_devices WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_device_stats WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_model_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM auth_codes WHERE user_id = ?").bind(user.userId),
@@ -395,7 +431,231 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM security_events WHERE actor_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM users WHERE user_id = ?").bind(user.userId),
   ]);
+  leaderboardCache.clear();
   return json({ ok: true }, env);
+}
+
+async function leaveLeaderboard(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
+  ]);
+  leaderboardCache.clear();
+  return json({ ok: true }, env);
+}
+
+async function getCloudTree(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  return json(await cloudTreePayload(user.userId, env), env);
+}
+
+async function getCloudTreeDelta(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  const url = new URL(request.url);
+  const since = normalizeSyncCursor(url.searchParams.get("since"));
+  if (!since) throw new HttpError(400, "A valid since cursor is required.", {}, "invalid_payload");
+  return json(await cloudTreePayload(user.userId, env, since), env);
+}
+
+async function cloudTreePayload(userId: string, env: Env, since?: string) {
+  const cursor = new Date().toISOString();
+  const eventQuery = since
+    ? `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source,
+              tokens, input_tokens AS inputTokens, output_tokens AS outputTokens,
+              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens
+       FROM tree_events
+       WHERE user_id = ? AND updated_at > ? AND updated_at <= ?
+       ORDER BY updated_at ASC, event_id ASC`
+    : `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source,
+              tokens, input_tokens AS inputTokens, output_tokens AS outputTokens,
+              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens
+       FROM tree_events
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 50000`;
+  const achievementQuery = since
+    ? `SELECT achievement_id AS id, unlocked_at AS unlockedAt
+       FROM tree_achievements
+       WHERE user_id = ? AND updated_at > ? AND updated_at <= ?
+       ORDER BY updated_at ASC, achievement_id ASC`
+    : `SELECT achievement_id AS id, unlocked_at AS unlockedAt
+       FROM tree_achievements
+       WHERE user_id = ?
+       ORDER BY unlocked_at ASC`;
+  const [eventRows, achievementRows, deviceRows, deviceTotalRows, modelStatRows] = await Promise.all([
+    env.DB.prepare(
+      eventQuery,
+    ).bind(...(since ? [userId, since, cursor] : [userId])).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      achievementQuery,
+    ).bind(...(since ? [userId, since, cursor] : [userId])).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      `SELECT device_id AS deviceId, alias, platform, last_synced_at AS lastSyncedAt,
+              app_version AS appVersion
+       FROM tree_devices
+       WHERE user_id = ?`,
+    ).bind(userId).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      `SELECT device_id AS deviceId, entry_count AS entryCount, tokens, last_event_updated_at AS lastSyncedAt
+       FROM tree_device_stats
+       WHERE user_id = ?`,
+    ).bind(userId).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      `SELECT device_id AS deviceId, date, source, model, tokens,
+              input_tokens AS inputTokens, output_tokens AS outputTokens,
+              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens
+       FROM tree_model_stats
+       WHERE user_id = ?
+       ORDER BY date ASC, source ASC, model ASC
+       LIMIT 5000`,
+    ).bind(userId).all<Record<string, unknown>>(),
+  ]);
+  const entries = (eventRows.results || []).map((row) => ({
+    id: String(row.id),
+    deviceId: typeof row.deviceId === "string" ? row.deviceId : undefined,
+    createdAt: String(row.createdAt),
+    source: normalizeTreeEventSource(row.source, row.id),
+    tokens: numberOrZero(row.tokens),
+    inputTokens: optionalNumber(row.inputTokens),
+    outputTokens: optionalNumber(row.outputTokens),
+    cacheReadTokens: optionalNumber(row.cacheReadTokens),
+    cacheWriteTokens: optionalNumber(row.cacheWriteTokens),
+  }));
+  const achievements = (achievementRows.results || []).map((row) => ({
+    id: String(row.id),
+    unlockedAt: String(row.unlockedAt),
+  }));
+  const deviceMeta = new Map(
+    (deviceRows.results || []).map((row) => [
+      String(row.deviceId),
+      {
+        alias: typeof row.alias === "string" ? row.alias : undefined,
+        platform: typeof row.platform === "string" ? row.platform : undefined,
+        lastSyncedAt: typeof row.lastSyncedAt === "string" ? row.lastSyncedAt : undefined,
+        appVersion: typeof row.appVersion === "string" ? row.appVersion : undefined,
+      },
+    ]),
+  );
+  const deviceIds = new Set<string>([
+    ...[...deviceMeta.keys()],
+    ...(deviceTotalRows.results || [])
+      .map((row) => (typeof row.deviceId === "string" ? row.deviceId : undefined))
+      .filter((deviceId): deviceId is string => Boolean(deviceId)),
+  ]);
+  const deviceTotals = new Map(
+    (deviceTotalRows.results || []).map((row) => [
+      String(row.deviceId),
+      {
+        entryCount: numberOrZero(row.entryCount),
+        tokens: numberOrZero(row.tokens),
+        lastSyncedAt: typeof row.lastSyncedAt === "string" ? row.lastSyncedAt : undefined,
+      },
+    ]),
+  );
+  const devices = [...deviceIds]
+    .map((deviceId) => {
+      const meta = deviceMeta.get(deviceId);
+      const totals = deviceTotals.get(deviceId);
+      return {
+        deviceId,
+        alias: meta?.alias,
+        platform: meta?.platform,
+        lastSyncedAt: meta?.lastSyncedAt ?? totals?.lastSyncedAt,
+        appVersion: meta?.appVersion,
+        entryCount: totals?.entryCount ?? 0,
+        tokens: totals?.tokens ?? 0,
+      };
+    })
+    .sort((left, right) => right.tokens - left.tokens);
+  const modelStats = (modelStatRows.results || []).map((row) => ({
+    deviceId: String(row.deviceId),
+    date: String(row.date),
+    source: normalizeTreeEventSource(row.source),
+    model: String(row.model),
+    tokens: numberOrZero(row.tokens),
+    inputTokens: optionalNumber(row.inputTokens),
+    outputTokens: optionalNumber(row.outputTokens),
+    cacheReadTokens: optionalNumber(row.cacheReadTokens),
+    cacheWriteTokens: optionalNumber(row.cacheWriteTokens),
+  }));
+  return {
+    entries,
+    achievements,
+    devices,
+    modelStats,
+    cursor,
+    delta: Boolean(since),
+    modelStatsFull: true,
+    devicesFull: true,
+    summary: {
+      hasRemoteTree: entries.length > 0 || achievements.length > 0 || devices.length > 0 || modelStats.length > 0,
+      entryCount: entries.length,
+      achievementCount: achievements.length,
+      deviceCount: devices.length,
+      modelStatCount: modelStats.length,
+    },
+  };
+}
+
+async function syncCloudTreeEvents(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  const body = await request.json().catch(() => undefined) as
+    | {
+        deviceId?: string;
+        device?: unknown;
+        entries?: unknown[];
+        modelStats?: unknown[];
+        modelStatsEnabled?: boolean;
+        appVersion?: string;
+      }
+    | undefined;
+  const deviceId = cleanShortText(body?.deviceId, 80);
+  if (!deviceId) throw new HttpError(400, "Device id is required.", {}, "invalid_payload");
+  const appVersion = cleanShortText(body?.appVersion, 32) ?? null;
+  const entries = Array.isArray(body?.entries) ? body.entries.slice(0, 500) : [];
+  const now = new Date().toISOString();
+  const eventStatements = entries.map((raw) => normalizeCloudTreeEvent(raw, user.userId, deviceId, appVersion, now, env)).filter(Boolean);
+  const eventDeviceIds = new Set(
+    entries
+      .map((raw) => cleanShortText((raw as Record<string, unknown> | undefined)?.deviceId, 80) ?? deviceId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const modelStats = normalizeCloudModelStatStatements(body, user.userId, deviceId, now, env);
+  const statements = [
+    upsertCloudTreeDevice(user.userId, deviceId, body?.device, appVersion, now, env),
+    ...eventStatements,
+    ...modelStats.statements,
+  ];
+  if (statements.length) {
+    await env.DB.batch(statements as D1PreparedStatement[]);
+    if (eventStatements.length) await dedupeCloudTreeEventsForUser(user.userId, env);
+    if (eventStatements.length) await refreshCloudDeviceStats(user.userId, [...eventDeviceIds], env);
+  }
+  return json({ ok: true, synced: eventStatements.length, syncedModelStats: modelStats.count }, env);
+}
+
+async function syncCloudTreeAchievements(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  const body = await request.json().catch(() => undefined) as
+    | { achievements?: unknown[]; appVersion?: string }
+    | undefined;
+  const appVersion = cleanShortText(body?.appVersion, 32) ?? null;
+  const achievements = Array.isArray(body?.achievements) ? body.achievements.slice(0, 500) : [];
+  const now = new Date().toISOString();
+  const statements = achievements
+    .map((raw) => normalizeCloudTreeAchievement(raw, user.userId, appVersion, now, env))
+    .filter(Boolean);
+  if (statements.length) await env.DB.batch(statements as D1PreparedStatement[]);
+  return json({ ok: true, synced: statements.length }, env);
 }
 
 async function syncDailyUsage(request: Request, env: Env) {
@@ -404,6 +664,7 @@ async function syncDailyUsage(request: Request, env: Env) {
   const body = await request.json().catch(() => undefined) as
     | {
         days?: Array<{ date?: string; tokens?: number; xp?: number }>;
+        hours?: Array<{ hourStartUtc?: string; hourStart?: string; tokens?: number; xp?: number }>;
         appVersion?: string;
         usageStartDate?: string;
         forceSync?: boolean;
@@ -411,15 +672,19 @@ async function syncDailyUsage(request: Request, env: Env) {
         usagePreferences?: unknown[];
       }
     | undefined;
-  await enforceSyncCooldown(user.userId, env);
+  if (body?.forceSync !== true) await enforceSyncCooldown(user.userId, env);
   const days = Array.isArray(body?.days) ? body.days.slice(0, MAX_BACKFILL_DAYS) : [];
+  const hasHourlyUsage = Array.isArray(body?.hours);
+  const hours = hasHourlyUsage ? body.hours?.slice(0, MAX_HOURLY_BACKFILL_HOURS + 2) ?? [] : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
   const usageStartDate = normalizeUsageStartDate(body?.usageStartDate);
   const usagePreferencesPublic = body?.usagePreferencesPublic === true;
   const usagePreferenceInput = Array.isArray(body?.usagePreferences) ? body.usagePreferences : [];
   const now = new Date().toISOString();
   const syncWindow = dailySyncWindow(usageStartDate);
+  const hourWindow = hourlySyncWindow(new Date());
   const normalizedDays = normalizeDailyUsageRows(days, syncWindow);
+  const normalizedHours = hasHourlyUsage ? normalizeHourlyUsageRows(hours, hourWindow) : [];
   const preferenceRows = usagePreferencesPublic ? normalizeUsagePreferenceRows(usagePreferenceInput) : [];
   const statements = normalizedDays.map((day) =>
     env.DB.prepare(
@@ -430,6 +695,16 @@ async function syncDailyUsage(request: Request, env: Env) {
          app_version = excluded.app_version,
          updated_at = excluded.updated_at`,
     ).bind(user.userId, day.date, day.xp, appVersion, now),
+  );
+  const hourlyStatements = normalizedHours.map((hour) =>
+    env.DB.prepare(
+      `INSERT INTO hourly_usage (user_id, hour_start_utc, tokens, app_version, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, hour_start_utc) DO UPDATE SET
+         tokens = excluded.tokens,
+         app_version = excluded.app_version,
+         updated_at = excluded.updated_at`,
+    ).bind(user.userId, hour.hourStartUtc, hour.tokens, appVersion, now),
   );
   const preferenceStatements = preferenceRows.map((preference) =>
     env.DB.prepare(
@@ -462,14 +737,24 @@ async function syncDailyUsage(request: Request, env: Env) {
   );
 
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date >= ? AND date <= ?")
       .bind(user.userId, syncWindow.earliest, syncWindow.latest),
+    ...(hasHourlyUsage
+      ? [
+          env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ? AND hour_start_utc >= ? AND hour_start_utc <= ?")
+            .bind(user.userId, hourWindow.earliest, hourWindow.latest),
+          env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ? AND hour_start_utc < ?")
+            .bind(user.userId, hourWindow.earliest),
+        ]
+      : []),
     ...(usageStartDate
       ? [env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date < ?").bind(user.userId, usageStartDate)]
       : []),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     ...statements,
+    ...hourlyStatements,
     ...preferenceStatements,
     env.DB.prepare(
       `INSERT INTO sync_limits (user_id, last_synced_at)
@@ -477,10 +762,12 @@ async function syncDailyUsage(request: Request, env: Env) {
        ON CONFLICT(user_id) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
     ).bind(user.userId, now),
   ]);
+  leaderboardCache.clear();
   return json(
     {
       ok: true,
       synced: statements.length,
+      syncedHours: hourlyStatements.length,
       syncedPreferences: preferenceStatements.length,
       leaderboardType: "community",
       usageStartDate,
@@ -534,6 +821,367 @@ async function ensureUsagePreferencesTable(env: Env) {
   ]);
 }
 
+async function ensureHourlyUsageTable(env: Env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS hourly_usage (
+        user_id TEXT NOT NULL,
+        hour_start_utc TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, hour_start_utc),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour ON hourly_usage(hour_start_utc)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_user ON hourly_usage(user_id)"),
+  ]);
+}
+
+async function ensureCloudTreeTables(env: Env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_events (
+        user_id TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        device_id TEXT,
+        created_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, event_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_achievements (
+        user_id TEXT NOT NULL,
+        achievement_id TEXT NOT NULL,
+        unlocked_at TEXT NOT NULL,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, achievement_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_devices (
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        alias TEXT,
+        platform TEXT,
+        first_seen_at TEXT NOT NULL,
+        last_synced_at TEXT NOT NULL,
+        app_version TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_device_stats (
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        entry_count INTEGER NOT NULL,
+        tokens INTEGER NOT NULL,
+        last_event_updated_at TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_model_stats (
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        source TEXT NOT NULL,
+        model TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id, date, source, model),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_user_created ON tree_events(user_id, created_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_device ON tree_events(user_id, device_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_user_updated ON tree_events(user_id, updated_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_achievements_user ON tree_achievements(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_achievements_user_updated ON tree_achievements(user_id, updated_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_devices_user ON tree_devices(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_devices_user_updated ON tree_devices(user_id, updated_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_device_stats_user ON tree_device_stats(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_device_stats_user_updated ON tree_device_stats(user_id, updated_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user ON tree_model_stats(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_device ON tree_model_stats(user_id, device_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user_updated ON tree_model_stats(user_id, updated_at)"),
+  ]);
+}
+
+function normalizeCloudTreeEvent(
+  raw: unknown,
+  userId: string,
+  fallbackDeviceId: string,
+  appVersion: string | null,
+  now: string,
+  env: Env,
+) {
+  const input = raw as Record<string, unknown> | undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const eventId = cleanShortText(input.id, 160);
+  const createdAt = typeof input.createdAt === "string" && Number.isFinite(Date.parse(input.createdAt))
+    ? input.createdAt
+    : "";
+  const source = normalizeTreeEventSource(input.source, eventId);
+  const tokens = normalizeTokenCount(input.tokens);
+  if (!eventId || !createdAt || !source || tokens === undefined) return undefined;
+  return env.DB.prepare(
+    `INSERT INTO tree_events (
+       user_id, event_id, device_id, created_at, source, tokens,
+       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, app_version, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, event_id) DO UPDATE SET
+       device_id = excluded.device_id,
+       created_at = excluded.created_at,
+       source = excluded.source,
+       tokens = excluded.tokens,
+       input_tokens = excluded.input_tokens,
+       output_tokens = excluded.output_tokens,
+       cache_read_tokens = excluded.cache_read_tokens,
+       cache_write_tokens = excluded.cache_write_tokens,
+       app_version = excluded.app_version,
+       updated_at = excluded.updated_at`,
+  ).bind(
+    userId,
+    eventId,
+    cleanShortText(input.deviceId, 80) ?? fallbackDeviceId,
+    createdAt,
+    source,
+    tokens,
+    normalizeTokenCount(input.inputTokens) ?? null,
+    normalizeTokenCount(input.outputTokens) ?? null,
+    normalizeTokenCount(input.cacheReadTokens) ?? null,
+    normalizeTokenCount(input.cacheWriteTokens) ?? null,
+    appVersion,
+    now,
+  );
+}
+
+function upsertCloudTreeDevice(
+  userId: string,
+  deviceId: string,
+  rawDevice: unknown,
+  appVersion: string | null,
+  now: string,
+  env: Env,
+) {
+  const input = rawDevice as Record<string, unknown> | undefined;
+  const alias = cleanShortText(input?.alias, 64) ?? null;
+  const platform = normalizeDevicePlatform(input?.platform) ?? null;
+  return env.DB.prepare(
+    `INSERT INTO tree_devices (
+       user_id, device_id, alias, platform, first_seen_at, last_synced_at, app_version, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, device_id) DO UPDATE SET
+       alias = COALESCE(excluded.alias, tree_devices.alias),
+       platform = COALESCE(excluded.platform, tree_devices.platform),
+       last_synced_at = excluded.last_synced_at,
+       app_version = COALESCE(excluded.app_version, tree_devices.app_version),
+       updated_at = excluded.updated_at`,
+  ).bind(userId, deviceId, alias, platform, now, now, appVersion, now);
+}
+
+async function refreshCloudDeviceStats(userId: string, deviceIds: string[], env: Env) {
+  const uniqueDeviceIds = [...new Set(deviceIds)].filter(Boolean);
+  if (!uniqueDeviceIds.length) return;
+  const now = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [];
+  for (const deviceId of uniqueDeviceIds) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO tree_device_stats (user_id, device_id, entry_count, tokens, last_event_updated_at, updated_at)
+         SELECT ?, ?, COUNT(*), COALESCE(SUM(tokens), 0), MAX(updated_at), ?
+         FROM tree_events
+         WHERE user_id = ? AND device_id = ?
+         ON CONFLICT(user_id, device_id) DO UPDATE SET
+           entry_count = excluded.entry_count,
+           tokens = excluded.tokens,
+           last_event_updated_at = excluded.last_event_updated_at,
+           updated_at = excluded.updated_at`,
+      ).bind(userId, deviceId, now, userId, deviceId),
+    );
+  }
+  await env.DB.batch(statements);
+}
+
+function normalizeCloudModelStatStatements(
+  body: { modelStatsEnabled?: boolean; modelStats?: unknown[] } | undefined,
+  userId: string,
+  deviceId: string,
+  now: string,
+  env: Env,
+) {
+  const rawRows = Array.isArray(body?.modelStats) ? body.modelStats : undefined;
+  if (!rawRows && body?.modelStatsEnabled !== false) {
+    return { statements: [], count: 0 };
+  }
+
+  const rows = rawRows
+    ? rawRows.slice(0, 1000).map(normalizeCloudModelStat).filter(Boolean)
+    : [];
+  return {
+    statements: [
+      env.DB.prepare("DELETE FROM tree_model_stats WHERE user_id = ? AND device_id = ?").bind(userId, deviceId),
+      ...rows.map((row) =>
+        env.DB.prepare(
+          `INSERT INTO tree_model_stats (
+             user_id, device_id, date, source, model, tokens,
+             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, device_id, date, source, model) DO UPDATE SET
+             tokens = excluded.tokens,
+             input_tokens = excluded.input_tokens,
+             output_tokens = excluded.output_tokens,
+             cache_read_tokens = excluded.cache_read_tokens,
+             cache_write_tokens = excluded.cache_write_tokens,
+             updated_at = excluded.updated_at`,
+        ).bind(
+          userId,
+          deviceId,
+          row.date,
+          row.source,
+          row.model,
+          row.tokens,
+          row.inputTokens ?? null,
+          row.outputTokens ?? null,
+          row.cacheReadTokens ?? null,
+          row.cacheWriteTokens ?? null,
+          now,
+        ),
+      ),
+    ],
+    count: rows.length,
+  };
+}
+
+function normalizeCloudModelStat(raw: unknown) {
+  const input = raw as Record<string, unknown> | undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const date = typeof input.date === "string" && isDateKey(input.date) ? input.date : undefined;
+  const source = normalizeTreeEventSource(input.source);
+  const model = cleanShortText(input.model, 64);
+  const tokens = normalizeTokenCount(input.tokens);
+  if (!date || !model || source === "cloud-sync" || tokens === undefined || tokens <= 0) return undefined;
+  return {
+    date,
+    source,
+    model,
+    tokens,
+    inputTokens: normalizeTokenCount(input.inputTokens),
+    outputTokens: normalizeTokenCount(input.outputTokens),
+    cacheReadTokens: normalizeTokenCount(input.cacheReadTokens),
+    cacheWriteTokens: normalizeTokenCount(input.cacheWriteTokens),
+  };
+}
+
+function normalizeTreeEventSource(value: unknown, eventId?: unknown) {
+  const source = typeof value === "string" ? value.trim() : "";
+  if (SAFE_TREE_EVENT_SOURCES.has(source) && source !== "cloud-sync") return source;
+  const inferred = sourceFromEventId(eventId);
+  return inferred ?? (SAFE_TREE_EVENT_SOURCES.has(source) ? source : "cloud-sync");
+}
+
+function sourceFromEventId(eventId: unknown) {
+  if (typeof eventId !== "string") return undefined;
+  const delimiter = eventId.indexOf(":");
+  if (delimiter <= 0) return undefined;
+  const prefix = eventId.slice(0, delimiter);
+  return SAFE_TREE_EVENT_SOURCES.has(prefix) && prefix !== "cloud-sync" ? prefix : undefined;
+}
+
+const SAFE_TREE_EVENT_SOURCES = new Set([
+  "manual",
+  "codex-session",
+  "claude-session",
+  "openclaw-session",
+  "pi-session",
+  "opencode-session",
+  "gemini-session",
+  "hermes-session",
+  "cloud-sync",
+]);
+
+async function dedupeCloudTreeEventsForUser(userId: string, env: Env) {
+  await env.DB.prepare(
+    `DELETE FROM tree_events
+     WHERE user_id = ?
+       AND rowid NOT IN (
+         SELECT MIN(rowid)
+         FROM tree_events
+         WHERE user_id = ?
+         GROUP BY
+           user_id,
+           source,
+           created_at,
+           tokens,
+           COALESCE(input_tokens, -1),
+           COALESCE(output_tokens, -1),
+           COALESCE(cache_read_tokens, -1),
+           COALESCE(cache_write_tokens, -1)
+       )`,
+  ).bind(userId, userId).run();
+}
+
+function normalizeCloudTreeAchievement(
+  raw: unknown,
+  userId: string,
+  appVersion: string | null,
+  now: string,
+  env: Env,
+) {
+  const input = raw as Record<string, unknown> | undefined;
+  if (!input || typeof input !== "object") return undefined;
+  const achievementId = cleanShortText(input.id, 160);
+  const unlockedAt = typeof input.unlockedAt === "string" && Number.isFinite(Date.parse(input.unlockedAt))
+    ? input.unlockedAt
+    : "";
+  if (!achievementId || !unlockedAt) return undefined;
+  return env.DB.prepare(
+    `INSERT INTO tree_achievements (user_id, achievement_id, unlocked_at, app_version, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, achievement_id) DO UPDATE SET
+       unlocked_at = excluded.unlocked_at,
+       app_version = excluded.app_version,
+       updated_at = excluded.updated_at`,
+  ).bind(userId, achievementId, unlockedAt, appVersion, now);
+}
+
+function normalizeTokenCount(value: unknown) {
+  const number = Math.round(Number(value));
+  return Number.isFinite(number) && number >= 0 && number <= MAX_DAILY_ACCEPTED_TOKENS ? number : undefined;
+}
+
+function numberOrZero(value: unknown) {
+  return normalizeTokenCount(value) ?? 0;
+}
+
+function optionalNumber(value: unknown) {
+  return normalizeTokenCount(value);
+}
+
 function normalizeDailyUsageRows(
   days: Array<{ date?: string; tokens?: number; xp?: number }>,
   window: { earliest: string; latest: string },
@@ -561,6 +1209,35 @@ function normalizeDailyUsageRows(
     date,
     tokens,
     xp: tokens,
+  }));
+}
+
+function normalizeHourlyUsageRows(
+  hours: Array<{ hourStartUtc?: string; hourStart?: string; tokens?: number; xp?: number }>,
+  window: { earliest: string; latest: string },
+) {
+  const byHour = new Map<string, number>();
+
+  for (const hour of hours) {
+    const hourStartUtc = normalizeHourStartUtc(hour.hourStartUtc ?? hour.hourStart);
+    if (!hourStartUtc || hourStartUtc < window.earliest || hourStartUtc > window.latest) continue;
+
+    const rawTokens = Math.round(Number(hour.tokens ?? hour.xp));
+    if (!Number.isFinite(rawTokens) || rawTokens < 0) {
+      throw new HttpError(400, "Hourly tokens must be a non-negative integer.", {}, "invalid_payload");
+    }
+    if (rawTokens > MAX_DAILY_ACCEPTED_TOKENS) {
+      throw new HttpError(400, `Hourly tokens are above the accepted safety limit of ${MAX_DAILY_ACCEPTED_TOKENS}.`, {
+        safetyMaxDailyTokens: MAX_DAILY_ACCEPTED_TOKENS,
+      }, "invalid_payload");
+    }
+
+    byHour.set(hourStartUtc, Math.max(byHour.get(hourStartUtc) ?? 0, rawTokens));
+  }
+
+  return [...byHour.entries()].map(([hourStartUtc, tokens]) => ({
+    hourStartUtc,
+    tokens,
   }));
 }
 
@@ -610,14 +1287,18 @@ function dailySyncWindow(usageStartDate: string | undefined) {
 
 async function getLeaderboard(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   const url = new URL(request.url);
+  const rawRange = url.searchParams.get("range");
   const range = normalizeRange(url.searchParams.get("range"));
   const requestUser = await optionalAuth(request, env);
-  return json(await leaderboardDataForRange(range, requestUser, env, new Date().toISOString()), env);
+  const data = await leaderboardDataForRange(range, requestUser, env, new Date().toISOString());
+  return json(rawRange === "today" ? { ...data, range: "today" } : data, env);
 }
 
 async function getLeaderboards(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
   const requestUser = await optionalAuth(request, env);
   const updatedAt = new Date().toISOString();
   const pairs = await Promise.all(
@@ -625,12 +1306,16 @@ async function getLeaderboards(request: Request, env: Env) {
       async (range) => [range, await leaderboardDataForRange(range, requestUser, env, updatedAt)] as const,
     ),
   );
+  const ranges = Object.fromEntries(pairs) as Record<
+    LeaderboardRange,
+    Awaited<ReturnType<typeof leaderboardDataForRange>>
+  >;
   return json(
     {
-      ranges: Object.fromEntries(pairs) as Record<
-        LeaderboardRange,
-        Awaited<ReturnType<typeof leaderboardDataForRange>>
-      >,
+      ranges: {
+        today: { ...ranges["24h"], range: "today" },
+        ...ranges,
+      },
       updatedAt,
     },
     env,
@@ -643,49 +1328,129 @@ async function leaderboardDataForRange(
   env: Env,
   updatedAt: string,
 ) {
-  const today = localDateKey(new Date());
-  const since = rangeStart(range, today);
-  const query =
-    range === "all"
-      ? `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
-           SUM(d.xp) AS tokens,
-           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
-           p.favorite_agent_label AS favoriteAgentLabel,
-           p.favorite_agent_percent AS favoriteAgentPercent,
-           p.favorite_model AS favoriteModel,
-           p.favorite_period AS favoritePeriod,
-           p.favorite_period_start AS favoritePeriodStart,
-           p.favorite_period_end AS favoritePeriodEnd,
-           p.peak_tokens_per_minute AS peakTokensPerMinute,
-           p.updated_at AS preferenceUpdatedAt
+  const cached = leaderboardCache.get(range);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      range,
+      entries: cached.entries,
+      updatedAt: cached.updatedAt,
+      me: requestUser ? cached.entries.find((entry) => entry.userId === requestUser.userId) : undefined,
+    };
+  }
+
+  let result: D1Result<Record<string, unknown>>;
+  if (range === "all") {
+    result = await env.DB.prepare(
+      `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+         SUM(d.xp) AS tokens,
+         (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+         p.favorite_agent_label AS favoriteAgentLabel,
+         p.favorite_agent_percent AS favoriteAgentPercent,
+         p.favorite_model AS favoriteModel,
+         p.favorite_period AS favoritePeriod,
+         p.favorite_period_start AS favoritePeriodStart,
+         p.favorite_period_end AS favoritePeriodEnd,
+         p.peak_tokens_per_minute AS peakTokensPerMinute,
+         p.updated_at AS preferenceUpdatedAt
+       FROM daily_usage d
+       JOIN users u ON u.user_id = d.user_id
+       LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(range).all<Record<string, unknown>>();
+  } else if (range === "24h") {
+    const hourWindow = rollingLeaderboardHourWindow(new Date());
+    const currentWindow = currentLocalDateWindow(new Date());
+    const legacyUpdatedAfter = addUtcHours(floorUtcHour(new Date()), -LEGACY_DAILY_FALLBACK_HOURS).toISOString();
+    result = await env.DB.prepare(
+      `WITH hourly_any AS (
+         SELECT DISTINCT user_id FROM hourly_usage
+       ),
+       hourly_totals AS (
+         SELECT user_id, SUM(tokens) AS tokens
+         FROM hourly_usage
+         WHERE hour_start_utc >= ? AND hour_start_utc <= ?
+         GROUP BY user_id
+       ),
+       legacy_current_date AS (
+         SELECT d.user_id, MAX(d.date) AS currentDate
          FROM daily_usage d
-         JOIN users u ON u.user_id = d.user_id
-         LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
-         GROUP BY u.user_id
-         HAVING tokens > 0
-         ORDER BY tokens DESC
-         LIMIT 100`
-      : `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
-           SUM(d.xp) AS tokens,
-           (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
-           p.favorite_agent_label AS favoriteAgentLabel,
-           p.favorite_agent_percent AS favoriteAgentPercent,
-           p.favorite_model AS favoriteModel,
-           p.favorite_period AS favoritePeriod,
-           p.favorite_period_start AS favoritePeriodStart,
-           p.favorite_period_end AS favoritePeriodEnd,
-           p.peak_tokens_per_minute AS peakTokensPerMinute,
-           p.updated_at AS preferenceUpdatedAt
-         FROM daily_usage d
-         JOIN users u ON u.user_id = d.user_id
-         LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
-         WHERE d.date >= ?
-         GROUP BY u.user_id
-         HAVING tokens > 0
-         ORDER BY tokens DESC
-         LIMIT 100`;
-  const result =
-    range === "all" ? await env.DB.prepare(query).bind(range).all() : await env.DB.prepare(query).bind(range, since).all();
+         LEFT JOIN hourly_any h ON h.user_id = d.user_id
+         WHERE h.user_id IS NULL
+           AND d.date >= ? AND d.date <= ?
+           AND d.updated_at >= ?
+         GROUP BY d.user_id
+       ),
+       legacy_daily AS (
+         SELECT c.user_id, SUM(d.xp) AS tokens
+         FROM legacy_current_date c
+         JOIN daily_usage d ON d.user_id = c.user_id AND d.date = c.currentDate
+         GROUP BY c.user_id
+       ),
+       range_totals AS (
+         SELECT user_id, tokens FROM hourly_totals
+         UNION ALL
+         SELECT user_id, tokens FROM legacy_daily
+       )
+       SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+         SUM(r.tokens) AS tokens,
+         (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+         p.favorite_agent_label AS favoriteAgentLabel,
+         p.favorite_agent_percent AS favoriteAgentPercent,
+         p.favorite_model AS favoriteModel,
+         p.favorite_period AS favoritePeriod,
+         p.favorite_period_start AS favoritePeriodStart,
+         p.favorite_period_end AS favoritePeriodEnd,
+         p.peak_tokens_per_minute AS peakTokensPerMinute,
+         p.updated_at AS preferenceUpdatedAt
+       FROM range_totals r
+       JOIN users u ON u.user_id = r.user_id
+       LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(
+      hourWindow.earliest,
+      hourWindow.latest,
+      currentWindow.earliest,
+      currentWindow.latest,
+      legacyUpdatedAfter,
+      range,
+    ).all<Record<string, unknown>>();
+  } else {
+    const currentWindow = currentLocalDateWindow(new Date());
+    result = await env.DB.prepare(
+      `WITH user_current_date AS (
+         SELECT user_id, MAX(date) AS currentDate
+         FROM daily_usage
+         WHERE date >= ? AND date <= ?
+         GROUP BY user_id
+       )
+       SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+         SUM(d.xp) AS tokens,
+         (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive,
+         p.favorite_agent_label AS favoriteAgentLabel,
+         p.favorite_agent_percent AS favoriteAgentPercent,
+         p.favorite_model AS favoriteModel,
+         p.favorite_period AS favoritePeriod,
+         p.favorite_period_start AS favoritePeriodStart,
+         p.favorite_period_end AS favoritePeriodEnd,
+         p.peak_tokens_per_minute AS peakTokensPerMinute,
+         p.updated_at AS preferenceUpdatedAt
+       FROM user_current_date c
+       JOIN daily_usage d ON d.user_id = c.user_id
+       JOIN users u ON u.user_id = d.user_id
+       LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(currentWindow.earliest, currentWindow.latest, range, rangeDateModifier(range)).all<Record<string, unknown>>();
+  }
   const entries = (result.results || []).map((row, index) => ({
     rank: index + 1,
     userId: String(row.userId),
@@ -696,6 +1461,11 @@ async function leaderboardDataForRange(
     daysActive: Math.max(0, Math.round(Number(row.daysActive))),
     usagePreference: rowToUsagePreference(row),
   }));
+  leaderboardCache.set(range, {
+    entries,
+    updatedAt,
+    expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
+  });
   return {
     range,
     entries,
@@ -903,11 +1673,13 @@ function isDateKey(value: string) {
 }
 
 function normalizeRange(value: string | null): LeaderboardRange {
-  return value === "today" || value === "30d" || value === "all" ? value : "7d";
+  if (value === "today" || value === "24h") return "24h";
+  return value === "30d" || value === "all" ? value : "7d";
 }
 
 function normalizePreferenceRange(value: unknown): LeaderboardRange | undefined {
-  return value === "today" || value === "7d" || value === "30d" || value === "all" ? value : undefined;
+  if (value === "today" || value === "24h") return "24h";
+  return value === "7d" || value === "30d" || value === "all" ? value : undefined;
 }
 
 function normalizePreferencePeriod(value: unknown): UsagePreferencePeriod | undefined {
@@ -918,6 +1690,13 @@ function normalizePreferencePeriod(value: unknown): UsagePreferencePeriod | unde
 
 function cleanShortText(value: unknown, maxLength: number) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+}
+
+function normalizeDevicePlatform(value: unknown) {
+  const platform = cleanShortText(value, 32);
+  return platform === "mac" || platform === "windows" || platform === "linux" || platform === "unknown"
+    ? platform
+    : undefined;
 }
 
 function normalizePercent(value: unknown) {
@@ -938,17 +1717,68 @@ function normalizePreferenceCount(value: unknown) {
   return Number.isFinite(count) ? Math.max(0, Math.min(MAX_DAILY_ACCEPTED_TOKENS, count)) : undefined;
 }
 
-function rangeStart(range: LeaderboardRange, today: string) {
-  if (range === "today") return today;
-  if (range === "30d") return addDays(today, -29);
-  if (range === "7d") return addDays(today, -6);
-  return "0000-01-01";
+function rangeDateModifier(range: LeaderboardRange) {
+  if (range === "30d") return "-29 days";
+  if (range === "7d") return "-6 days";
+  return "-99999 days";
+}
+
+function rollingLeaderboardHourWindow(now: Date) {
+  const latestHour = floorUtcHour(now);
+  return {
+    earliest: addUtcHours(latestHour, -23).toISOString(),
+    latest: latestHour.toISOString(),
+  };
+}
+
+function hourlySyncWindow(now: Date) {
+  const latestHour = addUtcHours(floorUtcHour(now), 1);
+  return {
+    earliest: addUtcHours(latestHour, -MAX_HOURLY_BACKFILL_HOURS).toISOString(),
+    latest: latestHour.toISOString(),
+  };
+}
+
+function currentLocalDateWindow(now: Date) {
+  const utcToday = localDateKey(now);
+  return {
+    earliest: addDays(utcToday, -1),
+    latest: addDays(utcToday, 1),
+  };
 }
 
 function normalizeUsageStartDate(value: unknown) {
   if (typeof value !== "string" || !isDateKey(value)) return undefined;
   const latest = addDays(localDateKey(new Date()), 1);
   return value <= latest ? value : undefined;
+}
+
+function normalizeHourStartUtc(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  const hourStartUtc = floorUtcHour(date).toISOString();
+  return value === hourStartUtc || value === hourStartUtc.replace(".000Z", "Z") ? hourStartUtc : undefined;
+}
+
+function normalizeSyncCursor(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  const iso = date.toISOString();
+  return iso <= new Date(Date.now() + 60_000).toISOString() ? iso : undefined;
+}
+
+function floorUtcHour(date: Date) {
+  const hour = new Date(date);
+  hour.setUTCMinutes(0, 0, 0);
+  return hour;
+}
+
+function addUtcHours(date: Date, hours: number) {
+  const next = new Date(date);
+  next.setUTCHours(next.getUTCHours() + hours);
+  return next;
 }
 
 function maxDateKey(left: string, right: string) {

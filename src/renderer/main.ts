@@ -2,6 +2,7 @@ import type {
   AchievementState,
   AchievementUnlock,
   AppLanguage,
+  CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
   LeaderboardData,
@@ -13,8 +14,9 @@ import type {
   UpdateStatus,
   UsageStatus,
   WindowBounds,
+  TreeToastItem,
 } from "../shared/types";
-import { countedInputTokensForEntry } from "../shared/tokenAccounting";
+import { countedTokenBreakdownForEntry } from "../shared/tokenAccounting";
 import { ACHIEVEMENTS, CATEGORY_ORDER, rarityOrder } from "./achievements";
 import type { AchievementContext, AchievementDef } from "./achievements";
 import { appShellHtml } from "./appShell";
@@ -124,6 +126,8 @@ const UI_THEME_STORAGE_KEY = "vibe-tree:ui-theme";
 const LEADERBOARD_CACHE_STORAGE_KEY = "vibe-tree:leaderboard-cache";
 const LEADERBOARD_CACHE_TTL_MS = 60 * 60 * 1000;
 const LEADERBOARD_CACHE_DISPLAY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const TREE_START_FEEDBACK_HOLD_MS = 700;
+const TREE_START_CLOUD_HELP_MS = 8_000;
 const initialUiTheme = viewMode === "toast" ? "night" : readCachedUiTheme();
 const platformName = rendererPlatform();
 document.documentElement.dataset.platform = platformName;
@@ -149,13 +153,19 @@ let leaderboardStatus: LeaderboardStatus = {
   joined: false,
   syncing: false,
 };
+let cloudSyncStatus: CloudSyncStatus = {
+  configured: false,
+  authenticated: false,
+  enabled: false,
+  syncing: false,
+};
 let leaderboardRange: LeaderboardRange = "7d";
 let leaderboardData: LeaderboardData = {
   range: "7d",
   entries: [],
 };
 let leaderboardLoadedRange: LeaderboardRange | null = null;
-const LEADERBOARD_RANGES: LeaderboardRange[] = ["today", "7d", "30d", "all"];
+const LEADERBOARD_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
 const leaderboardDataCache = new Map<LeaderboardRange, LeaderboardData>();
 let leaderboardDataCacheSavedAt: number | null = null;
 let leaderboardLoading = false;
@@ -167,7 +177,7 @@ let achievementSyncInFlight = false;
 let achievementReconcileInFlight = false;
 let achievementToastTimer: number | undefined;
 let lockedAchievementHintTimer: number | undefined;
-const achievementToastQueue: AchievementDef[] = [];
+const achievementToastQueue: TreeToastItem[] = [];
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const TOAST_PREVIEW_IDS = ["sprout", "deep_night", "xp_1m", "xp_100m", "fibonacci"];
 const RENDER_INTERVAL_MS = viewMode === "pet" ? 2_500 : 1_000;
@@ -232,6 +242,9 @@ let historyFilter: HistoryFilter = "all";
 let lastHistoryChartKey = "";
 let sourceScope: SourceScope = "today";
 let dashboardTab: DashboardTab = "home";
+let treeStartPendingAction: "new" | "cloud" | null = null;
+let treeStartCloudHelpTimer: number | undefined;
+let treeStartPendingVersion = 0;
 let achievementCategoryFilter: AchievementCategoryFilter = "growth";
 let achievementStatusFilter: AchievementStatusFilter = "all";
 let seenAchievementIds = new Set<string>();
@@ -255,11 +268,6 @@ let activePetPointer: null | {
   x: number;
   y: number;
   moved: boolean;
-} = null;
-let lastPetTap: null | {
-  time: number;
-  x: number;
-  y: number;
 } = null;
 let appLanguage: AppLanguage = browserLanguage();
 const statsCache = new StatsCache();
@@ -289,6 +297,7 @@ const settingsButton = document.querySelector<HTMLButtonElement>("#settingsButto
 const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settingsCloseButton");
 const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
 const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
+const settingsNav = document.querySelector<HTMLElement>("#settingsNav");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
 const fontScaleSelect = document.querySelector<HTMLSelectElement>("#fontScaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
@@ -315,15 +324,27 @@ const geminiSessionsDirInput = document.querySelector<HTMLInputElement>("#gemini
 const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermesSessionsDirInput");
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
+const leaderboardAutoSyncInput = document.querySelector<HTMLInputElement>("#leaderboardAutoSyncInput");
 const leaderboardPreferencesPublicInput = document.querySelector<HTMLInputElement>("#leaderboardPreferencesPublicInput");
-const leaderboardMembershipButton = document.querySelector<HTMLButtonElement>("#leaderboardMembershipButton");
-const leaderboardSettingsSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardSettingsSyncButton");
 const leaderboardPageRefreshButton = document.querySelector<HTMLButtonElement>("#leaderboardPageRefreshButton");
 const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardPageSyncButton");
 const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
 const leaderboardRows = document.querySelector<HTMLElement>("#leaderboardRows");
 const shareExportButton = document.querySelector<HTMLButtonElement>("#shareExportButton");
+const treeStartModal = document.querySelector<HTMLElement>("#treeStartModal");
+const treeStartNewButton = document.querySelector<HTMLButtonElement>("#treeStartNewButton");
+const treeStartExistingButton = document.querySelector<HTMLButtonElement>("#treeStartExistingButton");
+const treeStartCancelButton = document.querySelector<HTMLButtonElement>("#treeStartCancelButton");
+const treeStartFeedback = document.querySelector<HTMLElement>("#treeStartFeedback");
+const treeStartTreeImage = document.querySelector<HTMLImageElement>("#treeStartTreeImage");
+const cloudSyncStatusText = document.querySelector<HTMLElement>("#cloudSyncStatusText");
+const cloudSyncActionButton = document.querySelector<HTMLButtonElement>("#cloudSyncActionButton");
+const SETTINGS_CATEGORY_IDS = ["basic", "sync", "updates", "sources"] as const;
+type SettingsCategory = (typeof SETTINGS_CATEGORY_IDS)[number];
+let activeSettingsCategory: SettingsCategory = "basic";
+const cloudSyncDeviceList = document.querySelector<HTMLElement>("#cloudSyncDeviceList");
+const cloudSyncAutoSyncInput = document.querySelector<HTMLInputElement>("#cloudSyncAutoSyncInput");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -420,9 +441,13 @@ function hydrateLeaderboardCache() {
     if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > LEADERBOARD_CACHE_DISPLAY_MAX_AGE_MS) return;
     if (!parsed.ranges || typeof parsed.ranges !== "object") return;
 
+    const rawRanges = parsed.ranges as Record<string, unknown>;
     leaderboardDataCache.clear();
     for (const range of LEADERBOARD_RANGES) {
-      const data = (parsed.ranges as Partial<Record<LeaderboardRange, unknown>>)[range];
+      const legacyToday = range === "24h" && rawRanges.today && typeof rawRanges.today === "object"
+        ? { ...(rawRanges.today as Record<string, unknown>), range: "24h" }
+        : undefined;
+      const data = rawRanges[range] ?? legacyToday;
       if (isCacheableLeaderboardData(data, range)) leaderboardDataCache.set(range, data);
     }
     leaderboardDataCacheSavedAt = cachedAt;
@@ -531,6 +556,9 @@ function t(key: string): string {
 }
 
 function applyI18n() {
+  updateStatusRenderKey = "";
+  leaderboardSettingsRenderKey = "";
+  leaderboardRenderKey = "";
   document.documentElement.lang = languageLocale();
   if (viewMode === "pet") {
     delete document.documentElement.dataset.uiTheme;
@@ -630,7 +658,21 @@ function sourceMonitorStatus(sourceId: HistorySourceId) {
 }
 
 function sourceVisibility(): SourceVisibility {
-  return buildSourceVisibility(usageStatus, ledger?.settings.enabledSourceIds);
+  const visibility = buildSourceVisibility(usageStatus, ledger?.settings.enabledSourceIds);
+  const sourcesWithEntries = new Set(
+    (ledger?.entries ?? [])
+      .map((entry) => historySourceId(entry))
+      .filter((sourceId): sourceId is HistorySourceId => Boolean(sourceId && sourceId !== "cloud")),
+  );
+  const visible = AGENT_SOURCES.filter((source) => {
+    if (source.id === "cloud" || !visibility.enabled.has(source.id)) return false;
+    return visibility.visibleSet.has(source.id) || sourcesWithEntries.has(source.id);
+  }).map((source) => source.id);
+  return {
+    ...visibility,
+    visible,
+    visibleSet: new Set(visible),
+  };
 }
 
 function achievementText(def: AchievementDef): Pick<AchievementDef, "name" | "description" | "flavor"> {
@@ -671,11 +713,12 @@ async function boot() {
   gameBalance = DEFAULT_GAME_BALANCE;
   renderInitialTreePreview();
 
-  const [nextLedger, nextUsageStatus, nextUpdateStatus, nextLeaderboardStatus, nextAchievementState] = await Promise.all([
+  const [nextLedger, nextUsageStatus, nextUpdateStatus, nextLeaderboardStatus, nextCloudSyncStatus, nextAchievementState] = await Promise.all([
     window.bonsai.getLedger(),
     window.bonsai.getUsageStatus(),
     window.bonsai.getUpdateStatus(),
     window.bonsai.getLeaderboardStatus(),
+    window.bonsai.getCloudSyncStatus(),
     window.bonsai.getAchievements(),
   ]);
   ledger = nextLedger;
@@ -683,6 +726,7 @@ async function boot() {
   usageStatus = nextUsageStatus;
   updateStatus = nextUpdateStatus;
   leaderboardStatus = nextLeaderboardStatus;
+  cloudSyncStatus = nextCloudSyncStatus;
   achievementState = nextAchievementState;
   initializeSeenAchievements();
   hydrateLeaderboardCache();
@@ -737,6 +781,10 @@ function renderInitialTreePreview() {
     previewTreeImage.src = assetUrl(stage.image);
     previewTreeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
   }
+  if (treeStartTreeImage) {
+    treeStartTreeImage.src = assetUrl(stage.image);
+    treeStartTreeImage.alt = "";
+  }
 }
 
 async function refreshTreeConfig() {
@@ -760,7 +808,7 @@ async function refreshTreeConfig() {
 function bindToastOverlayEvents() {
   window.bonsai.onAchievementToast((payload) => {
     root.dataset.placement = payload.placement;
-    queueAchievementToasts(payload.ids);
+    queueTreeToasts(payload.items ?? (payload.ids ?? []).map((id) => ({ type: "achievement", id })));
   });
   window.bonsai.onAchievementToastPlacement((placement) => {
     root.dataset.placement = placement;
@@ -782,15 +830,14 @@ function bindEvents() {
       void window.bonsai.setExpanded(true);
     });
 
-    petHitbox.addEventListener("dblclick", () => {
-      void window.bonsai.setExpanded(true);
+    petHitbox.addEventListener("click", (event) => {
+      if (event.detail === 0) void window.bonsai.setExpanded(true);
     });
 
     petStage.addEventListener("pointerdown", async (event) => {
       if (event.button !== 0 || ledger?.settings.locked) return;
       if ((event.target as HTMLElement).closest("#petLevelBadge")) return;
       if (event.detail >= 2) {
-        lastPetTap = null;
         activePetPointer = null;
         void endPetDrag();
         void window.bonsai.setExpanded(true);
@@ -832,9 +879,9 @@ function bindEvents() {
     });
 
     petStage.addEventListener("pointerup", (event) => {
-      const isDoubleTap = consumePetTap(event);
+      const isTap = consumePetTap(event);
       void endPetDrag();
-      if (isDoubleTap) void window.bonsai.setExpanded(true);
+      if (isTap) void window.bonsai.setExpanded(true);
     });
     petStage.addEventListener("pointercancel", () => void resetPetPointer());
     petStage.addEventListener("lostpointercapture", () => void endPetDrag());
@@ -864,6 +911,22 @@ function bindEvents() {
 
   settingsBackdrop?.addEventListener("click", () => {
     setSettingsOpen(false);
+  });
+
+  settingsNav?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-settings-category-button]");
+    const category = button?.dataset.settingsCategoryButton;
+    if (!button || !isSettingsCategory(category)) return;
+    activateSettingsCategory(category);
+    button.focus();
+  });
+
+  settingsNav?.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowRight" && event.key !== "ArrowUp" && event.key !== "ArrowLeft") {
+      return;
+    }
+    event.preventDefault();
+    focusAdjacentSettingsCategory(event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1);
   });
 
   window.addEventListener("keydown", (event) => {
@@ -955,12 +1018,105 @@ function bindEvents() {
     void window.bonsai.openUpdatePage();
   });
 
-  leaderboardMembershipButton?.addEventListener("click", async () => {
-    await toggleLeaderboardMembership();
+  treeStartNewButton?.addEventListener("click", async () => {
+    setTreeStartFeedback(t("treeStartSaving"), "busy");
+    const pendingVersion = setTreeStartPending("new");
+    try {
+      cloudSyncStatus = await window.bonsai.startNewTree();
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
+      setTreeStartFeedback(t("treeStartSaved"), "success");
+      await wait(TREE_START_FEEDBACK_HOLD_MS);
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
+      ledger = await window.bonsai.getLedger();
+    } catch (error) {
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
+      setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
+    } finally {
+      if (isCurrentTreeStartPending(pendingVersion)) {
+        clearTreeStartPending(pendingVersion);
+        render();
+      }
+    }
   });
 
-  leaderboardSettingsSyncButton?.addEventListener("click", () => {
-    void syncLeaderboard({ force: true });
+  treeStartExistingButton?.addEventListener("click", async () => {
+    setTreeStartFeedback(t("treeStartJoining"), "busy");
+    const pendingVersion = setTreeStartPending("cloud");
+    scheduleTreeStartCloudHelp();
+    try {
+      cloudSyncStatus = await window.bonsai.joinExistingTree();
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
+      ledger = await window.bonsai.getLedger();
+      achievementState = await window.bonsai.getAchievements();
+      if (!ledger.settings.treeStartMode) {
+        setTreeStartFeedback(cloudSyncStatus.error || cloudSyncStatusCopy(), "error");
+      } else {
+        setTreeStartFeedback(t("treeStartJoined"), "success");
+        await wait(TREE_START_FEEDBACK_HOLD_MS);
+      }
+    } catch (error) {
+      if (!isCurrentTreeStartPending(pendingVersion)) return;
+      setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
+    } finally {
+      if (isCurrentTreeStartPending(pendingVersion)) {
+        clearTreeStartPending(pendingVersion);
+        render();
+      }
+    }
+  });
+
+  treeStartCancelButton?.addEventListener("click", () => {
+    if (treeStartPendingAction !== "cloud") return;
+    clearTreeStartPending();
+    setTreeStartFeedback(t("treeStartCancelled"), "error");
+    render();
+    void window.bonsai
+      .cancelCloudAuth()
+      .then((status) => {
+        cloudSyncStatus = status;
+        if (!ledger?.settings.treeStartMode) {
+          setTreeStartFeedback(t("treeStartCancelled"), "error");
+          render();
+        }
+      })
+      .catch((error) => {
+        if (!ledger?.settings.treeStartMode) {
+          setTreeStartFeedback(error instanceof Error ? error.message : t("treeStartCancelled"), "error");
+          render();
+        }
+      });
+  });
+
+  window.addEventListener("focus", remindTreeStartCloudPending);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) remindTreeStartCloudPending();
+  });
+
+  cloudSyncActionButton?.addEventListener("click", async () => {
+    cloudSyncActionButton.disabled = true;
+    cloudSyncStatus = cloudSyncStatus.enabled
+      ? await window.bonsai.syncCloudTree()
+      : await window.bonsai.enableCloudSync();
+    ledger = await window.bonsai.getLedger();
+    achievementState = await window.bonsai.getAchievements();
+    cloudSyncActionButton.disabled = false;
+    render();
+  });
+
+  cloudSyncAutoSyncInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      cloudSyncAutoSyncEnabled: cloudSyncAutoSyncInput.checked,
+    });
+    render();
+  });
+
+  leaderboardAutoSyncInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      leaderboardAutoSyncEnabled: leaderboardAutoSyncInput.checked,
+    });
+    render();
   });
 
   leaderboardPreferencesPublicInput?.addEventListener("change", async () => {
@@ -981,7 +1137,7 @@ function bindEvents() {
       await leaveLeaderboard();
       return;
     }
-    openLeaderboardSettings();
+    await joinLeaderboardWithPrompt();
   });
 
   badgeFrontMetricSelect?.addEventListener("change", async () => {
@@ -1147,7 +1303,6 @@ async function endPetDrag() {
 
 async function resetPetPointer() {
   activePetPointer = null;
-  lastPetTap = null;
   await endPetDrag();
 }
 
@@ -1155,17 +1310,9 @@ function consumePetTap(event: PointerEvent) {
   const pointer = activePetPointer;
   activePetPointer = null;
   if (!pointer || pointer.pointerId !== event.pointerId || pointer.moved || pointerDistance(pointer, event) > 8) {
-    lastPetTap = null;
     return false;
   }
-
-  const now = Date.now();
-  const isDoubleTap =
-    Boolean(lastPetTap) &&
-    now - lastPetTap!.time <= 420 &&
-    Math.hypot(event.screenX - lastPetTap!.x, event.screenY - lastPetTap!.y) <= 12;
-  lastPetTap = isDoubleTap ? null : { time: now, x: event.screenX, y: event.screenY };
-  return isDoubleTap;
+  return true;
 }
 
 function pointerDistance(start: { x: number; y: number }, event: PointerEvent) {
@@ -1278,8 +1425,35 @@ async function toggleLeaderboardMembership() {
   await refreshLeaderboardIfVisible();
 }
 
+async function joinLeaderboardWithPrompt() {
+  const confirmed = await showAppConfirm({
+    title: t("leaderboardJoinConfirmTitle"),
+    body: t("leaderboardJoinConfirmBody"),
+    confirmText: t("leaderboardJoinConfirmAction"),
+    checkbox: {
+      label: t("leaderboardJoinPreferenceTitle"),
+      description: t("leaderboardJoinPreferenceCopy"),
+      checked: ledger?.settings.leaderboardPreferencesPublic === true,
+    },
+  });
+  if (!confirmed.confirmed) return;
+  if (ledger && confirmed.checked !== ledger.settings.leaderboardPreferencesPublic) {
+    ledger = await window.bonsai.updateSettings({
+      leaderboardPreferencesPublic: confirmed.checked,
+    });
+    render();
+  }
+  await toggleLeaderboardMembership();
+}
+
 async function leaveLeaderboard() {
-  if (!window.confirm(t("leaderboardLeaveConfirm"))) return;
+  const confirmed = await showAppConfirm({
+    title: t("leaderboardLeaveConfirmTitle"),
+    body: t("leaderboardLeaveConfirmBody"),
+    confirmText: t("leaderboardLeaveConfirmAction"),
+    tone: "danger",
+  });
+  if (!confirmed.confirmed) return;
   leaderboardStatus = await window.bonsai.logoutLeaderboard();
   leaderboardData = { range: leaderboardRange, entries: [] };
   clearLeaderboardCache();
@@ -1287,6 +1461,81 @@ async function leaveLeaderboard() {
   leaderboardRenderKey = "";
   renderLeaderboardSettings();
   renderLeaderboard();
+}
+
+function showAppConfirm(options: {
+  title: string;
+  body: string;
+  confirmText: string;
+  cancelText?: string;
+  tone?: "normal" | "danger";
+  checkbox?: {
+    label: string;
+    description?: string;
+    checked?: boolean;
+  };
+}) {
+  return new Promise<{ confirmed: false } | { confirmed: true; checked: boolean }>((resolve) => {
+    const existing = document.querySelector(".app-confirm-modal");
+    if (existing) existing.remove();
+
+    const checkboxHtml = options.checkbox
+      ? `
+        <label class="app-confirm-check">
+          <input class="app-confirm-checkbox" type="checkbox"${options.checkbox.checked ? " checked" : ""} />
+          <span>
+            <strong>${escapeHtml(options.checkbox.label)}</strong>
+            ${options.checkbox.description ? `<small>${escapeHtml(options.checkbox.description)}</small>` : ""}
+          </span>
+        </label>
+      `
+      : "";
+    const modal = document.createElement("section");
+    modal.className = "app-confirm-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-labelledby", "appConfirmTitle");
+    modal.innerHTML = `
+      <div class="app-confirm-backdrop"></div>
+      <article class="app-confirm-panel">
+        <header>
+          <p class="eyebrow">${escapeHtml(t("globalLeaderboard"))}</p>
+          <h3 id="appConfirmTitle">${escapeHtml(options.title)}</h3>
+          <button class="icon-button app-confirm-close" type="button" aria-label="${escapeHtml(t("close"))}">×</button>
+        </header>
+        <p>${escapeHtml(options.body)}</p>
+        ${checkboxHtml}
+        <footer>
+          <button class="secondary-button app-confirm-cancel" type="button">${escapeHtml(options.cancelText ?? t("cancel"))}</button>
+          <button class="${options.tone === "danger" ? "secondary-button danger-button" : "primary-button"} app-confirm-ok" type="button">${escapeHtml(options.confirmText)}</button>
+        </footer>
+      </article>
+    `;
+    document.body.append(modal);
+
+    let settled = false;
+    const settle = (value: { confirmed: false } | { confirmed: true; checked: boolean }) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown);
+      modal.remove();
+      resolve(value);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") settle({ confirmed: false });
+    };
+    document.addEventListener("keydown", onKeyDown);
+    modal.querySelector(".app-confirm-backdrop")?.addEventListener("click", () => settle({ confirmed: false }));
+    modal.querySelector(".app-confirm-close")?.addEventListener("click", () => settle({ confirmed: false }));
+    modal.querySelector(".app-confirm-cancel")?.addEventListener("click", () => settle({ confirmed: false }));
+    modal.querySelector(".app-confirm-ok")?.addEventListener("click", () => {
+      settle({
+        confirmed: true,
+        checked: modal.querySelector<HTMLInputElement>(".app-confirm-checkbox")?.checked === true,
+      });
+    });
+    modal.querySelector<HTMLButtonElement>(".app-confirm-ok")?.focus();
+  });
 }
 
 async function syncLeaderboard(options: { force?: boolean } = {}) {
@@ -1297,16 +1546,34 @@ async function syncLeaderboard(options: { force?: boolean } = {}) {
 
 function setSettingsOpen(open: boolean) {
   if (!settingsModal) return;
+  if (open) activateSettingsCategory(activeSettingsCategory);
   settingsModal.classList.toggle("open", open);
   settingsModal.setAttribute("aria-hidden", String(!open));
 }
 
-function openLeaderboardSettings() {
-  setSettingsOpen(true);
-  window.requestAnimationFrame(() => {
-    leaderboardMembershipButton?.scrollIntoView({ block: "center", behavior: "smooth" });
-    leaderboardMembershipButton?.focus({ preventScroll: true });
+function isSettingsCategory(value: string | undefined): value is SettingsCategory {
+  return SETTINGS_CATEGORY_IDS.includes(value as SettingsCategory);
+}
+
+function activateSettingsCategory(category: SettingsCategory) {
+  activeSettingsCategory = category;
+  document.querySelectorAll<HTMLButtonElement>("[data-settings-category-button]").forEach((button) => {
+    const active = button.dataset.settingsCategoryButton === category;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
   });
+  document.querySelectorAll<HTMLElement>("[data-settings-category-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.settingsCategoryPanel !== category;
+  });
+}
+
+function focusAdjacentSettingsCategory(offset: 1 | -1) {
+  const currentIndex = SETTINGS_CATEGORY_IDS.indexOf(activeSettingsCategory);
+  const nextIndex = (currentIndex + offset + SETTINGS_CATEGORY_IDS.length) % SETTINGS_CATEGORY_IDS.length;
+  const nextCategory = SETTINGS_CATEGORY_IDS[nextIndex];
+  activateSettingsCategory(nextCategory);
+  document.querySelector<HTMLButtonElement>(`[data-settings-category-button="${nextCategory}"]`)?.focus();
 }
 
 async function exportShareImage() {
@@ -2256,6 +2523,8 @@ function render() {
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
     syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
+    if (leaderboardAutoSyncInput) leaderboardAutoSyncInput.checked = ledger.settings.leaderboardAutoSyncEnabled;
+    if (cloudSyncAutoSyncInput) cloudSyncAutoSyncInput.checked = ledger.settings.cloudSyncAutoSyncEnabled;
     if (leaderboardPreferencesPublicInput) {
       leaderboardPreferencesPublicInput.checked = ledger.settings.leaderboardPreferencesPublic;
     }
@@ -2271,6 +2540,8 @@ function render() {
     syncInputValue(hermesSessionsDirInput, ledger.settings.hermesSessionsDir ?? "");
 
     renderUpdateStatus();
+    renderCloudSyncSettings();
+    renderTreeStartModal();
     renderLeaderboardSettings();
     renderLeaderboard();
     if (historyFilter !== "all" && !visibility.visibleSet.has(historyFilter)) {
@@ -2313,8 +2584,7 @@ function renderDashboardTabs() {
 }
 
 function triggerLevelUpAnimation(levels: { from: number; to: number }) {
-  text("#petLevelUpText", `Lv.${levels.from} -> Lv.${levels.to}`);
-  text("#previewLevelUpText", `Lv.${levels.from} -> Lv.${levels.to}`);
+  window.bonsai.showLevelToast(levels);
   pendingLevelUp = null;
   root.classList.remove("level-up");
   void root.offsetWidth;
@@ -2708,7 +2978,6 @@ function syncAchievements(stats: Stats, context: AchievementContext) {
     .unlockAchievements(items)
     .then((result) => {
       achievementState = result.state;
-      queueAchievementToasts(result.unlocked.map((item) => item.id));
       renderAchievements(stats, context);
     })
     .finally(() => {
@@ -2781,7 +3050,7 @@ function buildAchievementContext(stats: Stats, enabledSources = enabledStatsSour
     if (isFibonacci(xp)) hasFibonacciSession = true;
 
     const source = historySourceId(entry);
-    if (source) {
+    if (source && source !== "cloud") {
       activeSources.add(source);
       sourceXp[source] += xp;
       const sources = daySources.get(key) ?? new Set<HistorySourceId>();
@@ -2890,10 +3159,10 @@ function markAchievementSeen(id: string) {
   renderDashboardTabs();
 }
 
-function queueAchievementToasts(ids: string[]) {
-  const defs = ids.map((id) => ACHIEVEMENTS.find((def) => def.id === id)).filter((def): def is AchievementDef => Boolean(def));
-  if (!defs.length) return;
-  achievementToastQueue.push(...defs);
+function queueTreeToasts(items: TreeToastItem[]) {
+  const cleanItems = items.filter(isRenderableToastItem);
+  if (!cleanItems.length) return;
+  achievementToastQueue.push(...cleanItems);
   showNextAchievementToast();
 }
 
@@ -2909,9 +3178,26 @@ function showNextAchievementToast() {
     if (viewMode === "toast") window.bonsai.notifyAchievementToastDrained();
     return;
   }
-  const def = achievementToastQueue.shift()!;
+  const item = achievementToastQueue.shift()!;
+  achievementToastLayer.innerHTML = toastItemHtml(item);
+  achievementToastTimer = window.setTimeout(() => {
+    achievementToastLayer.innerHTML = "";
+    achievementToastTimer = undefined;
+    showNextAchievementToast();
+  }, ACHIEVEMENT_TOAST_DURATION_MS);
+}
+
+function isRenderableToastItem(item: TreeToastItem) {
+  if (item.type === "achievement") return ACHIEVEMENTS.some((def) => def.id === item.id);
+  return Number.isFinite(item.from) && Number.isFinite(item.to) && item.to > item.from;
+}
+
+function toastItemHtml(item: TreeToastItem) {
+  if (item.type === "level") return levelToastHtml(item);
+  const def = ACHIEVEMENTS.find((achievement) => achievement.id === item.id);
+  if (!def) return "";
   const copy = achievementText(def);
-  achievementToastLayer.innerHTML = `
+  return `
     <div class="achievement-toast rarity-${def.rarity}">
       <div class="achievement-toast-head">
         <span class="achievement-toast-meta">${escapeHtml(achievementRarityLabel(def.rarity))} · ${escapeHtml(t("achievementUnlocked"))}</span>
@@ -2920,11 +3206,18 @@ function showNextAchievementToast() {
       <p>${escapeHtml(copy.description)}</p>
     </div>
   `;
-  achievementToastTimer = window.setTimeout(() => {
-    achievementToastLayer.innerHTML = "";
-    achievementToastTimer = undefined;
-    showNextAchievementToast();
-  }, ACHIEVEMENT_TOAST_DURATION_MS);
+}
+
+function levelToastHtml(item: Extract<TreeToastItem, { type: "level" }>) {
+  return `
+    <div class="achievement-toast level-toast">
+      <div class="achievement-toast-head">
+        <span class="achievement-toast-meta">${escapeHtml(t("levelUpToastMeta"))}</span>
+      </div>
+      <strong>Lv.${item.from} -> Lv.${item.to}</strong>
+      <p>${escapeHtml(t("levelUpToastCopy"))}</p>
+    </div>
+  `;
 }
 
 function longestConsecutiveDays(keys: string[]) {
@@ -2998,7 +3291,10 @@ function maxTokensPerMinute(events: Array<{ time: number; xp: number }>, windowS
 function hasAgentSwitchWithin(entries: LedgerEntry[], windowMs: number) {
   const sorted = entries
     .map((entry) => ({ time: new Date(entry.createdAt).getTime(), source: historySourceId(entry) }))
-    .filter((item): item is { time: number; source: HistorySourceId } => Boolean(item.source) && Number.isFinite(item.time))
+    .filter(
+      (item): item is { time: number; source: HistorySourceId } =>
+        Boolean(item.source) && item.source !== "cloud" && Number.isFinite(item.time),
+    )
     .sort((a, b) => a.time - b.time);
   for (let index = 1; index < sorted.length; index += 1) {
     if (sorted[index].source !== sorted[index - 1].source && sorted[index].time - sorted[index - 1].time <= windowMs) {
@@ -3237,26 +3533,214 @@ function formatUpdateNoticeNotes(notes: string | undefined) {
     .slice(0, 4_000);
 }
 
+function renderTreeStartModal() {
+  if (!treeStartModal || !ledger) return;
+  const visible = !ledger.settings.treeStartMode;
+  treeStartModal.hidden = !visible;
+  if (!visible) {
+    clearTreeStartCloudHelp();
+    setTreeStartFeedback("");
+  }
+  if (visible && treeStartTreeImage && tree) {
+    const stage = tree.stages[0];
+    if (stage) treeStartTreeImage.src = assetUrl(stage.image);
+  }
+  if (visible && treeStartNewButton) {
+    treeStartNewButton.disabled = treeStartPendingAction !== null;
+    treeStartNewButton.classList.toggle("is-pending", treeStartPendingAction === "new");
+  }
+  if (visible && treeStartExistingButton) {
+    const unavailable = !cloudSyncStatus.configured || cloudSyncStatus.syncing;
+    treeStartExistingButton.disabled = treeStartPendingAction !== null || unavailable;
+    treeStartExistingButton.classList.toggle("is-disabled", !cloudSyncStatus.configured);
+    treeStartExistingButton.classList.toggle("is-pending", treeStartPendingAction === "cloud");
+  }
+  if (treeStartCancelButton) {
+    treeStartCancelButton.hidden = treeStartPendingAction !== "cloud";
+  }
+}
+
+function setTreeStartFeedback(message: string, tone: "busy" | "success" | "error" | "" = "") {
+  if (!treeStartFeedback) return;
+  treeStartFeedback.textContent = message;
+  treeStartFeedback.dataset.tone = tone;
+}
+
+function scheduleTreeStartCloudHelp() {
+  clearTreeStartCloudHelp();
+  treeStartCloudHelpTimer = window.setTimeout(() => {
+    showTreeStartCloudHelp();
+  }, TREE_START_CLOUD_HELP_MS);
+}
+
+function clearTreeStartCloudHelp() {
+  if (treeStartCloudHelpTimer === undefined) return;
+  window.clearTimeout(treeStartCloudHelpTimer);
+  treeStartCloudHelpTimer = undefined;
+}
+
+function remindTreeStartCloudPending() {
+  if (treeStartPendingAction !== "cloud") return;
+  showTreeStartCloudHelp();
+}
+
+function showTreeStartCloudHelp() {
+  if (treeStartPendingAction !== "cloud") return;
+  setTreeStartFeedback(t("treeStartStillWaiting"), "busy");
+}
+
+function setTreeStartPending(action: "new" | "cloud") {
+  treeStartPendingVersion += 1;
+  const pendingVersion = treeStartPendingVersion;
+  treeStartPendingAction = action;
+  [treeStartNewButton, treeStartExistingButton].forEach((button) => {
+    if (!button) return;
+    button.disabled = true;
+    button.classList.toggle(
+      "is-pending",
+      (action === "new" && button === treeStartNewButton) || (action === "cloud" && button === treeStartExistingButton),
+    );
+  });
+  if (treeStartCancelButton) treeStartCancelButton.hidden = action !== "cloud";
+  return pendingVersion;
+}
+
+function isCurrentTreeStartPending(pendingVersion: number) {
+  return treeStartPendingVersion === pendingVersion;
+}
+
+function clearTreeStartPending(pendingVersion?: number) {
+  if (pendingVersion !== undefined && pendingVersion !== treeStartPendingVersion) return;
+  treeStartPendingVersion += 1;
+  clearTreeStartCloudHelp();
+  treeStartPendingAction = null;
+  [treeStartNewButton, treeStartExistingButton].forEach((button) => {
+    if (!button) return;
+    button.disabled = false;
+    button.classList.remove("is-pending");
+  });
+  if (treeStartCancelButton) treeStartCancelButton.hidden = true;
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
+function renderCloudSyncSettings() {
+  if (cloudSyncStatusText) {
+    const lines = [
+      `<strong>${escapeHtml(cloudSyncStatus.enabled ? t("cloudSyncEnabled") : t("cloudSyncDisabled"))}</strong>`,
+      `<span>${escapeHtml(cloudSyncStatusCopy())}</span>`,
+    ];
+    cloudSyncStatusText.innerHTML = lines.join("");
+  }
+  const showAdvancedSync = cloudSyncStatus.enabled;
+  const cloudSyncSettings = cloudSyncStatusText?.closest<HTMLElement>(".cloud-sync-settings");
+  if (cloudSyncSettings) cloudSyncSettings.dataset.connected = String(showAdvancedSync);
+  if (cloudSyncAutoSyncInput) {
+    cloudSyncAutoSyncInput.disabled = !cloudSyncStatus.enabled || cloudSyncStatus.syncing;
+  }
+  if (cloudSyncActionButton) {
+    cloudSyncActionButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
+    cloudSyncActionButton.textContent = cloudSyncStatus.syncing
+      ? t("cloudSyncSyncing")
+      : cloudSyncStatus.enabled
+        ? t("cloudSyncSyncTree")
+        : t("cloudSyncConnectAndSync");
+  }
+  if (cloudSyncDeviceList) {
+    const devices = showAdvancedSync ? (cloudSyncStatus.devices ?? []) : [];
+    const visibleDevices = visibleCloudDevices(devices);
+    cloudSyncDeviceList.innerHTML = visibleDevices.length
+      ? `
+        ${renderCloudDeviceShare(devices)}
+        ${visibleDevices
+          .slice(0, 6)
+          .map((device) => {
+            const isCurrent = device.deviceId === cloudSyncStatus.deviceId;
+            const name = device.alias || device.platform || `${t("device")} ${device.deviceId.slice(-6)}`;
+            const parts = [
+              device.lastSyncedAt ? `${t("cloudDeviceLastSynced")} ${formatRelativeTime(device.lastSyncedAt)}` : "",
+            ].filter(Boolean);
+            return `
+              <div class="cloud-device-row">
+                <div>
+                  <strong>${escapeHtml(name)}${isCurrent ? ` · ${escapeHtml(t("cloudDeviceCurrent"))}` : ""}</strong>
+                  <span>${escapeHtml(parts.join(" · ") || device.deviceId.slice(-6))}</span>
+                </div>
+                <strong>${formatCompact(device.tokens)} token</strong>
+              </div>
+            `;
+          })
+          .join("")}
+      `
+      : "";
+  }
+}
+
+function visibleCloudDevices(devices: NonNullable<CloudSyncStatus["devices"]>) {
+  return [...devices]
+    .filter((device) => device.deviceId === cloudSyncStatus.deviceId || Math.max(0, device.tokens) > 0)
+    .sort((left, right) => {
+      const leftCurrent = left.deviceId === cloudSyncStatus.deviceId;
+      const rightCurrent = right.deviceId === cloudSyncStatus.deviceId;
+      if (leftCurrent !== rightCurrent) return leftCurrent ? -1 : 1;
+      return Math.max(0, right.tokens) - Math.max(0, left.tokens);
+    });
+}
+
+function renderCloudDeviceShare(devices: NonNullable<CloudSyncStatus["devices"]>) {
+  const totalTokens = devices.reduce((sum, device) => sum + Math.max(0, device.tokens), 0);
+  const currentDeviceTokens = devices
+    .filter((device) => device.deviceId === cloudSyncStatus.deviceId)
+    .reduce((sum, device) => sum + Math.max(0, device.tokens), 0);
+  const remoteDeviceTokens = Math.max(0, totalTokens - currentDeviceTokens);
+  const localPercent = totalTokens > 0 ? Math.round(clamp((currentDeviceTokens / totalTokens) * 100, 0, 100)) : 0;
+  const remotePercent = totalTokens > 0 ? 100 - localPercent : 0;
+  return `
+    <div class="cloud-device-share">
+      <div class="cloud-device-share-header">
+        <span>${escapeHtml(t("cloudDeviceShareTitle"))}</span>
+        <strong>${escapeHtml(t("cloudDeviceLocalShare"))} ${localPercent}% · ${escapeHtml(t("cloudDeviceRemoteShare"))} ${remotePercent}%</strong>
+      </div>
+      <div class="cloud-device-share-meter source-meter" aria-hidden="true">
+        <span style="width:${localPercent}%"></span>
+      </div>
+      <div class="cloud-device-share-values">
+        <span>${escapeHtml(t("cloudDeviceLocalShare"))} ${formatCompact(currentDeviceTokens)} token</span>
+        <span>${escapeHtml(t("cloudDeviceRemoteShare"))} ${formatCompact(remoteDeviceTokens)} token</span>
+      </div>
+    </div>
+  `;
+}
+
+function cloudSyncStatusCopy() {
+  if (!cloudSyncStatus.configured) return t("cloudSyncNotConfigured");
+  if (cloudSyncStatus.error) return cloudSyncStatus.error;
+  if (!cloudSyncStatus.authenticated) return t("cloudSyncLoginRequired");
+  if (!cloudSyncStatus.enabled) return t("cloudSyncOffHint");
+  if (cloudSyncStatus.syncing) return t("cloudSyncSyncing");
+  const pieces = [];
+  if (cloudSyncStatus.lastSyncedAt) pieces.push(`${t("leaderboardLastSynced")} ${formatRelativeTime(cloudSyncStatus.lastSyncedAt)}`);
+  if (cloudSyncStatus.deviceId) pieces.push(`${t("device")} ${cloudSyncStatus.deviceId.slice(-6)}`);
+  return pieces.join(" · ") || t("cloudSyncReady");
+}
+
 function renderLeaderboardSettings() {
   const renderKey = leaderboardSettingsSignature();
   if (renderKey === leaderboardSettingsRenderKey) return;
   leaderboardSettingsRenderKey = renderKey;
-  if (leaderboardMembershipButton) {
-    leaderboardMembershipButton.disabled =
-      leaderboardStatus.syncing ||
-      !leaderboardStatus.configured ||
-      (leaderboardStatus.joined && !leaderboardStatus.authenticated);
-    leaderboardMembershipButton.textContent = leaderboardStatus.joined ? t("leaveLeaderboard") : t("joinLeaderboard");
-    leaderboardMembershipButton.classList.toggle("danger-button", leaderboardStatus.joined);
-  }
-  if (leaderboardSettingsSyncButton) {
-    leaderboardSettingsSyncButton.disabled =
-      leaderboardStatus.syncing || !leaderboardStatus.configured || !leaderboardStatus.joined;
-    leaderboardSettingsSyncButton.textContent = leaderboardStatus.syncing ? t("leaderboardSyncing") : t("syncNow");
-  }
+  const leaderboardOptionsEnabled =
+    leaderboardStatus.configured && leaderboardStatus.authenticated && leaderboardStatus.joined && !leaderboardStatus.syncing;
   if (leaderboardPageRefreshButton) {
     leaderboardPageRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
-    leaderboardPageRefreshButton.textContent = leaderboardLoading ? t("leaderboardRefreshing") : t("refreshLeaderboard");
+    leaderboardPageRefreshButton.textContent = leaderboardLoading
+      ? leaderboardStatus.joined
+        ? t("leaderboardSyncingAndRefreshing")
+        : t("leaderboardRefreshing")
+      : leaderboardStatus.joined
+        ? t("refreshAndSyncLeaderboard")
+        : t("refreshLeaderboard");
   }
   if (leaderboardPageSyncButton) {
     leaderboardPageSyncButton.disabled =
@@ -3265,6 +3749,12 @@ function renderLeaderboardSettings() {
       (leaderboardStatus.joined && !leaderboardStatus.authenticated);
     leaderboardPageSyncButton.textContent = leaderboardStatus.joined ? t("leaveLeaderboard") : t("joinLeaderboard");
     leaderboardPageSyncButton.classList.toggle("danger-button", leaderboardStatus.joined);
+  }
+  if (leaderboardAutoSyncInput) {
+    leaderboardAutoSyncInput.disabled = !leaderboardOptionsEnabled;
+  }
+  if (leaderboardPreferencesPublicInput) {
+    leaderboardPreferencesPublicInput.disabled = !leaderboardOptionsEnabled;
   }
 
   if (leaderboardUserCard) {
@@ -3457,7 +3947,7 @@ function leaderboardPeriodText(period: NonNullable<LeaderboardEntry["usagePrefer
 
 function leaderboardRangeLabel(range: LeaderboardRange) {
   const labels: Record<LeaderboardRange, string> = {
-    today: t("leaderboardToday"),
+    "24h": t("leaderboard24h"),
     "7d": t("leaderboard7d"),
     "30d": t("leaderboard30d"),
     all: t("leaderboardAllTime"),
@@ -3481,6 +3971,7 @@ function renderScopedSourceBreakdown(visibility = sourceVisibility()) {
     [...visibility.enabled].join(","),
     visibility.visible.join(","),
     usageStatusSignature(),
+    cloudModelStatsSignature(),
     relativeRenderBucket(15_000),
   ].join("|");
   if (key === sourceBreakdownCacheKey) return;
@@ -3539,7 +4030,7 @@ function renderSourceBreakdown(rows: SourceBreakdown[], visibility = sourceVisib
               <span>${row.xp > 0 ? `${percent}%` : escapeHtml(t("noRecords"))}</span>
             </div>
             <div class="source-meter"><span style="width:${percent}%"></span></div>
-            <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
+            <p>${tokenBreakdownSummary(row)}</p>
           </div>
           ${expanded ? renderModelBreakdown(row.sourceKey, visibility.enabled) : ""}
         </article>
@@ -3565,12 +4056,64 @@ type SourceRowView = SourceBreakdown & {
 function getMonitorSourceRows(rows: SourceBreakdown[], visibility = sourceVisibility()): SourceRowView[] {
   return AGENT_SOURCES.filter((source) => visibility.visibleSet.has(source.id)).map((monitor) => {
     const matches = rows.filter((row) => sourceMatchesBreakdownRow(row, monitor.id));
+    const combined = combineSourceRows(monitor.id === "cloud" ? t("cloudSource") : monitor.label, matches);
+    const hasCloudRecords = sourceHasCloudRecords(monitor.id);
+    const hasLocalRecords = sourceHasLocalRecords(monitor.id);
+    if (monitor.id === "cloud") {
+      return {
+        ...combined,
+        sourceKey: monitor.id,
+        status: t("sourceSynced"),
+        statusClass: "running",
+        meta: t("readingCloudRecords"),
+        compact: false,
+      };
+    }
+    const status = monitorStatusView(sourceMonitorStatus(monitor.id));
+    if (hasCloudRecords && !hasLocalRecords && status.compact) {
+      return {
+        ...combined,
+        sourceKey: monitor.id,
+        status: t("sourceSynced"),
+        statusClass: "running",
+        meta: t("readingOtherDeviceRecords"),
+        compact: false,
+      };
+    }
+    if (combined.xp > 0 && status.compact) {
+      return {
+        ...combined,
+        sourceKey: monitor.id,
+        status: t("sourceRecorded"),
+        statusClass: "running",
+        meta: hasCloudRecords ? t("readingMixedRecords") : t("readingLocalRecords"),
+        compact: false,
+      };
+    }
     return {
-      ...combineSourceRows(monitor.label, matches),
+      ...combined,
       sourceKey: monitor.id,
-      ...monitorStatusView(sourceMonitorStatus(monitor.id)),
+      ...status,
     };
   });
+}
+
+function sourceHasCloudRecords(sourceId: HistorySourceId) {
+  if (!ledger || sourceId === "cloud") return false;
+  return ledger.entries.some(
+    (entry) =>
+      entryMatchesSourceKey(entry, sourceId) &&
+      (entry.syncedFromCloud || entry.source === "cloud-sync") &&
+      entry.deviceId !== undefined &&
+      entry.deviceId !== cloudSyncStatus.deviceId,
+  );
+}
+
+function sourceHasLocalRecords(sourceId: HistorySourceId) {
+  if (!ledger || sourceId === "cloud") return false;
+  return ledger.entries.some(
+    (entry) => entryMatchesSourceKey(entry, sourceId) && !entry.syncedFromCloud && entry.source !== "cloud-sync",
+  );
 }
 
 function monitorStatusView(status: UsageStatus["codexSession"] | undefined) {
@@ -3609,7 +4152,7 @@ function renderModelBreakdown(sourceKey: string, enabledSources = enabledStatsSo
                 <span>${formatCompact(row.xp)} token · ${percent}%</span>
               </div>
               <div class="source-meter"><span style="width:${percent}%"></span></div>
-              <p>in ${formatCompact(row.inputTokens)} · out ${formatCompact(row.outputTokens)} · cache ${formatCompact(row.cacheReadTokens)}</p>
+              <p>${tokenBreakdownSummary(row)}</p>
             </div>
           `;
         })
@@ -3621,28 +4164,149 @@ function renderModelBreakdown(sourceKey: string, enabledSources = enabledStatsSo
 function getModelBreakdown(sourceKey: string, enabledSources = enabledStatsSourceSet()) {
   if (!ledger) return [];
   const rows = new Map<string, SourceBreakdown>();
+  const unresolvedCloudRows = new Map<string, SourceBreakdown>();
   for (const entry of getSourceScopeEntries(ledger.entries)) {
     if (!entryMatchesSourceKey(entry, sourceKey)) continue;
-    const model = entry.model || entry.provider || "unknown";
-    const existing =
-      rows.get(model) ??
-      {
-        id: model,
-        label: model,
-        xp: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-      };
-    existing.xp += xpForEntry(entry, enabledSources);
-    existing.inputTokens += countedInputTokensForEntry(entry);
-    existing.outputTokens += safeTokens(entry.outputTokens ?? 0);
-    existing.cacheReadTokens += safeTokens(entry.cacheReadTokens ?? 0);
-    existing.cacheWriteTokens += safeTokens(entry.cacheWriteTokens ?? 0);
-    rows.set(model, existing);
+    const model = entry.model || entry.provider;
+    const breakdown = breakdownForEntry(entry, enabledSources);
+    if (!model && (entry.syncedFromCloud || entry.source === "cloud-sync") && entry.deviceId) {
+      const key = cloudModelStatKey(entry.deviceId, dateKey(new Date(entry.createdAt)), mirrorSourceForModelStats(entry));
+      addBreakdown(unresolvedCloudRows, key, key, breakdown);
+      continue;
+    }
+    addBreakdown(rows, model ?? "unknown", model ?? t("modelUncategorized"), breakdown);
   }
+  resolveCloudModelBreakdown(rows, unresolvedCloudRows, sourceKey);
   return [...rows.values()].filter((row) => row.xp > 0).sort((a, b) => b.xp - a.xp);
+}
+
+function resolveCloudModelBreakdown(
+  rows: Map<string, SourceBreakdown>,
+  unresolvedCloudRows: Map<string, SourceBreakdown>,
+  sourceKey: string,
+) {
+  if (!cloudSyncStatus.modelStats?.length || !unresolvedCloudRows.size) {
+    for (const row of unresolvedCloudRows.values()) addBreakdown(rows, "unknown", t("modelUncategorized"), row);
+    return;
+  }
+
+  const statsByKey = new Map<string, NonNullable<CloudSyncStatus["modelStats"]>>();
+  for (const stat of cloudSyncStatus.modelStats) {
+    if (!cloudModelStatMatchesSourceKey(stat, sourceKey)) continue;
+    if (sourceScope !== "total" && stat.date !== dateKey(new Date())) continue;
+    const key = cloudModelStatKey(stat.deviceId, stat.date, stat.source);
+    const stats = statsByKey.get(key) ?? [];
+    stats.push(stat);
+    statsByKey.set(key, stats);
+  }
+
+  for (const [key, unknown] of unresolvedCloudRows) {
+    const stats = statsByKey.get(key) ?? [];
+    const statsTotal = stats.reduce((total, stat) => total + safeTokens(stat.tokens), 0);
+    if (statsTotal <= 0) {
+      addBreakdown(rows, "unknown", t("modelUncategorized"), unknown);
+      continue;
+    }
+    const scale = unknown.xp > 0 && statsTotal > unknown.xp ? unknown.xp / statsTotal : 1;
+    let resolvedXp = 0;
+    for (const stat of stats) {
+      const scaled = scaleBreakdown(
+        {
+          id: stat.model,
+          label: stat.model,
+          xp: safeTokens(stat.tokens),
+          inputTokens: safeTokens(stat.inputTokens ?? 0),
+          outputTokens: safeTokens(stat.outputTokens ?? 0),
+          cacheReadTokens: safeTokens(stat.cacheReadTokens ?? 0),
+          cacheWriteTokens: safeTokens(stat.cacheWriteTokens ?? 0),
+        },
+        scale,
+      );
+      resolvedXp += scaled.xp;
+      addBreakdown(rows, stat.model, stat.model, scaled);
+    }
+    const leftover = unknown.xp - resolvedXp;
+    if (leftover > 0) {
+      const ratio = unknown.xp > 0 ? leftover / unknown.xp : 0;
+      addBreakdown(rows, "unknown", t("modelUncategorized"), scaleBreakdown(unknown, ratio));
+    }
+  }
+}
+
+function breakdownForEntry(entry: LedgerEntry, enabledSources: Set<HistorySourceId>): SourceBreakdown {
+  const breakdown = countedTokenBreakdownForEntry(entry);
+  return {
+    id: "",
+    label: "",
+    xp: xpForEntry(entry, enabledSources),
+    inputTokens: breakdown.inputTokens,
+    outputTokens: breakdown.outputTokens,
+    cacheReadTokens: breakdown.cacheReadTokens,
+    cacheWriteTokens: breakdown.cacheWriteTokens,
+  };
+}
+
+function tokenBreakdownSummary(row: Pick<SourceBreakdown, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">) {
+  const parts = [
+    `in ${formatCompact(row.inputTokens)}`,
+    `out ${formatCompact(row.outputTokens)}`,
+    `cache ${formatCompact(row.cacheReadTokens)}`,
+  ];
+  if (row.cacheWriteTokens > 0) parts.push(`write ${formatCompact(row.cacheWriteTokens)}`);
+  return parts.join(" · ");
+}
+
+function addBreakdown(rows: Map<string, SourceBreakdown>, id: string, label: string, item: SourceBreakdown) {
+  const existing =
+    rows.get(id) ??
+    {
+      id,
+      label,
+      xp: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    };
+  existing.xp += item.xp;
+  existing.inputTokens += item.inputTokens;
+  existing.outputTokens += item.outputTokens;
+  existing.cacheReadTokens += item.cacheReadTokens;
+  existing.cacheWriteTokens += item.cacheWriteTokens;
+  rows.set(id, existing);
+}
+
+function scaleBreakdown(item: SourceBreakdown, scale: number): SourceBreakdown {
+  return {
+    ...item,
+    xp: Math.round(item.xp * scale),
+    inputTokens: Math.round(item.inputTokens * scale),
+    outputTokens: Math.round(item.outputTokens * scale),
+    cacheReadTokens: Math.round(item.cacheReadTokens * scale),
+    cacheWriteTokens: Math.round(item.cacheWriteTokens * scale),
+  };
+}
+
+function cloudModelStatMatchesSourceKey(stat: NonNullable<CloudSyncStatus["modelStats"]>[number], sourceKey: string) {
+  return entryMatchesSourceKey(
+    {
+      id: `${stat.source}:model-stat:${stat.deviceId}:${stat.date}:${stat.model}`,
+      createdAt: `${stat.date}T00:00:00.000`,
+      source: stat.source,
+      tokens: stat.tokens,
+    },
+    sourceKey,
+  );
+}
+
+function cloudModelStatKey(deviceId: string, date: string, source: string) {
+  return `${deviceId}|${date}|${source}`;
+}
+
+function mirrorSourceForModelStats(entry: LedgerEntry) {
+  if (entry.source !== "cloud-sync") return entry.source;
+  const delimiter = entry.id.indexOf(":");
+  return delimiter > 0 ? entry.id.slice(0, delimiter) : entry.source;
 }
 
 function getSourceScopeEntries(entries: LedgerEntry[]) {
@@ -3664,7 +4328,8 @@ function normalizeTotalDisplayUnit(value: string): TotalDisplayUnit {
 }
 
 function normalizeLeaderboardRange(value: unknown): LeaderboardRange {
-  return value === "today" || value === "30d" || value === "all" ? value : "7d";
+  if (value === "today" || value === "24h") return "24h";
+  return value === "30d" || value === "all" ? value : "7d";
 }
 
 function formatByUnit(value: number, unit: TotalDisplayUnit) {
@@ -3699,9 +4364,35 @@ function ledgerEntriesSignature() {
   if (!ledger) return "no-ledger";
   const first = ledger.entries[0];
   const last = ledger.entries[ledger.entries.length - 1];
+  const totals = ledger.entries.reduce(
+    (acc, entry) => {
+      acc.tokens += entry.tokens;
+      acc.input += entry.inputTokens ?? 0;
+      acc.output += entry.outputTokens ?? 0;
+      acc.cacheRead += entry.cacheReadTokens ?? 0;
+      acc.cacheWrite += entry.cacheWriteTokens ?? 0;
+      const sourceKey = `${entry.source}:${entry.syncedFromCloud ? "1" : "0"}`;
+      acc.sources.set(sourceKey, (acc.sources.get(sourceKey) ?? 0) + 1);
+      return acc;
+    },
+    {
+      tokens: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      sources: new Map<string, number>(),
+    },
+  );
   return [
     ledger.entries.length,
     ledger.installedAt,
+    totals.tokens,
+    totals.input,
+    totals.output,
+    totals.cacheRead,
+    totals.cacheWrite,
+    [...totals.sources.entries()].sort(([left], [right]) => left.localeCompare(right)).join(","),
     first?.id ?? "",
     first?.createdAt ?? "",
     first?.tokens ?? "",
@@ -3711,10 +4402,28 @@ function ledgerEntriesSignature() {
   ].join(":");
 }
 
+function cloudModelStatsSignature() {
+  return (cloudSyncStatus.modelStats ?? [])
+    .map((stat) =>
+      [
+        stat.deviceId,
+        stat.date,
+        stat.source,
+        stat.model,
+        stat.tokens,
+        stat.inputTokens ?? 0,
+        stat.outputTokens ?? 0,
+        stat.cacheReadTokens ?? 0,
+        stat.cacheWriteTokens ?? 0,
+      ].join(":"),
+    )
+    .join(",");
+}
+
 function usageStatusSignature() {
   if (!usageStatus) return "no-usage-status";
   return AGENT_SOURCES.map((source) => {
-    const status = usageStatus?.[source.statusKey];
+    const status = source.statusKey ? usageStatus?.[source.statusKey] : undefined;
     return [
       source.id,
       status?.exists ? "1" : "0",

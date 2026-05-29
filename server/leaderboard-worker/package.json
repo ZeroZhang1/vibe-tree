@@ -5,8 +5,21 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 execute vibe-tree-leaderboard --file=./schema.sql",
-    "db:migrate:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./schema.sql"
+    "verify:api": "node scripts/verify-worker-api.mjs",
+    "db:migrate": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./schema.sql",
+    "db:migrate:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./schema.sql",
+    "db:migrate:privacy": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260527_trim_cloud_tree_privacy.sql",
+    "db:migrate:privacy:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260527_trim_cloud_tree_privacy.sql",
+    "db:migrate:sources": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260527_restore_cloud_tree_sources.sql",
+    "db:migrate:sources:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260527_restore_cloud_tree_sources.sql",
+    "db:migrate:dedupe": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260527_dedupe_cloud_tree_events.sql",
+    "db:migrate:dedupe:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260527_dedupe_cloud_tree_events.sql",
+    "db:migrate:devices": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260528_cloud_tree_device_model_stats.sql",
+    "db:migrate:devices:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260528_cloud_tree_device_model_stats.sql",
+    "db:migrate:hourly": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260529_leaderboard_hourly_usage.sql",
+    "db:migrate:hourly:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260529_leaderboard_hourly_usage.sql",
+    "db:migrate:delta": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260529_cloud_tree_delta_indexes.sql",
+    "db:migrate:delta:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260529_cloud_tree_delta_indexes.sql"
   },
   "devDependencies": {
     "wrangler": "^3.114.0"
