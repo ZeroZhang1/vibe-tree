@@ -57,6 +57,8 @@ const UPDATE_SMOKE_TIMEOUT_MS = 45_000;
 const UPDATE_LATEST_RELEASE_URL = "https://api.github.com/repos/Olorinm/vibe-tree/releases/latest";
 const UPDATE_TAGS_URL = "https://api.github.com/repos/Olorinm/vibe-tree/tags?per_page=20";
 const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
+const DEFAULT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Olorinm/vibe-tree/main/updates/manifest.json";
+const UPDATE_MANIFEST_URL = (process.env.VIBE_TREE_UPDATE_MANIFEST_URL ?? DEFAULT_UPDATE_MANIFEST_URL).trim();
 const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
 const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
 const LEADERBOARD_API_URL = (process.env.VIBE_TREE_LEADERBOARD_API_URL ?? DEFAULT_LEADERBOARD_API_URL).replace(/\/+$/, "");
@@ -2119,13 +2121,16 @@ async function fetchLatestUpdate() {
       typeof (release as { tag_name?: unknown })?.tag_name === "string" ? (release as { tag_name: string }).tag_name : "",
     );
     if (releaseVersion && isSemver(releaseVersion)) {
+      const manifestEntry = await fetchUpdateManifestEntry(releaseVersion);
+      const releaseUrl =
+        manifestReleaseUrl(manifestEntry) ??
+        (typeof (release as { html_url?: unknown })?.html_url === "string"
+          ? (release as { html_url: string }).html_url
+          : UPDATE_PAGE_URL);
       return {
         version: releaseVersion,
-        releaseUrl:
-          typeof (release as { html_url?: unknown })?.html_url === "string"
-            ? (release as { html_url: string }).html_url
-            : UPDATE_PAGE_URL,
-        releaseNotes: normalizeReleaseNotes((release as { body?: unknown })?.body),
+        releaseUrl,
+        releaseNotes: updateNoticeFromManifest(manifestEntry) ?? normalizeReleaseNotes((release as { body?: unknown })?.body),
       };
     }
   } catch {
@@ -2145,11 +2150,99 @@ async function fetchLatestUpdate() {
 
   const latest = versions[0];
   if (!latest) throw new Error(mainText("updateSourceNoVersion"));
+  const manifestEntry = await fetchUpdateManifestEntry(latest.version);
   return {
     version: latest.version,
-    releaseUrl: UPDATE_PAGE_URL,
-    releaseNotes: releaseNotesFromChangelog(latest.version),
+    releaseUrl: manifestReleaseUrl(manifestEntry) ?? UPDATE_PAGE_URL,
+    releaseNotes: updateNoticeFromManifest(manifestEntry) ?? releaseNotesFromChangelog(latest.version),
   };
+}
+
+type UpdateManifestEntry = Record<string, unknown>;
+
+async function fetchUpdateManifestEntry(version: string): Promise<UpdateManifestEntry | undefined> {
+  if (!UPDATE_MANIFEST_URL) return undefined;
+  try {
+    const manifest = await fetchJson(UPDATE_MANIFEST_URL);
+    const versions = Array.isArray((manifest as { versions?: unknown })?.versions)
+      ? (manifest as { versions: unknown[] }).versions
+      : [];
+    return versions.find((entry): entry is UpdateManifestEntry => {
+      if (!entry || typeof entry !== "object") return false;
+      const rawVersion = (entry as { version?: unknown }).version;
+      return typeof rawVersion === "string" && normalizeVersion(rawVersion) === version;
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+function manifestReleaseUrl(entry: UpdateManifestEntry | undefined) {
+  const url = typeof entry?.fullReleaseUrl === "string" ? entry.fullReleaseUrl.trim() : "";
+  return /^https?:\/\//.test(url) ? url : undefined;
+}
+
+function updateNoticeFromManifest(entry: UpdateManifestEntry | undefined) {
+  if (!entry) return undefined;
+  const language = currentLanguage();
+  const labels =
+    language === "zh-CN"
+      ? {
+          highlights: "主要变化",
+          fixes: "体验改进",
+          privacy: "隐私说明",
+          upgradeNotes: "升级说明",
+        }
+      : {
+          highlights: "Highlights",
+          fixes: "Improvements",
+          privacy: "Privacy",
+          upgradeNotes: "Upgrade Notes",
+        };
+  const lines: string[] = [];
+  const title = localizedManifestString(entry.title, language);
+  const summary = localizedManifestString(entry.summary, language);
+  if (title) lines.push(title, "");
+  if (summary) lines.push(summary, "");
+  appendManifestSection(lines, labels.highlights, localizedManifestList(entry.highlights, language));
+  appendManifestSection(lines, labels.fixes, localizedManifestList(entry.fixes, language));
+  appendManifestSection(lines, labels.privacy, localizedManifestList(entry.privacy, language));
+  appendManifestSection(lines, labels.upgradeNotes, localizedManifestList(entry.upgradeNotes, language));
+  return normalizeReleaseNotes(lines.join("\n"));
+}
+
+function appendManifestSection(lines: string[], title: string, items: string[] | undefined) {
+  if (!items?.length) return;
+  if (lines.length && lines[lines.length - 1] !== "") lines.push("");
+  lines.push(title);
+  for (const item of items) lines.push(`- ${item}`);
+  lines.push("");
+}
+
+function localizedManifestString(value: unknown, language: AppLanguage) {
+  if (typeof value === "string") return cleanManifestText(value);
+  if (!value || typeof value !== "object") return undefined;
+  const localized = value as Record<string, unknown>;
+  return cleanManifestText(localized[language] ?? localized["zh-CN"] ?? localized["en-US"]);
+}
+
+function localizedManifestList(value: unknown, language: AppLanguage) {
+  const raw = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? ((value as Record<string, unknown>)[language] ??
+        (value as Record<string, unknown>)["zh-CN"] ??
+        (value as Record<string, unknown>)["en-US"])
+      : undefined;
+  if (!Array.isArray(raw)) return undefined;
+  const items = raw.map(cleanManifestText).filter((item): item is string => Boolean(item));
+  return items.length ? items : undefined;
+}
+
+function cleanManifestText(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned ? cleaned.slice(0, 280) : undefined;
 }
 
 function normalizeReleaseNotes(value: unknown) {

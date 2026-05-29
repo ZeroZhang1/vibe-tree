@@ -142,12 +142,11 @@ git diff --check
 ## 更新与打包
 
 - [ ] 确认最终版本号和 tag。
-- [ ] 确认 GitHub release body 使用 `docs/2026-05-29_UPDATE_ANNOUNCEMENT_DRAFT.md` 里的用户公告，而不是完整工程 changelog。
-- [ ] 如果本次仍使用 GitHub release body 作为应用内更新内容，保持正文短、清楚、偏用户价值。
-- [ ] 如要添加详细 changelog，可以放在 release body 后半段或单独文档，不放进应用内主公告。
+- [ ] 确认 `updates/manifest.json` 里的版本号、`fullReleaseUrl` 和目标 release tag 一致。
+- [ ] 确认 App 内「查看当前版本内容」展示的是 `updates/manifest.json` 里的短公告。
+- [ ] 确认 GitHub release body 使用正常 Release Notes，不把 App 内短公告当作完整 release。
 - [ ] 打包后在 Mac 上安装覆盖旧版验证。
 - [ ] 打包后在 Windows 上安装覆盖旧版验证。
-- [ ] 确认更新页「查看当前版本内容」能展示当前 release 内容。
 - [ ] 确认「打开发布页」能打开正确 GitHub Releases 页面。
 
 ## 可接受的已知尾巴
@@ -156,7 +155,7 @@ git diff --check
 
 - 云端可能残留少量旧的 0 token 设备或 orphan 聚合统计；客户端已过滤，不影响普通用户展示。
 - D1 rows read 需要继续观察一段时间，确认 delta sync 和缓存上线后趋势正常。
-- 正式更新公告 manifest 体系还没做，本次可以先使用用户可读的 GitHub release body。
+- App 内更新公告已走 `updates/manifest.json`，但发布时仍要确认 GitHub raw 文件已随 main 更新。
 
 ## 发版后观察
 
