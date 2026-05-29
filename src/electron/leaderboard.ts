@@ -77,6 +77,7 @@ interface LeaderboardServiceOptions {
   apiUrl: string;
   appName: string;
   syncIntervalMs: number;
+  cloudSyncIntervalMs: number;
   authTimeoutMs: number;
   callbackPath: string;
   authPath: () => string;
@@ -157,7 +158,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
 
   function startSync() {
     scheduleNextSync();
-    scheduleCloudSyncSoon();
+    scheduleCloudSyncSoon(nextCloudSyncDelay());
     broadcast();
   }
 
@@ -177,7 +178,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       syncTimer = null;
     }
 
-    if (!configured || !auth.token || !ledger().settings.leaderboardEnabled) return;
+    if (!configured || !auth.token || !ledger().settings.leaderboardEnabled || !ledger().settings.leaderboardAutoSyncEnabled) return;
 
     syncTimer = setTimeout(() => {
       syncTimer = null;
@@ -190,7 +191,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       clearTimeout(cloudSyncTimer);
       cloudSyncTimer = null;
     }
-    if (!configured || !auth.token || !ledger().settings.cloudSyncEnabled) return;
+    if (!configured || !auth.token || !ledger().settings.cloudSyncEnabled || !ledger().settings.cloudSyncAutoSyncEnabled) return;
     cloudSyncTimer = setTimeout(() => {
       cloudSyncTimer = null;
       void syncCloudTree();
@@ -219,11 +220,22 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   }
 
   function nextSyncDelay() {
-    const lastSyncedAt = ledger().settings.leaderboardLastSyncedAt ?? lastSyncAttemptAt;
-    if (!lastSyncedAt) return Math.min(3_000, options.syncIntervalMs);
-    const lastSyncedTime = Date.parse(lastSyncedAt);
-    if (!Number.isFinite(lastSyncedTime)) return Math.min(3_000, options.syncIntervalMs);
+    const lastSyncedTime = latestSyncTime(ledger().settings.leaderboardLastSyncedAt, lastSyncAttemptAt);
+    if (!lastSyncedTime) return Math.min(3_000, options.syncIntervalMs);
     return Math.max(3_000, lastSyncedTime + options.syncIntervalMs - Date.now());
+  }
+
+  function nextCloudSyncDelay() {
+    const lastSyncedTime = latestSyncTime(ledger().settings.cloudSyncLastSyncedAt);
+    if (!lastSyncedTime) return Math.min(3_000, options.cloudSyncIntervalMs);
+    return Math.max(3_000, lastSyncedTime + options.cloudSyncIntervalMs - Date.now());
+  }
+
+  function latestSyncTime(...values: Array<string | undefined>) {
+    const times = values
+      .map((value) => (value ? Date.parse(value) : NaN))
+      .filter((time) => Number.isFinite(time));
+    return times.length ? Math.max(...times) : undefined;
   }
 
   async function login(): Promise<LeaderboardStatus> {
@@ -465,6 +477,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         cloudSyncLastPulledAt: new Date().toISOString(),
       });
       cloudSyncing = false;
+      scheduleCloudSyncSoon(nextCloudSyncDelay());
       return cloudStatus();
     } catch (error) {
       cloudSyncing = false;

@@ -132,11 +132,13 @@ export interface Settings {
   leaderboardEnabled: boolean;
   leaderboardProfile?: LeaderboardProfile;
   leaderboardLastSyncedAt?: string;
+  leaderboardAutoSyncEnabled: boolean;
   leaderboardPreferencesPublic: boolean;
   cloudSyncEnabled: boolean;
   cloudSyncDeviceId?: string;
   cloudSyncLastSyncedAt?: string;
   cloudSyncLastPulledAt?: string;
+  cloudSyncAutoSyncEnabled: boolean;
   treeStartMode?: "new" | "cloud";
   launchOnStartup: boolean;
   silentStartup: boolean;

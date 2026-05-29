@@ -297,6 +297,7 @@ const settingsButton = document.querySelector<HTMLButtonElement>("#settingsButto
 const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settingsCloseButton");
 const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
 const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
+const settingsNav = document.querySelector<HTMLElement>("#settingsNav");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
 const fontScaleSelect = document.querySelector<HTMLSelectElement>("#fontScaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
@@ -323,6 +324,7 @@ const geminiSessionsDirInput = document.querySelector<HTMLInputElement>("#gemini
 const hermesSessionsDirInput = document.querySelector<HTMLInputElement>("#hermesSessionsDirInput");
 const leaderboardStatusText = document.querySelector<HTMLElement>("#leaderboardStatusText");
 const leaderboardUserCard = document.querySelector<HTMLElement>("#leaderboardUserCard");
+const leaderboardAutoSyncInput = document.querySelector<HTMLInputElement>("#leaderboardAutoSyncInput");
 const leaderboardPreferencesPublicInput = document.querySelector<HTMLInputElement>("#leaderboardPreferencesPublicInput");
 const leaderboardPageRefreshButton = document.querySelector<HTMLButtonElement>("#leaderboardPageRefreshButton");
 const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#leaderboardPageSyncButton");
@@ -338,7 +340,11 @@ const treeStartFeedback = document.querySelector<HTMLElement>("#treeStartFeedbac
 const treeStartTreeImage = document.querySelector<HTMLImageElement>("#treeStartTreeImage");
 const cloudSyncStatusText = document.querySelector<HTMLElement>("#cloudSyncStatusText");
 const cloudSyncActionButton = document.querySelector<HTMLButtonElement>("#cloudSyncActionButton");
+const SETTINGS_CATEGORY_IDS = ["basic", "sync", "updates", "sources"] as const;
+type SettingsCategory = (typeof SETTINGS_CATEGORY_IDS)[number];
+let activeSettingsCategory: SettingsCategory = "basic";
 const cloudSyncDeviceList = document.querySelector<HTMLElement>("#cloudSyncDeviceList");
+const cloudSyncAutoSyncInput = document.querySelector<HTMLInputElement>("#cloudSyncAutoSyncInput");
 
 if (viewMode === "manager") {
   setupHistoryCard();
@@ -907,6 +913,22 @@ function bindEvents() {
     setSettingsOpen(false);
   });
 
+  settingsNav?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-settings-category-button]");
+    const category = button?.dataset.settingsCategoryButton;
+    if (!button || !isSettingsCategory(category)) return;
+    activateSettingsCategory(category);
+    button.focus();
+  });
+
+  settingsNav?.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowRight" && event.key !== "ArrowUp" && event.key !== "ArrowLeft") {
+      return;
+    }
+    event.preventDefault();
+    focusAdjacentSettingsCategory(event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1);
+  });
+
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") setSettingsOpen(false);
   });
@@ -1078,6 +1100,22 @@ function bindEvents() {
     ledger = await window.bonsai.getLedger();
     achievementState = await window.bonsai.getAchievements();
     cloudSyncActionButton.disabled = false;
+    render();
+  });
+
+  cloudSyncAutoSyncInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      cloudSyncAutoSyncEnabled: cloudSyncAutoSyncInput.checked,
+    });
+    render();
+  });
+
+  leaderboardAutoSyncInput?.addEventListener("change", async () => {
+    if (!ledger) return;
+    ledger = await window.bonsai.updateSettings({
+      leaderboardAutoSyncEnabled: leaderboardAutoSyncInput.checked,
+    });
     render();
   });
 
@@ -1508,8 +1546,34 @@ async function syncLeaderboard(options: { force?: boolean } = {}) {
 
 function setSettingsOpen(open: boolean) {
   if (!settingsModal) return;
+  if (open) activateSettingsCategory(activeSettingsCategory);
   settingsModal.classList.toggle("open", open);
   settingsModal.setAttribute("aria-hidden", String(!open));
+}
+
+function isSettingsCategory(value: string | undefined): value is SettingsCategory {
+  return SETTINGS_CATEGORY_IDS.includes(value as SettingsCategory);
+}
+
+function activateSettingsCategory(category: SettingsCategory) {
+  activeSettingsCategory = category;
+  document.querySelectorAll<HTMLButtonElement>("[data-settings-category-button]").forEach((button) => {
+    const active = button.dataset.settingsCategoryButton === category;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll<HTMLElement>("[data-settings-category-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.settingsCategoryPanel !== category;
+  });
+}
+
+function focusAdjacentSettingsCategory(offset: 1 | -1) {
+  const currentIndex = SETTINGS_CATEGORY_IDS.indexOf(activeSettingsCategory);
+  const nextIndex = (currentIndex + offset + SETTINGS_CATEGORY_IDS.length) % SETTINGS_CATEGORY_IDS.length;
+  const nextCategory = SETTINGS_CATEGORY_IDS[nextIndex];
+  activateSettingsCategory(nextCategory);
+  document.querySelector<HTMLButtonElement>(`[data-settings-category-button="${nextCategory}"]`)?.focus();
 }
 
 async function exportShareImage() {
@@ -2459,6 +2523,8 @@ function render() {
     if (silentStartupInput) silentStartupInput.checked = ledger.settings.silentStartup;
     syncInputValue(proxyUrlInput, ledger.settings.proxyUrl ?? "");
     if (updateCheckEnabledInput) updateCheckEnabledInput.checked = ledger.settings.updateCheckEnabled;
+    if (leaderboardAutoSyncInput) leaderboardAutoSyncInput.checked = ledger.settings.leaderboardAutoSyncEnabled;
+    if (cloudSyncAutoSyncInput) cloudSyncAutoSyncInput.checked = ledger.settings.cloudSyncAutoSyncEnabled;
     if (leaderboardPreferencesPublicInput) {
       leaderboardPreferencesPublicInput.checked = ledger.settings.leaderboardPreferencesPublic;
     }
@@ -3571,6 +3637,9 @@ function renderCloudSyncSettings() {
   const showAdvancedSync = cloudSyncStatus.enabled;
   const cloudSyncSettings = cloudSyncStatusText?.closest<HTMLElement>(".cloud-sync-settings");
   if (cloudSyncSettings) cloudSyncSettings.dataset.connected = String(showAdvancedSync);
+  if (cloudSyncAutoSyncInput) {
+    cloudSyncAutoSyncInput.disabled = !cloudSyncStatus.enabled || cloudSyncStatus.syncing;
+  }
   if (cloudSyncActionButton) {
     cloudSyncActionButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
     cloudSyncActionButton.textContent = cloudSyncStatus.syncing
@@ -3661,6 +3730,8 @@ function renderLeaderboardSettings() {
   const renderKey = leaderboardSettingsSignature();
   if (renderKey === leaderboardSettingsRenderKey) return;
   leaderboardSettingsRenderKey = renderKey;
+  const leaderboardOptionsEnabled =
+    leaderboardStatus.configured && leaderboardStatus.authenticated && leaderboardStatus.joined && !leaderboardStatus.syncing;
   if (leaderboardPageRefreshButton) {
     leaderboardPageRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
     leaderboardPageRefreshButton.textContent = leaderboardLoading
@@ -3678,6 +3749,12 @@ function renderLeaderboardSettings() {
       (leaderboardStatus.joined && !leaderboardStatus.authenticated);
     leaderboardPageSyncButton.textContent = leaderboardStatus.joined ? t("leaveLeaderboard") : t("joinLeaderboard");
     leaderboardPageSyncButton.classList.toggle("danger-button", leaderboardStatus.joined);
+  }
+  if (leaderboardAutoSyncInput) {
+    leaderboardAutoSyncInput.disabled = !leaderboardOptionsEnabled;
+  }
+  if (leaderboardPreferencesPublicInput) {
+    leaderboardPreferencesPublicInput.disabled = !leaderboardOptionsEnabled;
   }
 
   if (leaderboardUserCard) {

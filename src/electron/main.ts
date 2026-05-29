@@ -46,6 +46,7 @@ const ACHIEVEMENT_TOAST_DOWN_OFFSET_PER_SCALE = 18;
 const ACHIEVEMENT_TOAST_DURATION_MS = 5_000;
 const ACHIEVEMENT_TOAST_WINDOW_PADDING_MS = 600;
 const LEVEL_TOAST_DEDUPE_MS = 4_000;
+const HOURLY_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_REMINDER_DELAY_MS = 3_000;
 const UPDATE_RELAUNCH_DELAY_MS = 1_200;
@@ -59,7 +60,8 @@ const UPDATE_PAGE_URL = "https://github.com/Olorinm/vibe-tree/releases";
 const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
 const DEFAULT_LEADERBOARD_API_URL = "https://vibe-tree-leaderboard.melanthascherffmugutubu.workers.dev";
 const LEADERBOARD_API_URL = (process.env.VIBE_TREE_LEADERBOARD_API_URL ?? DEFAULT_LEADERBOARD_API_URL).replace(/\/+$/, "");
-const LEADERBOARD_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const LEADERBOARD_SYNC_INTERVAL_MS = HOURLY_SYNC_INTERVAL_MS;
+const CLOUD_SYNC_INTERVAL_MS = HOURLY_SYNC_INTERVAL_MS;
 const LEADERBOARD_AUTH_TIMEOUT_MS = 2 * 60 * 1000;
 const LEADERBOARD_CALLBACK_PATH = "/leaderboard/auth/callback";
 const MAC_TRAY_ICON_SIZE = 18;
@@ -93,11 +95,13 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardEnabled: false,
   leaderboardProfile: undefined,
   leaderboardLastSyncedAt: undefined,
+  leaderboardAutoSyncEnabled: true,
   leaderboardPreferencesPublic: false,
   cloudSyncEnabled: false,
   cloudSyncDeviceId: undefined,
   cloudSyncLastSyncedAt: undefined,
   cloudSyncLastPulledAt: undefined,
+  cloudSyncAutoSyncEnabled: true,
   treeStartMode: undefined,
   launchOnStartup: false,
   silentStartup: false,
@@ -214,6 +218,7 @@ const leaderboardService = createLeaderboardService({
   apiUrl: LEADERBOARD_API_URL,
   appName: APP_NAME,
   syncIntervalMs: LEADERBOARD_SYNC_INTERVAL_MS,
+  cloudSyncIntervalMs: CLOUD_SYNC_INTERVAL_MS,
   authTimeoutMs: LEADERBOARD_AUTH_TIMEOUT_MS,
   callbackPath: LEADERBOARD_CALLBACK_PATH,
   authPath: leaderboardAuthPath,
@@ -566,11 +571,13 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardEnabled: Boolean(settings.leaderboardEnabled && leaderboardProfile),
     leaderboardProfile,
     leaderboardLastSyncedAt,
+    leaderboardAutoSyncEnabled: settings.leaderboardAutoSyncEnabled !== false,
     leaderboardPreferencesPublic: Boolean(settings.leaderboardPreferencesPublic),
     cloudSyncEnabled: Boolean(settings.cloudSyncEnabled && leaderboardProfile),
     cloudSyncDeviceId: cleanDeviceId(settings.cloudSyncDeviceId),
     cloudSyncLastSyncedAt,
     cloudSyncLastPulledAt,
+    cloudSyncAutoSyncEnabled: settings.cloudSyncAutoSyncEnabled !== false,
     treeStartMode: settings.treeStartMode === "new" || settings.treeStartMode === "cloud" ? settings.treeStartMode : undefined,
     launchOnStartup: Boolean(settings.launchOnStartup),
     silentStartup: Boolean(settings.silentStartup),
@@ -1559,14 +1566,18 @@ function updateSettings(partial: Partial<Settings>) {
   if (
     previous.leaderboardEnabled !== ledger.settings.leaderboardEnabled ||
     previous.cloudSyncEnabled !== ledger.settings.cloudSyncEnabled ||
+    previous.leaderboardAutoSyncEnabled !== ledger.settings.leaderboardAutoSyncEnabled ||
+    previous.cloudSyncAutoSyncEnabled !== ledger.settings.cloudSyncAutoSyncEnabled ||
     previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id
   ) {
     leaderboardService.startSync();
   } else if (
     partial.leaderboardEnabled !== undefined ||
+    partial.leaderboardAutoSyncEnabled !== undefined ||
     partial.leaderboardProfile !== undefined ||
     partial.leaderboardLastSyncedAt !== undefined ||
     partial.cloudSyncEnabled !== undefined ||
+    partial.cloudSyncAutoSyncEnabled !== undefined ||
     partial.cloudSyncLastSyncedAt !== undefined ||
     partial.cloudSyncLastPulledAt !== undefined
   ) {
