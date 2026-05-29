@@ -3,12 +3,21 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   CloudSyncStatus,
+  CreateSocialFriendInput,
+  CreateSocialGroupInput,
+  CreateSocialGroupInviteInput,
   LedgerFile,
   LeaderboardCollection,
   LeaderboardData,
   LeaderboardRange,
   LeaderboardStatus,
   Settings,
+  SocialFriend,
+  SocialFriendList,
+  SocialGroup,
+  SocialGroupInvite,
+  SocialGroupLeaderboardData,
+  SocialGroupList,
   ToastPlacement,
   TreeToastItem,
   UpdateStatus,
@@ -38,6 +47,15 @@ declare global {
       syncLeaderboard: (options?: { force?: boolean }) => Promise<LeaderboardStatus>;
       getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
       getLeaderboards: () => Promise<LeaderboardCollection>;
+      getSocialFriends: () => Promise<SocialFriendList>;
+      requestSocialFriend: (input: CreateSocialFriendInput) => Promise<SocialFriend>;
+      acceptSocialFriend: (userId: string) => Promise<SocialFriend>;
+      removeSocialFriend: (userId: string) => Promise<SocialFriendList>;
+      getSocialGroups: () => Promise<SocialGroupList>;
+      createSocialGroup: (input: CreateSocialGroupInput) => Promise<SocialGroup>;
+      createSocialGroupInvite: (groupId: string, input?: CreateSocialGroupInviteInput) => Promise<SocialGroupInvite>;
+      acceptSocialGroupInvite: (code: string) => Promise<SocialGroup>;
+      getSocialGroupLeaderboard: (groupId: string, range: LeaderboardRange) => Promise<SocialGroupLeaderboardData>;
       getCloudSyncStatus: () => Promise<CloudSyncStatus>;
       startNewTree: () => Promise<CloudSyncStatus>;
       enableCloudSync: () => Promise<CloudSyncStatus>;

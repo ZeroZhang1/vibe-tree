@@ -7,6 +7,9 @@ import type {
   CloudDeviceSummary,
   CloudModelStat,
   CloudSyncStatus,
+  CreateSocialFriendInput,
+  CreateSocialGroupInput,
+  CreateSocialGroupInviteInput,
   LedgerEntry,
   LedgerFile,
   LeaderboardCollection,
@@ -18,6 +21,16 @@ import type {
   LeaderboardStatus,
   LeaderboardUsagePreference,
   Settings,
+  SocialFriend,
+  SocialFriendList,
+  SocialGroup,
+  SocialGroupInvite,
+  SocialGroupLeaderboardData,
+  SocialGroupLeaderboardEntry,
+  SocialGroupList,
+  SocialGroupMember,
+  SocialGroupRole,
+  SocialGroupVisibility,
 } from "../shared/types.js";
 
 interface LeaderboardAuthFile {
@@ -534,6 +547,155 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     return { ranges };
   }
 
+  async function getSocialFriends(): Promise<SocialFriendList> {
+    if (!configured) return socialFriendListWithError(text("leaderboardServiceNotConfigured"));
+    if (!auth.token) return socialFriendListWithError(text("leaderboardLoginRequired"));
+
+    try {
+      const data = await requestJson<unknown>(apiUrl("/api/social/friends"), { token: auth.token });
+      return normalizeSocialFriendList(data);
+    } catch (error) {
+      return socialFriendListWithError(error instanceof Error ? error.message : text("socialFriendsLoadFailed"));
+    }
+  }
+
+  async function requestSocialFriend(input: CreateSocialFriendInput): Promise<SocialFriend> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+
+    const username = cleanOptionalString(input?.username, 80);
+    const userId = cleanOptionalString(input?.userId, 80);
+    if (!username && !userId) throw new Error(text("socialFriendTargetRequired"));
+    const data = await requestJson<unknown>(apiUrl("/api/social/friends"), {
+      method: "POST",
+      token: auth.token,
+      body: { username, userId },
+    });
+    const friend = normalizeSocialFriend((data as { friend?: unknown })?.friend ?? data);
+    if (!friend) throw new Error(text("socialFriendRequestFailed"));
+    return friend;
+  }
+
+  async function acceptSocialFriend(userId: string): Promise<SocialFriend> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+    const targetUserId = cleanOptionalString(userId, 80);
+    if (!targetUserId) throw new Error(text("socialFriendAcceptFailed"));
+    const data = await requestJson<unknown>(apiUrl(`/api/social/friends/${encodeURIComponent(targetUserId)}/accept`), {
+      method: "POST",
+      token: auth.token,
+    });
+    const friend = normalizeSocialFriend((data as { friend?: unknown })?.friend ?? data);
+    if (!friend) throw new Error(text("socialFriendAcceptFailed"));
+    return friend;
+  }
+
+  async function removeSocialFriend(userId: string): Promise<SocialFriendList> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+    const targetUserId = cleanOptionalString(userId, 80);
+    if (!targetUserId) throw new Error(text("socialFriendRemoveFailed"));
+    const data = await requestJson<unknown>(apiUrl(`/api/social/friends/${encodeURIComponent(targetUserId)}`), {
+      method: "DELETE",
+      token: auth.token,
+    });
+    return normalizeSocialFriendList(data);
+  }
+
+  async function getSocialGroups(): Promise<SocialGroupList> {
+    if (!configured) return socialGroupListWithError(text("leaderboardServiceNotConfigured"));
+    if (!auth.token) return socialGroupListWithError(text("leaderboardLoginRequired"));
+
+    try {
+      const data = await requestJson<unknown>(apiUrl("/api/social/groups"), { token: auth.token });
+      return normalizeSocialGroupList(data);
+    } catch (error) {
+      return socialGroupListWithError(error instanceof Error ? error.message : text("socialGroupsLoadFailed"));
+    }
+  }
+
+  async function createSocialGroup(input: CreateSocialGroupInput): Promise<SocialGroup> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+
+    const name = cleanOptionalString(input?.name, 48);
+    if (!name) throw new Error(text("socialGroupNameRequired"));
+    const data = await requestJson<unknown>(apiUrl("/api/social/groups"), {
+      method: "POST",
+      token: auth.token,
+      body: {
+        name,
+        description: cleanOptionalString(input?.description, 180),
+        iconEmoji: cleanOptionalString(input?.iconEmoji, 8),
+        visibility: normalizeSocialVisibility(input?.visibility),
+      },
+    });
+    const group = normalizeSocialGroup((data as { group?: unknown })?.group ?? data);
+    if (!group) throw new Error(text("socialGroupCreateFailed"));
+    return group;
+  }
+
+  async function createSocialGroupInvite(
+    groupId: string,
+    input: CreateSocialGroupInviteInput = {},
+  ): Promise<SocialGroupInvite> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+
+    const data = await requestJson<unknown>(apiUrl(`/api/social/groups/${encodeURIComponent(groupId)}/invites`), {
+      method: "POST",
+      token: auth.token,
+      body: {
+        role: normalizeSocialRole(input.role) === "officer" ? "officer" : "member",
+        maxUses: positiveInteger(input.maxUses),
+        expiresInDays: positiveInteger(input.expiresInDays),
+      },
+    });
+    const invite = normalizeSocialInvite((data as { invite?: unknown })?.invite ?? data);
+    if (!invite) throw new Error(text("socialInviteCreateFailed"));
+    return invite;
+  }
+
+  async function acceptSocialGroupInvite(code: string): Promise<SocialGroup> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+
+    const inviteCode = typeof code === "string" ? code.trim() : "";
+    if (!inviteCode) throw new Error(text("socialInviteAcceptFailed"));
+    const data = await requestJson<unknown>(apiUrl(`/api/social/invites/${encodeURIComponent(inviteCode)}/accept`), {
+      method: "POST",
+      token: auth.token,
+    });
+    const group = normalizeSocialGroup((data as { group?: unknown })?.group ?? data);
+    if (!group) throw new Error(text("socialInviteAcceptFailed"));
+    return group;
+  }
+
+  async function getSocialGroupLeaderboard(groupId: string, rangeInput: unknown): Promise<SocialGroupLeaderboardData> {
+    const range = normalizeRange(rangeInput);
+    if (!configured) return socialGroupLeaderboardWithError(groupId, range, text("leaderboardServiceNotConfigured"));
+    if (!auth.token) return socialGroupLeaderboardWithError(groupId, range, text("leaderboardLoginRequired"));
+
+    try {
+      const url = new URL(apiUrl(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard`));
+      url.searchParams.set("range", range);
+      const data = await requestJson<unknown>(url.toString(), { token: auth.token });
+      return normalizeSocialGroupLeaderboard(data, groupId, range);
+    } catch (error) {
+      return socialGroupLeaderboardWithError(
+        groupId,
+        range,
+        error instanceof Error ? error.message : text("socialGroupLeaderboardLoadFailed"),
+      );
+    }
+  }
+
   async function pullCloudTree({ state }: { state: CloudSyncFile }) {
     const cursor = normalizeTreeCursor(state.treeCursor);
     let data: CloudTreeResponse;
@@ -998,6 +1160,15 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     scheduleCloudSyncSoon,
     getLeaderboard,
     getLeaderboards,
+    getSocialFriends,
+    requestSocialFriend,
+    acceptSocialFriend,
+    removeSocialFriend,
+    getSocialGroups,
+    createSocialGroup,
+    createSocialGroupInvite,
+    acceptSocialGroupInvite,
+    getSocialGroupLeaderboard,
   };
 }
 
@@ -1229,6 +1400,11 @@ function positiveInteger(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
+function nonNegativeInteger(value: unknown) {
+  const number = Math.round(Number(value));
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
 function chunkArray<T>(items: T[], size: number) {
   const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
@@ -1393,6 +1569,171 @@ function collectionWithError(error: string): LeaderboardCollection {
     ranges[range] = { range, entries: [], error };
   }
   return { ranges };
+}
+
+function socialGroupListWithError(error: string): SocialGroupList {
+  return { groups: [], error };
+}
+
+function socialFriendListWithError(error: string): SocialFriendList {
+  return { friends: [], error };
+}
+
+function normalizeSocialFriendList(value: unknown): SocialFriendList {
+  const list = value as Partial<SocialFriendList> | undefined;
+  const friends = Array.isArray(list?.friends)
+    ? list.friends.map(normalizeSocialFriend).filter((friend): friend is SocialFriend => Boolean(friend))
+    : [];
+  const updatedAt =
+    typeof list?.updatedAt === "string" && Number.isFinite(Date.parse(list.updatedAt)) ? list.updatedAt : undefined;
+  const error = typeof list?.error === "string" ? list.error : undefined;
+  return { friends, updatedAt, error };
+}
+
+function normalizeSocialFriend(value: unknown): SocialFriend | undefined {
+  const friend = value as Partial<SocialFriend> | undefined;
+  if (!friend) return undefined;
+  const userId = typeof friend.userId === "string" && friend.userId.trim() ? friend.userId.trim() : undefined;
+  const username = typeof friend.username === "string" && friend.username.trim() ? friend.username.trim() : undefined;
+  const status = friend.status === "accepted" || friend.status === "pending" ? friend.status : undefined;
+  if (!userId || !username || !status) return undefined;
+  const avatarUrl =
+    typeof friend.avatarUrl === "string" && friend.avatarUrl.trim() ? friend.avatarUrl.trim() : undefined;
+  const direction = friend.direction === "incoming" || friend.direction === "outgoing" ? friend.direction : undefined;
+  const requestedByMe = friend.requestedByMe === true;
+  const createdAt =
+    typeof friend.createdAt === "string" && Number.isFinite(Date.parse(friend.createdAt)) ? friend.createdAt : undefined;
+  const updatedAt =
+    typeof friend.updatedAt === "string" && Number.isFinite(Date.parse(friend.updatedAt)) ? friend.updatedAt : undefined;
+  return { userId, username, avatarUrl, status, direction, requestedByMe, createdAt, updatedAt };
+}
+
+function normalizeSocialGroupList(value: unknown): SocialGroupList {
+  const list = value as Partial<SocialGroupList> | undefined;
+  const groups = Array.isArray(list?.groups)
+    ? list.groups.map(normalizeSocialGroup).filter((group): group is SocialGroup => Boolean(group))
+    : [];
+  const updatedAt =
+    typeof list?.updatedAt === "string" && Number.isFinite(Date.parse(list.updatedAt)) ? list.updatedAt : undefined;
+  const error = typeof list?.error === "string" ? list.error : undefined;
+  return { groups, updatedAt, error };
+}
+
+function normalizeSocialGroup(value: unknown): SocialGroup | undefined {
+  const group = value as Partial<SocialGroup> | undefined;
+  if (!group) return undefined;
+  const groupId = typeof group?.groupId === "string" && group.groupId.trim() ? group.groupId.trim() : undefined;
+  const name = typeof group?.name === "string" && group.name.trim() ? group.name.trim() : undefined;
+  const ownerUserId =
+    typeof group?.ownerUserId === "string" && group.ownerUserId.trim() ? group.ownerUserId.trim() : undefined;
+  if (!groupId || !name || !ownerUserId) return undefined;
+  const visibility = normalizeSocialVisibility(group.visibility) ?? "invite";
+  const description = cleanOptionalString(group.description, 180);
+  const iconEmoji = cleanOptionalString(group.iconEmoji, 8);
+  const createdAt =
+    typeof group.createdAt === "string" && Number.isFinite(Date.parse(group.createdAt)) ? group.createdAt : undefined;
+  const updatedAt =
+    typeof group.updatedAt === "string" && Number.isFinite(Date.parse(group.updatedAt)) ? group.updatedAt : undefined;
+  const memberCount = Math.max(0, Math.round(Number(group.memberCount)));
+  const role = normalizeSocialRole(group.role);
+  const shareUsage = typeof group.shareUsage === "boolean" ? group.shareUsage : undefined;
+  const members = Array.isArray(group.members)
+    ? group.members.map(normalizeSocialMember).filter((member): member is SocialGroupMember => Boolean(member))
+    : undefined;
+  return {
+    groupId,
+    name,
+    description,
+    iconEmoji,
+    visibility,
+    ownerUserId,
+    createdAt,
+    updatedAt,
+    memberCount: Number.isFinite(memberCount) ? memberCount : 0,
+    role,
+    shareUsage,
+    members,
+  };
+}
+
+function normalizeSocialMember(value: unknown): SocialGroupMember | undefined {
+  const member = value as Partial<SocialGroupMember> | undefined;
+  if (!member) return undefined;
+  const userId = typeof member?.userId === "string" && member.userId.trim() ? member.userId.trim() : undefined;
+  const username = typeof member?.username === "string" && member.username.trim() ? member.username.trim() : undefined;
+  if (!userId || !username) return undefined;
+  const role = normalizeSocialRole(member.role) ?? "member";
+  const avatarUrl = typeof member.avatarUrl === "string" && member.avatarUrl.trim() ? member.avatarUrl.trim() : undefined;
+  const shareUsage = member.shareUsage === true;
+  const joinedAt =
+    typeof member.joinedAt === "string" && Number.isFinite(Date.parse(member.joinedAt)) ? member.joinedAt : undefined;
+  const updatedAt =
+    typeof member.updatedAt === "string" && Number.isFinite(Date.parse(member.updatedAt)) ? member.updatedAt : undefined;
+  return { userId, username, avatarUrl, role, shareUsage, joinedAt, updatedAt };
+}
+
+function normalizeSocialInvite(value: unknown): SocialGroupInvite | undefined {
+  const invite = value as Partial<SocialGroupInvite> | undefined;
+  if (!invite) return undefined;
+  const code = typeof invite?.code === "string" && invite.code.trim() ? invite.code.trim() : undefined;
+  const groupId = typeof invite?.groupId === "string" && invite.groupId.trim() ? invite.groupId.trim() : undefined;
+  const role = normalizeSocialRole(invite?.role);
+  if (!code || !groupId || !role || role === "leader") return undefined;
+  const maxUses = positiveInteger(invite.maxUses);
+  const uses = nonNegativeInteger(invite.uses) ?? 0;
+  const expiresAt =
+    typeof invite.expiresAt === "string" && Number.isFinite(Date.parse(invite.expiresAt))
+      ? invite.expiresAt
+      : undefined;
+  const createdAt =
+    typeof invite.createdAt === "string" && Number.isFinite(Date.parse(invite.createdAt))
+      ? invite.createdAt
+      : undefined;
+  return { code, groupId, role, maxUses, uses, expiresAt, createdAt };
+}
+
+function normalizeSocialGroupLeaderboard(
+  value: unknown,
+  fallbackGroupId: string,
+  fallbackRange: LeaderboardRange,
+): SocialGroupLeaderboardData {
+  const data = value as Partial<SocialGroupLeaderboardData> | undefined;
+  const groupId =
+    typeof data?.groupId === "string" && data.groupId.trim() ? data.groupId.trim() : fallbackGroupId;
+  const range = normalizeRange(data?.range ?? fallbackRange);
+  const entries = Array.isArray(data?.entries)
+    ? data.entries
+        .map(normalizeSocialGroupLeaderboardEntry)
+        .filter((entry): entry is SocialGroupLeaderboardEntry => Boolean(entry))
+    : [];
+  const me = normalizeSocialGroupLeaderboardEntry(data?.me);
+  const updatedAt =
+    typeof data?.updatedAt === "string" && Number.isFinite(Date.parse(data.updatedAt)) ? data.updatedAt : undefined;
+  const error = typeof data?.error === "string" ? data.error : undefined;
+  return { groupId, range, entries, updatedAt, me, error };
+}
+
+function socialGroupLeaderboardWithError(
+  groupId: string,
+  range: LeaderboardRange,
+  error: string,
+): SocialGroupLeaderboardData {
+  return { groupId, range, entries: [], error };
+}
+
+function normalizeSocialGroupLeaderboardEntry(value: unknown): SocialGroupLeaderboardEntry | undefined {
+  const entry = normalizeEntry(value);
+  if (!entry) return undefined;
+  const role = normalizeSocialRole((value as Partial<SocialGroupLeaderboardEntry> | undefined)?.role);
+  return { ...entry, role };
+}
+
+function normalizeSocialRole(value: unknown): SocialGroupRole | undefined {
+  return value === "leader" || value === "officer" || value === "member" ? value : undefined;
+}
+
+function normalizeSocialVisibility(value: unknown): SocialGroupVisibility | undefined {
+  return value === "closed" || value === "invite" ? value : undefined;
 }
 
 function normalizeEntry(value: unknown): LeaderboardEntry | undefined {

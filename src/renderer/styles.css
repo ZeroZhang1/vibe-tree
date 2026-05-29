@@ -802,6 +802,7 @@ h4 {
 .manager-root[data-ui-theme="day"] .source-card,
 .manager-root[data-ui-theme="day"] .achievement-card,
 .manager-root[data-ui-theme="day"] .leaderboard-card,
+.manager-root[data-ui-theme="day"] .social-card,
 .manager-root[data-ui-theme="day"] .chart-card {
   background: #ffffff;
 }
@@ -825,7 +826,7 @@ h4 {
 
 .side-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -2420,6 +2421,7 @@ input:disabled {
 .source-card,
 .achievement-card,
 .leaderboard-card,
+.social-card,
 .chart-card {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -2570,6 +2572,7 @@ label {
 .source-card,
 .achievement-card,
 .leaderboard-card,
+.social-card,
 .chart-card {
   padding: 14px;
   display: grid;
@@ -2602,17 +2605,27 @@ label {
 
 .manager-root[data-tab="home"] .achievement-card,
 .manager-root[data-tab="home"] .leaderboard-card,
+.manager-root[data-tab="home"] .social-card,
 .manager-root[data-tab="achievements"] .dashboard-header,
 .manager-root[data-tab="achievements"] .metric-grid,
 .manager-root[data-tab="achievements"] .progress-block,
 .manager-root[data-tab="achievements"] .source-card,
 .manager-root[data-tab="achievements"] .leaderboard-card,
+.manager-root[data-tab="achievements"] .social-card,
 .manager-root[data-tab="achievements"] .chart-card,
 .manager-root[data-tab="leaderboard"] .dashboard-header,
 .manager-root[data-tab="leaderboard"] .metric-grid,
 .manager-root[data-tab="leaderboard"] .progress-block,
 .manager-root[data-tab="leaderboard"] .source-card,
 .manager-root[data-tab="leaderboard"] .achievement-card,
+.manager-root[data-tab="leaderboard"] .social-card,
+.manager-root[data-tab="social"] .dashboard-header,
+.manager-root[data-tab="social"] .metric-grid,
+.manager-root[data-tab="social"] .progress-block,
+.manager-root[data-tab="social"] .source-card,
+.manager-root[data-tab="social"] .achievement-card,
+.manager-root[data-tab="social"] .leaderboard-card,
+.manager-root[data-tab="social"] .chart-card,
 .manager-root[data-tab="leaderboard"] .chart-card {
   display: none;
 }
@@ -2625,6 +2638,13 @@ label {
 }
 
 .manager-root[data-tab="leaderboard"] .leaderboard-card {
+  align-content: start;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  max-height: calc(100vh - 72px);
+  overflow: hidden;
+}
+
+.manager-root[data-tab="social"] .social-card {
   align-content: start;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   max-height: calc(100vh - 72px);
@@ -2876,6 +2896,305 @@ label {
   font-size: 0.82rem;
   line-height: 1.2;
   text-align: right;
+}
+
+/* ============================
+   SOCIAL
+   ============================ */
+
+.social-card .section-header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.social-refresh-button,
+.social-invite-button {
+  min-width: 88px;
+  padding: 0 12px;
+  font-size: 0.72rem;
+}
+
+.social-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.social-mini-form {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.social-input-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.social-input-row input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: var(--bg-light);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.social-summary {
+  min-height: 40px;
+}
+
+.social-friend-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.social-friend-item {
+  min-width: 0;
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-friend-item.pending {
+  border-style: dashed;
+}
+
+.social-friend-avatar {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-card);
+  color: var(--leaf);
+  font-size: 0.72rem;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.social-friend-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.social-friend-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.social-friend-copy strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-friend-copy span {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.social-friend-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.social-friend-actions .secondary-button {
+  min-width: 52px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 0.66rem;
+}
+
+.social-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(136px, 0.72fr) minmax(0, 1.28fr);
+  gap: 10px;
+}
+
+.social-group-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.social-group-item {
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+
+.social-group-item.active,
+.social-group-item:hover {
+  border-color: var(--leaf);
+  background: var(--leaf-glow);
+}
+
+.social-group-icon {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--leaf);
+  font-size: 0.72rem;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.social-group-icon.large {
+  width: 42px;
+  height: 42px;
+}
+
+.social-group-copy,
+.social-group-title div,
+.social-group-title {
+  min-width: 0;
+}
+
+.social-group-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.social-group-copy strong,
+.social-group-title strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-group-copy span,
+.social-group-title span,
+.social-detail-header p,
+.social-invite-output span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.social-detail-panel {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.social-detail-header {
+  min-height: 54px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-group-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+}
+
+.social-detail-header > strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.social-detail-header > span {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.social-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.social-invite-output {
+  display: none;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-invite-output:not(:empty) {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.social-invite-output strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.social-invite-output code {
+  padding: 4px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--leaf);
+  font-size: 0.72rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.social-leaderboard-rows {
+  min-height: 0;
+}
+
+.social-leaderboard-row {
+  grid-template-columns: 38px 34px minmax(0, 1fr) max-content;
 }
 
 .leaderboard-empty {
@@ -4496,6 +4815,11 @@ label {
     grid-template-rows: none;
   }
 
+  .social-layout,
+  .social-action-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chart-top {
     flex-wrap: wrap;
   }
@@ -4589,6 +4913,14 @@ label {
   .leaderboard-tokens {
     grid-column: 3;
     text-align: left;
+  }
+
+  .social-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .social-leaderboard-row {
+    grid-template-columns: 42px 34px minmax(0, 1fr);
   }
 
   .leaderboard-actions {

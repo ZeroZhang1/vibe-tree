@@ -2834,6 +2834,19 @@ ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
 );
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("leaderboard:get-all", () => leaderboardService.getLeaderboards());
+ipcMain.handle("social:friends", () => leaderboardService.getSocialFriends());
+ipcMain.handle("social:request-friend", (_event, input) => leaderboardService.requestSocialFriend(input));
+ipcMain.handle("social:accept-friend", (_event, userId: string) => leaderboardService.acceptSocialFriend(userId));
+ipcMain.handle("social:remove-friend", (_event, userId: string) => leaderboardService.removeSocialFriend(userId));
+ipcMain.handle("social:groups", () => leaderboardService.getSocialGroups());
+ipcMain.handle("social:create-group", (_event, input) => leaderboardService.createSocialGroup(input));
+ipcMain.handle("social:create-invite", (_event, groupId: string, input) =>
+  leaderboardService.createSocialGroupInvite(groupId, input),
+);
+ipcMain.handle("social:accept-invite", (_event, code: string) => leaderboardService.acceptSocialGroupInvite(code));
+ipcMain.handle("social:group-leaderboard", (_event, groupId: string, range?: unknown) =>
+  leaderboardService.getSocialGroupLeaderboard(groupId, range),
+);
 ipcMain.handle("cloud-sync:get-status", (): CloudSyncStatus => leaderboardService.cloudStatus());
 ipcMain.handle("cloud-sync:start-new", () => {
   setTreeStartMode("new");

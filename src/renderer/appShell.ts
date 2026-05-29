@@ -49,6 +49,7 @@ export function appShellHtml(viewMode: ViewMode) {
           <button type="button" data-dashboard-tab="home" data-i18n="home">主页</button>
           <button type="button" data-dashboard-tab="achievements" data-i18n="achievements">成就</button>
           <button type="button" data-dashboard-tab="leaderboard" data-i18n="leaderboard">排行榜</button>
+          <button type="button" data-dashboard-tab="social" data-i18n="social">社交</button>
         </nav>
 
       </aside>
@@ -195,6 +196,58 @@ export function appShellHtml(viewMode: ViewMode) {
           </div>
           <div class="leaderboard-summary" id="leaderboardSummary"></div>
           <div class="leaderboard-rows" id="leaderboardRows"></div>
+        </section>
+
+        <section class="social-card" aria-label="好友与群组" data-i18n-aria="socialAria">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow" data-i18n="socialEyebrow">Guild hall</p>
+              <h3 data-i18n="socialTitle">好友 / 群组</h3>
+            </div>
+            <button class="secondary-button social-refresh-button" id="socialRefreshButton" type="button" data-i18n="socialRefresh">刷新</button>
+          </div>
+          <div class="social-action-grid">
+            <form class="social-mini-form" id="socialAddFriendForm">
+              <label for="socialFriendUsernameInput" data-i18n="socialAddFriend">添加好友</label>
+              <div class="social-input-row">
+                <input id="socialFriendUsernameInput" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="GitHub 用户名" data-i18n-placeholder="socialFriendUsernamePlaceholder" />
+                <button class="secondary-button" id="socialAddFriendButton" type="submit" data-i18n="socialAddFriendAction">添加</button>
+              </div>
+            </form>
+            <form class="social-mini-form" id="socialCreateGroupForm">
+              <label for="socialGroupNameInput" data-i18n="socialCreateGroup">创建群组</label>
+              <div class="social-input-row">
+                <input id="socialGroupNameInput" type="text" maxlength="48" autocomplete="off" placeholder="群组名" data-i18n-placeholder="socialGroupNamePlaceholder" />
+                <button class="secondary-button" id="socialCreateGroupButton" type="submit" data-i18n="socialCreateGroupAction">创建</button>
+              </div>
+            </form>
+            <form class="social-mini-form" id="socialJoinInviteForm">
+              <label for="socialInviteCodeInput" data-i18n="socialJoinInvite">邀请码加入</label>
+              <div class="social-input-row">
+                <input id="socialInviteCodeInput" type="text" autocomplete="off" spellcheck="false" placeholder="邀请码" data-i18n-placeholder="socialInvitePlaceholder" />
+                <button class="secondary-button" id="socialJoinInviteButton" type="submit" data-i18n="socialJoinInviteAction">加入</button>
+              </div>
+            </form>
+          </div>
+          <div class="social-friend-list" id="socialFriendList"></div>
+          <div class="leaderboard-summary social-summary" id="socialSummary"></div>
+          <div class="social-layout">
+            <div class="social-group-list" id="socialGroupList"></div>
+            <div class="social-detail-panel">
+              <div class="social-detail-header" id="socialGroupDetail"></div>
+              <div class="social-toolbar">
+                <div class="leaderboard-range-tabs social-range-tabs" id="socialGroupRangeTabs" role="tablist" aria-label="群组排行榜范围" data-i18n-aria="socialGroupLeaderboardAria">
+                  <button type="button" data-social-group-range="24h" data-i18n="leaderboard24h">24h</button>
+                  <button type="button" data-social-group-range="7d" data-i18n="leaderboard7d">7 天</button>
+                  <button type="button" data-social-group-range="30d" data-i18n="leaderboard30d">30 天</button>
+                  <button type="button" data-social-group-range="all" data-i18n="leaderboardAllTime">全部</button>
+                </div>
+                <button class="secondary-button social-invite-button" id="socialCreateInviteButton" type="button" data-i18n="socialCreateInvite">生成邀请</button>
+              </div>
+              <div class="social-invite-output" id="socialInviteOutput"></div>
+              <div class="leaderboard-rows social-leaderboard-rows" id="socialGroupLeaderboardRows"></div>
+            </div>
+          </div>
         </section>
 
         <section class="source-card" aria-label="Token 来源" data-i18n-aria="sourceAria">
