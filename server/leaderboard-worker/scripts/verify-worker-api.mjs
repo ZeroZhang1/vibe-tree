@@ -168,6 +168,66 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assert(device?.deviceId === "mac-device" && device.platform === "mac", "cloud tree should return device metadata");
   assert(modelStat?.model === "private-model" && modelStat.tokens === 1234, "cloud tree should return aggregate model stats");
   assert(!("prompt" in modelStat) && !("localPath" in modelStat), "cloud model stats should not leak raw session data");
+  const fullTreeCursor = cloudTree.cursor;
+  assert(typeof fullTreeCursor === "string" && Number.isFinite(Date.parse(fullTreeCursor)), "full cloud tree should return a sync cursor");
+
+  await delay(5);
+  await requestJson("/api/tree/events", {
+    method: "POST",
+    body: {
+      deviceId: "mac-device",
+      appVersion: "0.5.5-test",
+      modelStats: [
+        {
+          date: utcToday,
+          source: "codex-session",
+          model: "private-model",
+          tokens: 1334,
+          inputTokens: 1100,
+          outputTokens: 200,
+          cacheReadTokens: 34,
+          cacheWriteTokens: 0,
+        },
+      ],
+      entries: [
+        {
+          id: "mac-event-2",
+          createdAt: "2026-05-27T02:00:00.000Z",
+          source: "openclaw-session",
+          tokens: 100,
+          inputTokens: 80,
+          outputTokens: 20,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          deviceId: "mac-device",
+        },
+      ],
+    },
+  });
+  await requestJson("/api/tree/achievements", {
+    method: "POST",
+    body: {
+      appVersion: "0.5.5-test",
+      achievements: [
+        {
+          id: "branch",
+          unlockedAt: "2026-05-27T02:01:00.000Z",
+        },
+      ],
+    },
+  });
+  const deltaTree = await requestJson(`/api/tree/delta?since=${encodeURIComponent(fullTreeCursor)}`);
+  assert(deltaTree.delta === true, "delta cloud tree should mark the payload as a delta");
+  assert(typeof deltaTree.cursor === "string" && deltaTree.cursor > fullTreeCursor, "delta cloud tree should advance the cursor");
+  assert(deltaTree.entries?.length === 1 && deltaTree.entries[0].id === "mac-event-2", "delta cloud tree should only return events changed after the cursor");
+  assert(deltaTree.achievements?.length === 1 && deltaTree.achievements[0].id === "branch", "delta cloud tree should only return achievements changed after the cursor");
+  assert(deltaTree.devicesFull === true && deltaTree.modelStatsFull === true, "delta cloud tree should include full device and model aggregate snapshots");
+  assert(deltaTree.devices?.find((item) => item.deviceId === "mac-device")?.tokens === 1334, "delta cloud tree should use cached per-device totals");
+  assert(deltaTree.modelStats?.find((item) => item.model === "private-model")?.tokens === 1334, "delta cloud tree should include the latest aggregate model totals");
+  await assertRejects(
+    () => requestJson("/api/tree/delta?since=not-a-date"),
+    "delta cloud tree should reject invalid cursors",
+  );
 
   await requestJson("/api/usage/daily", {
     method: "POST",
@@ -241,10 +301,10 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
 
   await requestJson("/api/leaderboard", { method: "DELETE" });
   cloudTree = await requestJson("/api/tree");
-  assert(cloudTree.summary?.entryCount === 1, "leaving leaderboard must not delete cloud tree events");
-  assert(cloudTree.summary?.achievementCount === 1, "leaving leaderboard must not delete cloud tree achievements");
+  assert(cloudTree.summary?.entryCount === 2, "leaving leaderboard must not delete cloud tree events");
+  assert(cloudTree.summary?.achievementCount === 2, "leaving leaderboard must not delete cloud tree achievements");
 
-  console.log("Worker API verified: device-only cloud trees, tree sync privacy, achievement privacy, 24h leaderboard buckets, legacy fallback, and leaderboard leave safety passed.");
+  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, legacy fallback, and leaderboard leave safety passed.");
 } finally {
   if (devProcess) await terminate(devProcess);
   rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });

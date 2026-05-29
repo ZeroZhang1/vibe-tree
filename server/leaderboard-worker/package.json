@@ -17,7 +17,9 @@
     "db:migrate:devices": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260528_cloud_tree_device_model_stats.sql",
     "db:migrate:devices:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260528_cloud_tree_device_model_stats.sql",
     "db:migrate:hourly": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260529_leaderboard_hourly_usage.sql",
-    "db:migrate:hourly:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260529_leaderboard_hourly_usage.sql"
+    "db:migrate:hourly:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260529_leaderboard_hourly_usage.sql",
+    "db:migrate:delta": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260529_cloud_tree_delta_indexes.sql",
+    "db:migrate:delta:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260529_cloud_tree_delta_indexes.sql"
   },
   "devDependencies": {
     "wrangler": "^3.114.0"

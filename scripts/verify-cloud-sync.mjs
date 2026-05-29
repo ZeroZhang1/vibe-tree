@@ -47,14 +47,54 @@ function createFakeCloud() {
   const modelStats = new Map();
   const requests = [];
   let leaderboardDeleteCount = 0;
+  let deltaUnsupported = false;
+  let clock = Date.parse("2026-05-27T00:00:00.000Z");
+
+  function nextTimestamp() {
+    clock += 1000;
+    return new Date(clock).toISOString();
+  }
+
+  function rowTimestamp(row) {
+    return row?.updatedAt ?? row?.createdAt ?? row?.unlockedAt ?? "1970-01-01T00:00:00.000Z";
+  }
+
+  function updateDeviceTotals(deviceId) {
+    const device = devices.get(deviceId);
+    if (!device) return;
+    const deviceEvents = [...events.values()].filter((entry) => entry.deviceId === deviceId);
+    device.entryCount = deviceEvents.length;
+    device.tokens = deviceEvents.reduce((total, entry) => total + entry.tokens, 0);
+  }
+
+  function insertRemoteEvent(entry) {
+    const updatedAt = nextTimestamp();
+    events.set(entry.id, {
+      ...entry,
+      updatedAt,
+      source: normalizeCloudSource(entry.source, entry.id),
+      tokens: optionalCount(entry.tokens) ?? 0,
+    });
+    if (entry.deviceId && !devices.has(entry.deviceId)) {
+      devices.set(entry.deviceId, {
+        deviceId: entry.deviceId,
+        lastSyncedAt: updatedAt,
+        entryCount: 0,
+        tokens: 0,
+      });
+    }
+    if (entry.deviceId) updateDeviceTotals(entry.deviceId);
+    return updatedAt;
+  }
 
   async function requestJson(urlString, options = {}) {
     const url = new URL(urlString);
     const method = options.method ?? (options.body === undefined ? "GET" : "POST");
     const body = clone(options.body);
-    requests.push({ path: url.pathname, method, body });
+    requests.push({ path: url.pathname, search: url.search, method, body });
 
     if (url.pathname === "/api/tree" && method === "GET") {
+      const cursor = nextTimestamp();
       const entries = [...events.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
       const unlocked = [...achievements.values()].sort((left, right) => left.unlockedAt.localeCompare(right.unlockedAt));
       return {
@@ -62,6 +102,40 @@ function createFakeCloud() {
         achievements: unlocked,
         devices: [...devices.values()],
         modelStats: [...modelStats.values()],
+        cursor,
+        delta: false,
+        devicesFull: true,
+        modelStatsFull: true,
+        summary: {
+          hasRemoteTree: entries.length > 0 || unlocked.length > 0 || devices.size > 0 || modelStats.size > 0,
+          entryCount: entries.length,
+          achievementCount: unlocked.length,
+          deviceCount: devices.size,
+          modelStatCount: modelStats.size,
+        },
+      };
+    }
+
+    if (url.pathname === "/api/tree/delta" && method === "GET") {
+      if (deltaUnsupported) throw new Error("Not found");
+      const since = url.searchParams.get("since");
+      assert(typeof since === "string" && Number.isFinite(Date.parse(since)), "delta tree sync requires a valid since cursor");
+      const cursor = nextTimestamp();
+      const entries = [...events.values()]
+        .filter((entry) => rowTimestamp(entry) > since && rowTimestamp(entry) <= cursor)
+        .sort((left, right) => rowTimestamp(left).localeCompare(rowTimestamp(right)));
+      const unlocked = [...achievements.values()]
+        .filter((item) => rowTimestamp(item) > since && rowTimestamp(item) <= cursor)
+        .sort((left, right) => rowTimestamp(left).localeCompare(rowTimestamp(right)));
+      return {
+        entries,
+        achievements: unlocked,
+        devices: [...devices.values()],
+        modelStats: [...modelStats.values()],
+        cursor,
+        delta: true,
+        devicesFull: true,
+        modelStatsFull: true,
         summary: {
           hasRemoteTree: entries.length > 0 || unlocked.length > 0 || devices.size > 0 || modelStats.size > 0,
           entryCount: entries.length,
@@ -75,14 +149,16 @@ function createFakeCloud() {
     if (url.pathname === "/api/tree/events" && method === "POST") {
       assert(options.token === "token", "tree event upload requires auth token");
       assert(typeof body?.deviceId === "string" && body.deviceId, "tree event upload requires device id");
+      const updatedAt = nextTimestamp();
       const previousDevice = devices.get(body.deviceId) ?? {};
       devices.set(body.deviceId, {
         deviceId: body.deviceId,
         alias: body?.device?.alias ?? previousDevice.alias,
         platform: body?.device?.platform ?? previousDevice.platform,
-        lastSyncedAt: new Date().toISOString(),
+        lastSyncedAt: updatedAt,
         entryCount: 0,
         tokens: 0,
+        updatedAt,
       });
       if (Array.isArray(body?.modelStats) || body?.modelStatsEnabled === false) {
         for (const key of [...modelStats.keys()].filter((key) => key.startsWith(`${body.deviceId}|`))) {
@@ -106,6 +182,7 @@ function createFakeCloud() {
             outputTokens: optionalCount(stat.outputTokens),
             cacheReadTokens: optionalCount(stat.cacheReadTokens),
             cacheWriteTokens: optionalCount(stat.cacheWriteTokens),
+            updatedAt,
           });
         }
       }
@@ -113,7 +190,7 @@ function createFakeCloud() {
       for (const entry of entries) {
         assertNoForbiddenKeys(entry, `uploaded event ${entry?.id ?? "unknown"}`);
         assert(isSafeCloudSource(entry.source), `uploaded event ${entry?.id ?? "unknown"} used an unsafe source`);
-        events.set(entry.id, {
+        insertRemoteEvent({
           id: entry.id,
           createdAt: entry.createdAt,
           source: normalizeCloudSource(entry.source, entry.id),
@@ -126,23 +203,20 @@ function createFakeCloud() {
           eventFingerprint: entry.eventFingerprint,
         });
       }
-      const device = devices.get(body.deviceId);
-      if (device) {
-        const deviceEvents = [...events.values()].filter((entry) => entry.deviceId === body.deviceId);
-        device.entryCount = deviceEvents.length;
-        device.tokens = deviceEvents.reduce((total, entry) => total + entry.tokens, 0);
-      }
+      updateDeviceTotals(body.deviceId);
       return { ok: true, synced: entries.length };
     }
 
     if (url.pathname === "/api/tree/achievements" && method === "POST") {
       assert(options.token === "token", "achievement upload requires auth token");
+      const updatedAt = nextTimestamp();
       const unlocked = Array.isArray(body?.achievements) ? body.achievements : [];
       for (const achievement of unlocked) {
         assert(!("trigger" in achievement), `uploaded achievement ${achievement?.id ?? "unknown"} leaked trigger`);
         achievements.set(achievement.id, {
           id: achievement.id,
           unlockedAt: achievement.unlockedAt,
+          updatedAt,
         });
       }
       return { ok: true, synced: unlocked.length };
@@ -170,6 +244,10 @@ function createFakeCloud() {
     modelStats,
     requests,
     requestJson,
+    insertRemoteEvent,
+    setDeltaUnsupported(value) {
+      deltaUnsupported = Boolean(value);
+    },
     get leaderboardDeleteCount() {
       return leaderboardDeleteCount;
     },
@@ -534,6 +612,7 @@ windows.ledger.settings.treeStartMode = "new";
 
 status = await windows.service.syncCloudTree({ force: true });
 assert(!status.error, `windows initial sync failed: ${status.error}`);
+assert(windows.files.get("windows:cloud")?.treeCursor, "initial cloud sync should persist a tree cursor");
 assert(cloud.events.size === 1, "windows initial sync should upload one event");
 assert(cloud.achievements.size === 1, "windows initial sync should upload one achievement");
 assert(cloud.events.get("win-event-1").source === "codex-session", "cloud should preserve safe source categories");
@@ -618,8 +697,17 @@ const macEventUploads = cloud.requests
 assert(macEventUploads.some((entry) => entry.id === "mac-event-1"), "mac sync should upload the mac local event");
 assert(!macEventUploads.some((entry) => entry.id === "win-event-1"), "mac sync should not re-upload pulled cloud events");
 
+const deltaRequestsBeforeWindowsPull = cloud.requests.filter((request) => request.path === "/api/tree/delta").length;
 status = await windows.service.syncCloudTree();
 assert(!status.error, `windows follow-up sync failed: ${status.error}`);
+assert(
+  cloud.requests.filter((request) => request.path === "/api/tree/delta").length === deltaRequestsBeforeWindowsPull + 1,
+  "windows follow-up sync should use the cloud tree delta endpoint",
+);
+assert(
+  windows.files.get("windows:cloud")?.lastDownloadedCount === 1,
+  "delta sync should only append the newly remote event, not re-download the full tree",
+);
 assert(
   windows.ledger.entries.some((entry) => entry.id === "mac-event-1" && entry.source === "claude-session" && entry.syncedFromCloud),
   "windows should pull mac event with its safe source category",
@@ -641,6 +729,37 @@ assert(windows.ledger.settings.cloudSyncEnabled === true, "leaving leaderboard s
 assert(cloud.leaderboardDeleteCount === 1, "leaving leaderboard should call the leaderboard-only delete endpoint");
 assert(cloud.events.size === 2, "leaving leaderboard must not delete cloud tree events");
 assert(cloud.achievements.size === 2, "leaving leaderboard must not delete cloud tree achievements");
+
+const fallbackCloud = createFakeCloud();
+const fallbackDevice = createDevice("fallback-device", "fallback-device-id", fallbackCloud, {
+  entries: [localEntry("fallback-local-event", "fallback-device-id", "codex-session", "2026-05-27T04:00:00.000Z", 300)],
+});
+fallbackDevice.ledger.settings.cloudSyncEnabled = true;
+fallbackDevice.ledger.settings.treeStartMode = "new";
+status = await fallbackDevice.service.syncCloudTree({ force: true });
+assert(!status.error, `fallback seed sync failed: ${status.error}`);
+fallbackCloud.insertRemoteEvent({
+  id: "fallback-remote-event",
+  createdAt: "2026-05-27T04:10:00.000Z",
+  source: "openclaw-session",
+  tokens: 450,
+  deviceId: "fallback-other-device",
+});
+fallbackCloud.setDeltaUnsupported(true);
+const fallbackDeltaBefore = fallbackCloud.requests.filter((request) => request.path === "/api/tree/delta").length;
+const fallbackFullBefore = fallbackCloud.requests.filter((request) => request.path === "/api/tree").length;
+status = await fallbackDevice.service.syncCloudTree();
+assert(!status.error, `delta fallback sync failed: ${status.error}`);
+assert(
+  fallbackCloud.requests.filter((request) => request.path === "/api/tree/delta").length === fallbackDeltaBefore + 1 &&
+    fallbackCloud.requests.filter((request) => request.path === "/api/tree").length === fallbackFullBefore + 1,
+  "unsupported delta endpoint should fall back to the full cloud tree endpoint",
+);
+assert(
+  fallbackDevice.ledger.entries.some((entry) => entry.id === "fallback-remote-event"),
+  "full fallback should still merge remote events",
+);
+fallbackDevice.service.stop();
 
 const cacheCloud = createFakeCloud();
 cacheCloud.events.set("codex-session:cache-heavy", {
@@ -750,5 +869,5 @@ assert(status.lastSyncedAt, "joining the leaderboard should wait for the first d
 leaderboardDevice.service.stop();
 
 console.log(
-  "Cloud sync contract verified: auth cancellation, two-device merge, zero-token cloud tree join, dedupe, authoritative cloud tokens, empty-account guard, hourly leaderboard upload, leaderboard leave safety, and privacy payload whitelist passed.",
+  "Cloud sync contract verified: auth cancellation, two-device merge, delta sync and full fallback, zero-token cloud tree join, dedupe, authoritative cloud tokens, empty-account guard, hourly leaderboard upload, leaderboard leave safety, and privacy payload whitelist passed.",
 );

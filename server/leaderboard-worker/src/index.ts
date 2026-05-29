@@ -24,9 +24,11 @@ const MAX_DAILY_ACCEPTED_TOKENS = 1_000_000_000_000_000;
 const MAX_BACKFILL_DAYS = 30;
 const MAX_HOURLY_BACKFILL_HOURS = 72;
 const LEGACY_DAILY_FALLBACK_HOURS = 26;
+const LEADERBOARD_CACHE_TTL_MS = 60_000;
 const SYNC_COOLDOWN_SECONDS = 30;
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
 const LEADERBOARD_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
+const leaderboardCache = new Map<LeaderboardRange, { expiresAt: number; updatedAt: string; entries: LeaderboardEntry[] }>();
 
 interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -67,6 +69,17 @@ interface UsagePreferenceRow {
   peakTokensPerMinute?: number;
 }
 
+interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  username: string;
+  avatarUrl?: string;
+  tokens: number;
+  xp: number;
+  daysActive: number;
+  usagePreference?: ReturnType<typeof rowToUsagePreference>;
+}
+
 class HttpError extends Error {
   constructor(
     public status: number,
@@ -101,6 +114,7 @@ export default {
       if (url.pathname === "/api/me" && request.method === "DELETE") return await deleteMe(request, env);
       if (url.pathname === "/api/leaderboard" && request.method === "DELETE") return await leaveLeaderboard(request, env);
       if (url.pathname === "/api/tree" && request.method === "GET") return await getCloudTree(request, env);
+      if (url.pathname === "/api/tree/delta" && request.method === "GET") return await getCloudTreeDelta(request, env);
       if (url.pathname === "/api/tree/events" && request.method === "POST") return await syncCloudTreeEvents(request, env);
       if (url.pathname === "/api/tree/achievements" && request.method === "POST") return await syncCloudTreeAchievements(request, env);
       if (url.pathname === "/api/usage/daily" && request.method === "POST") return await syncDailyUsage(request, env);
@@ -408,6 +422,7 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM tree_events WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_achievements WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_devices WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM tree_device_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_model_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
@@ -416,6 +431,7 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM security_events WHERE actor_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM users WHERE user_id = ?").bind(user.userId),
   ]);
+  leaderboardCache.clear();
   return json({ ok: true }, env);
 }
 
@@ -429,40 +445,68 @@ async function leaveLeaderboard(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
   ]);
+  leaderboardCache.clear();
   return json({ ok: true }, env);
 }
 
 async function getCloudTree(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureCloudTreeTables(env);
-  const [eventRows, achievementRows, deviceRows, deviceTotalRows, modelStatRows] = await Promise.all([
-    env.DB.prepare(
-      `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source,
+  return json(await cloudTreePayload(user.userId, env), env);
+}
+
+async function getCloudTreeDelta(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureCloudTreeTables(env);
+  const url = new URL(request.url);
+  const since = normalizeSyncCursor(url.searchParams.get("since"));
+  if (!since) throw new HttpError(400, "A valid since cursor is required.", {}, "invalid_payload");
+  return json(await cloudTreePayload(user.userId, env, since), env);
+}
+
+async function cloudTreePayload(userId: string, env: Env, since?: string) {
+  const cursor = new Date().toISOString();
+  const eventQuery = since
+    ? `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source,
+              tokens, input_tokens AS inputTokens, output_tokens AS outputTokens,
+              cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens
+       FROM tree_events
+       WHERE user_id = ? AND updated_at > ? AND updated_at <= ?
+       ORDER BY updated_at ASC, event_id ASC`
+    : `SELECT event_id AS id, device_id AS deviceId, created_at AS createdAt, source,
               tokens, input_tokens AS inputTokens, output_tokens AS outputTokens,
               cache_read_tokens AS cacheReadTokens, cache_write_tokens AS cacheWriteTokens
        FROM tree_events
        WHERE user_id = ?
        ORDER BY created_at DESC
-       LIMIT 50000`,
-    ).bind(user.userId).all<Record<string, unknown>>(),
-    env.DB.prepare(
-      `SELECT achievement_id AS id, unlocked_at AS unlockedAt
+       LIMIT 50000`;
+  const achievementQuery = since
+    ? `SELECT achievement_id AS id, unlocked_at AS unlockedAt
+       FROM tree_achievements
+       WHERE user_id = ? AND updated_at > ? AND updated_at <= ?
+       ORDER BY updated_at ASC, achievement_id ASC`
+    : `SELECT achievement_id AS id, unlocked_at AS unlockedAt
        FROM tree_achievements
        WHERE user_id = ?
-       ORDER BY unlocked_at ASC`,
-    ).bind(user.userId).all<Record<string, unknown>>(),
+       ORDER BY unlocked_at ASC`;
+  const [eventRows, achievementRows, deviceRows, deviceTotalRows, modelStatRows] = await Promise.all([
+    env.DB.prepare(
+      eventQuery,
+    ).bind(...(since ? [userId, since, cursor] : [userId])).all<Record<string, unknown>>(),
+    env.DB.prepare(
+      achievementQuery,
+    ).bind(...(since ? [userId, since, cursor] : [userId])).all<Record<string, unknown>>(),
     env.DB.prepare(
       `SELECT device_id AS deviceId, alias, platform, last_synced_at AS lastSyncedAt,
               app_version AS appVersion
        FROM tree_devices
        WHERE user_id = ?`,
-    ).bind(user.userId).all<Record<string, unknown>>(),
+    ).bind(userId).all<Record<string, unknown>>(),
     env.DB.prepare(
-      `SELECT device_id AS deviceId, COUNT(*) AS entryCount, SUM(tokens) AS tokens, MAX(updated_at) AS lastSyncedAt
-       FROM tree_events
-       WHERE user_id = ? AND device_id IS NOT NULL
-       GROUP BY device_id`,
-    ).bind(user.userId).all<Record<string, unknown>>(),
+      `SELECT device_id AS deviceId, entry_count AS entryCount, tokens, last_event_updated_at AS lastSyncedAt
+       FROM tree_device_stats
+       WHERE user_id = ?`,
+    ).bind(userId).all<Record<string, unknown>>(),
     env.DB.prepare(
       `SELECT device_id AS deviceId, date, source, model, tokens,
               input_tokens AS inputTokens, output_tokens AS outputTokens,
@@ -471,7 +515,7 @@ async function getCloudTree(request: Request, env: Env) {
        WHERE user_id = ?
        ORDER BY date ASC, source ASC, model ASC
        LIMIT 5000`,
-    ).bind(user.userId).all<Record<string, unknown>>(),
+    ).bind(userId).all<Record<string, unknown>>(),
   ]);
   const entries = (eventRows.results || []).map((row) => ({
     id: String(row.id),
@@ -541,11 +585,15 @@ async function getCloudTree(request: Request, env: Env) {
     cacheReadTokens: optionalNumber(row.cacheReadTokens),
     cacheWriteTokens: optionalNumber(row.cacheWriteTokens),
   }));
-  return json({
+  return {
     entries,
     achievements,
     devices,
     modelStats,
+    cursor,
+    delta: Boolean(since),
+    modelStatsFull: true,
+    devicesFull: true,
     summary: {
       hasRemoteTree: entries.length > 0 || achievements.length > 0 || devices.length > 0 || modelStats.length > 0,
       entryCount: entries.length,
@@ -553,7 +601,7 @@ async function getCloudTree(request: Request, env: Env) {
       deviceCount: devices.length,
       modelStatCount: modelStats.length,
     },
-  }, env);
+  };
 }
 
 async function syncCloudTreeEvents(request: Request, env: Env) {
@@ -575,6 +623,11 @@ async function syncCloudTreeEvents(request: Request, env: Env) {
   const entries = Array.isArray(body?.entries) ? body.entries.slice(0, 500) : [];
   const now = new Date().toISOString();
   const eventStatements = entries.map((raw) => normalizeCloudTreeEvent(raw, user.userId, deviceId, appVersion, now, env)).filter(Boolean);
+  const eventDeviceIds = new Set(
+    entries
+      .map((raw) => cleanShortText((raw as Record<string, unknown> | undefined)?.deviceId, 80) ?? deviceId)
+      .filter((id): id is string => Boolean(id)),
+  );
   const modelStats = normalizeCloudModelStatStatements(body, user.userId, deviceId, now, env);
   const statements = [
     upsertCloudTreeDevice(user.userId, deviceId, body?.device, appVersion, now, env),
@@ -584,6 +637,7 @@ async function syncCloudTreeEvents(request: Request, env: Env) {
   if (statements.length) {
     await env.DB.batch(statements as D1PreparedStatement[]);
     if (eventStatements.length) await dedupeCloudTreeEventsForUser(user.userId, env);
+    if (eventStatements.length) await refreshCloudDeviceStats(user.userId, [...eventDeviceIds], env);
   }
   return json({ ok: true, synced: eventStatements.length, syncedModelStats: modelStats.count }, env);
 }
@@ -708,6 +762,7 @@ async function syncDailyUsage(request: Request, env: Env) {
        ON CONFLICT(user_id) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
     ).bind(user.userId, now),
   ]);
+  leaderboardCache.clear();
   return json(
     {
       ok: true,
@@ -830,6 +885,18 @@ async function ensureCloudTreeTables(env: Env) {
       )`,
     ),
     env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS tree_device_stats (
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        entry_count INTEGER NOT NULL,
+        tokens INTEGER NOT NULL,
+        last_event_updated_at TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS tree_model_stats (
         user_id TEXT NOT NULL,
         device_id TEXT NOT NULL,
@@ -848,10 +915,16 @@ async function ensureCloudTreeTables(env: Env) {
     ),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_user_created ON tree_events(user_id, created_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_device ON tree_events(user_id, device_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_events_user_updated ON tree_events(user_id, updated_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_achievements_user ON tree_achievements(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_achievements_user_updated ON tree_achievements(user_id, updated_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_devices_user ON tree_devices(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_devices_user_updated ON tree_devices(user_id, updated_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_device_stats_user ON tree_device_stats(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_device_stats_user_updated ON tree_device_stats(user_id, updated_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user ON tree_model_stats(user_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_device ON tree_model_stats(user_id, device_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user_updated ON tree_model_stats(user_id, updated_at)"),
   ]);
 }
 
@@ -928,6 +1001,29 @@ function upsertCloudTreeDevice(
        app_version = COALESCE(excluded.app_version, tree_devices.app_version),
        updated_at = excluded.updated_at`,
   ).bind(userId, deviceId, alias, platform, now, now, appVersion, now);
+}
+
+async function refreshCloudDeviceStats(userId: string, deviceIds: string[], env: Env) {
+  const uniqueDeviceIds = [...new Set(deviceIds)].filter(Boolean);
+  if (!uniqueDeviceIds.length) return;
+  const now = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [];
+  for (const deviceId of uniqueDeviceIds) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO tree_device_stats (user_id, device_id, entry_count, tokens, last_event_updated_at, updated_at)
+         SELECT ?, ?, COUNT(*), COALESCE(SUM(tokens), 0), MAX(updated_at), ?
+         FROM tree_events
+         WHERE user_id = ? AND device_id = ?
+         ON CONFLICT(user_id, device_id) DO UPDATE SET
+           entry_count = excluded.entry_count,
+           tokens = excluded.tokens,
+           last_event_updated_at = excluded.last_event_updated_at,
+           updated_at = excluded.updated_at`,
+      ).bind(userId, deviceId, now, userId, deviceId),
+    );
+  }
+  await env.DB.batch(statements);
 }
 
 function normalizeCloudModelStatStatements(
@@ -1232,6 +1328,16 @@ async function leaderboardDataForRange(
   env: Env,
   updatedAt: string,
 ) {
+  const cached = leaderboardCache.get(range);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      range,
+      entries: cached.entries,
+      updatedAt: cached.updatedAt,
+      me: requestUser ? cached.entries.find((entry) => entry.userId === requestUser.userId) : undefined,
+    };
+  }
+
   let result: D1Result<Record<string, unknown>>;
   if (range === "all") {
     result = await env.DB.prepare(
@@ -1355,6 +1461,11 @@ async function leaderboardDataForRange(
     daysActive: Math.max(0, Math.round(Number(row.daysActive))),
     usagePreference: rowToUsagePreference(row),
   }));
+  leaderboardCache.set(range, {
+    entries,
+    updatedAt,
+    expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
+  });
   return {
     range,
     entries,
@@ -1648,6 +1759,14 @@ function normalizeHourStartUtc(value: unknown) {
   if (!Number.isFinite(date.getTime())) return undefined;
   const hourStartUtc = floorUtcHour(date).toISOString();
   return value === hourStartUtc || value === hourStartUtc.replace(".000Z", "Z") ? hourStartUtc : undefined;
+}
+
+function normalizeSyncCursor(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  const iso = date.toISOString();
+  return iso <= new Date(Date.now() + 60_000).toISOString() ? iso : undefined;
 }
 
 function floorUtcHour(date: Date) {

@@ -84,6 +84,17 @@ CREATE TABLE IF NOT EXISTS tree_devices (
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS tree_device_stats (
+  user_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  entry_count INTEGER NOT NULL,
+  tokens INTEGER NOT NULL,
+  last_event_updated_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, device_id),
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS tree_model_stats (
   user_id TEXT NOT NULL,
   device_id TEXT NOT NULL,
@@ -141,10 +152,16 @@ CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour ON hourly_usage(hour_start_utc)
 CREATE INDEX IF NOT EXISTS idx_hourly_usage_user ON hourly_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_tree_events_user_created ON tree_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tree_events_device ON tree_events(user_id, device_id);
+CREATE INDEX IF NOT EXISTS idx_tree_events_user_updated ON tree_events(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_tree_achievements_user ON tree_achievements(user_id);
+CREATE INDEX IF NOT EXISTS idx_tree_achievements_user_updated ON tree_achievements(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_tree_devices_user ON tree_devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_tree_devices_user_updated ON tree_devices(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_tree_device_stats_user ON tree_device_stats(user_id);
+CREATE INDEX IF NOT EXISTS idx_tree_device_stats_user_updated ON tree_device_stats(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user ON tree_model_stats(user_id);
 CREATE INDEX IF NOT EXISTS idx_tree_model_stats_device ON tree_model_stats(user_id, device_id);
+CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user_updated ON tree_model_stats(user_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_usage_preferences_user ON usage_preferences(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_codes_expires ON auth_codes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);

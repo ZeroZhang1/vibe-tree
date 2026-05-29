@@ -38,6 +38,7 @@ interface CloudSyncFile {
   lastDownloadedCount?: number;
   devices?: CloudDeviceSummary[];
   modelStats?: CloudModelStat[];
+  treeCursor?: string;
 }
 
 interface CloudTreeResponse {
@@ -45,6 +46,10 @@ interface CloudTreeResponse {
   achievements?: unknown[];
   devices?: unknown[];
   modelStats?: unknown[];
+  cursor?: unknown;
+  delta?: boolean;
+  modelStatsFull?: boolean;
+  devicesFull?: boolean;
   summary?: {
     hasRemoteTree?: boolean;
   };
@@ -380,12 +385,12 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
 
     try {
       if (syncOptions.pullFirst) {
-        const pulled = await pullCloudTree();
+        const pulled = await pullCloudTree({ state });
         if (syncOptions.requireRemote && !pulled.hasRemoteTree) {
           throw new Error(text("cloudSyncNoRemoteTree"));
         }
         downloadedCount += pulled.downloaded;
-        state = mergeCloudState(state, pulled.entries, pulled.achievements, pulled.devices, pulled.modelStats);
+        state = mergeCloudState(state, pulled.entries, pulled.achievements, pulled.devices, pulled.modelStats, pulled.cursor);
       }
 
       await syncCloudDeviceSnapshot();
@@ -430,7 +435,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         for (const achievement of localAchievements) syncedAchievementIds.add(achievement.id);
       }
 
-      const pulled = await pullCloudTree();
+      const pulled = await pullCloudTree({ state });
       downloadedCount += pulled.downloaded;
       state = mergeCloudState(
         {
@@ -443,6 +448,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
         pulled.achievements,
         pulled.devices,
         pulled.modelStats,
+        pulled.cursor,
       );
 
       lastCloudUploadedCount = uploadedCount;
@@ -515,18 +521,44 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     return { ranges };
   }
 
-  async function pullCloudTree() {
-    const data = await requestJson<CloudTreeResponse>(apiUrl("/api/tree"), { token: auth.token });
+  async function pullCloudTree({ state }: { state: CloudSyncFile }) {
+    const cursor = normalizeTreeCursor(state.treeCursor);
+    let data: CloudTreeResponse;
+    if (cursor) {
+      const deltaUrl = new URL(apiUrl("/api/tree/delta"));
+      deltaUrl.searchParams.set("since", cursor);
+      try {
+        data = await requestJson<CloudTreeResponse>(deltaUrl.toString(), { token: auth.token });
+      } catch (error) {
+        if (!isDeltaUnsupportedError(error)) throw error;
+        data = await requestJson<CloudTreeResponse>(apiUrl("/api/tree"), { token: auth.token });
+      }
+    } else {
+      data = await requestJson<CloudTreeResponse>(apiUrl("/api/tree"), { token: auth.token });
+    }
     const entries = normalizeCloudEntries(data.entries ?? []);
     const achievements = normalizeCloudAchievements(data.achievements ?? []);
-    const devices = normalizeCloudDevices(data.devices ?? []);
-    const modelStats = normalizeCloudModelStats(data.modelStats ?? []);
+    const devices = data.devicesFull === false
+      ? mergeCloudDevices(state.devices ?? [], normalizeCloudDevices(data.devices ?? []))
+      : normalizeCloudDevices(data.devices ?? []);
+    const modelStats = data.modelStatsFull === false
+      ? mergeCloudModelStats(state.modelStats ?? [], normalizeCloudModelStats(data.modelStats ?? []))
+      : normalizeCloudModelStats(data.modelStats ?? []);
     const downloaded = options.appendRemoteEntries(entries);
     options.mergeRemoteAchievements(achievements);
     const hasRemoteTree = Boolean(
       data.summary?.hasRemoteTree ?? (entries.length > 0 || achievements.length > 0 || devices.length > 0 || modelStats.length > 0),
     );
-    return { entries, achievements, devices, modelStats, downloaded, hasRemoteTree };
+    return {
+      entries,
+      achievements,
+      devices,
+      modelStats,
+      downloaded,
+      hasRemoteTree,
+      cursor: normalizeTreeCursor(data.cursor) ?? cursor,
+      delta: data.delta === true,
+    };
   }
 
   async function syncCloudDeviceSnapshot() {
@@ -559,6 +591,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       lastDownloadedCount: positiveInteger(state?.lastDownloadedCount),
       devices: normalizeCloudDevices(state?.devices ?? []),
       modelStats: normalizeCloudModelStats(state?.modelStats ?? []),
+      treeCursor: normalizeTreeCursor(state?.treeCursor),
     };
   }
 
@@ -571,6 +604,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       lastDownloadedCount: positiveInteger(state.lastDownloadedCount) ?? 0,
       devices: normalizeCloudDevices(state.devices ?? []),
       modelStats: normalizeCloudModelStats(state.modelStats ?? []),
+      treeCursor: normalizeTreeCursor(state.treeCursor),
     });
   }
 
@@ -580,6 +614,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     achievements: AchievementUnlock[],
     devices: CloudDeviceSummary[] = state.devices ?? [],
     modelStats: CloudModelStat[] = state.modelStats ?? [],
+    treeCursor: string | undefined = state.treeCursor,
   ) {
     return {
       ...state,
@@ -597,6 +632,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
       ],
       devices,
       modelStats,
+      treeCursor: normalizeTreeCursor(treeCursor),
     };
   }
 
@@ -1073,6 +1109,35 @@ function normalizeCloudModelStats(values: unknown[]) {
     });
   }
   return stats;
+}
+
+function mergeCloudDevices(existing: CloudDeviceSummary[], incoming: CloudDeviceSummary[]) {
+  const byDevice = new Map(existing.map((device) => [device.deviceId, device]));
+  for (const device of incoming) byDevice.set(device.deviceId, device);
+  return [...byDevice.values()].sort((a, b) => b.tokens - a.tokens);
+}
+
+function mergeCloudModelStats(existing: CloudModelStat[], incoming: CloudModelStat[]) {
+  const byStat = new Map(existing.map((stat) => [cloudModelStatKey(stat), stat]));
+  for (const stat of incoming) byStat.set(cloudModelStatKey(stat), stat);
+  return [...byStat.values()];
+}
+
+function cloudModelStatKey(stat: CloudModelStat) {
+  return [stat.deviceId, stat.date, stat.source, stat.model].join("|");
+}
+
+function normalizeTreeCursor(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  const iso = date.toISOString();
+  return iso <= new Date(Date.now() + 60_000).toISOString() ? iso : undefined;
+}
+
+function isDeltaUnsupportedError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message === "Not found" || error.message.includes("(404)") || error.message.includes("(405)");
 }
 
 function isCloudSyncedEntry(entry: LedgerEntry) {
