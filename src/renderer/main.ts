@@ -352,6 +352,8 @@ const socialRefreshButton = document.querySelector<HTMLButtonElement>("#socialRe
 const socialModeTabs = document.querySelector<HTMLElement>("#socialModeTabs");
 const socialFriendsPanel = document.querySelector<HTMLElement>("#socialFriendsPanel");
 const socialGroupsPanel = document.querySelector<HTMLElement>("#socialGroupsPanel");
+const socialGroupActionsDrawer = document.querySelector<HTMLDetailsElement>("#socialGroupActionsDrawer");
+const socialGroupDetailPanel = document.querySelector<HTMLElement>("#socialGroupDetailPanel");
 const socialAddFriendForm = document.querySelector<HTMLFormElement>("#socialAddFriendForm");
 const socialFriendUsernameInput = document.querySelector<HTMLInputElement>("#socialFriendUsernameInput");
 const socialFriendList = document.querySelector<HTMLElement>("#socialFriendList");
@@ -4215,6 +4217,7 @@ function renderSocial() {
     !socialSummary ||
     !socialFriendsPanel ||
     !socialGroupsPanel ||
+    !socialGroupDetailPanel ||
     !socialFriendList ||
     !socialGroupList ||
     !socialGroupDetail ||
@@ -4229,6 +4232,7 @@ function renderSocial() {
 
   const group = selectedSocialGroup();
   const canManageGroup = group?.role === "leader" || group?.role === "officer";
+  const groupsEmpty = socialPanel === "groups" && !socialGroups.length;
 
   socialRefreshButton && (socialRefreshButton.disabled = socialLoading);
   socialModeTabs?.querySelectorAll<HTMLButtonElement>("[data-social-panel]").forEach((button) => {
@@ -4238,6 +4242,11 @@ function renderSocial() {
   });
   socialFriendsPanel.hidden = socialPanel !== "friends";
   socialGroupsPanel.hidden = socialPanel !== "groups";
+  socialGroupsPanel.classList.toggle("is-empty", groupsEmpty);
+  socialGroupDetailPanel.hidden = groupsEmpty;
+  if (socialGroupActionsDrawer) {
+    socialGroupActionsDrawer.open = groupsEmpty || socialGroupActionsDrawer.open;
+  }
   socialAddFriendForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
     element.disabled = socialLoading;
   });
@@ -4258,28 +4267,25 @@ function renderSocial() {
     button.setAttribute("aria-selected", String(active));
   });
 
+  let summaryHtml = "";
   if (!leaderboardStatus.configured) {
-    socialSummary.innerHTML = `<strong>${t("leaderboardServiceNotConfigured")}</strong><span>${t("socialNoService")}</span>`;
+    summaryHtml = `<strong>${t("leaderboardServiceNotConfigured")}</strong><span>${t("socialNoService")}</span>`;
   } else if (socialLoading) {
-    socialSummary.innerHTML = `<strong>${t("socialLoading")}</strong><span>${socialPanel === "groups" ? leaderboardRangeLabel(socialGroupRange) : t("socialPanelFriends")}</span>`;
+    summaryHtml = `<strong>${t("socialLoading")}</strong><span>${socialPanel === "groups" ? leaderboardRangeLabel(socialGroupRange) : t("socialPanelFriends")}</span>`;
   } else if (socialError) {
-    socialSummary.innerHTML = `<strong>${escapeHtml(socialError)}</strong><span>${t("socialRefresh")}</span>`;
+    summaryHtml = `<strong>${escapeHtml(socialError)}</strong><span>${t("socialRefresh")}</span>`;
   } else if (socialPanel === "friends" && socialFriends.length) {
     const updatedAt = socialFriendsUpdatedAt;
     const updated = updatedAt ? `${t("socialUpdated")} ${formatRelativeTime(updatedAt)}` : "";
-    socialSummary.innerHTML = `<strong>${socialFriends.length} ${t("socialFriendsCount")}</strong><span>${escapeHtml(updated)}</span>`;
+    summaryHtml = `<strong>${socialFriends.length} ${t("socialFriendsCount")}</strong><span>${escapeHtml(updated)}</span>`;
   } else if (socialPanel === "groups" && socialGroups.length) {
     const updated = socialGroupsUpdatedAt ? `${t("socialUpdated")} ${formatRelativeTime(socialGroupsUpdatedAt)}` : "";
-    socialSummary.innerHTML = `<strong>${socialGroups.length} ${t("socialGroupsCount")}</strong><span>${escapeHtml(updated)}</span>`;
+    summaryHtml = `<strong>${socialGroups.length} ${t("socialGroupsCount")}</strong><span>${escapeHtml(updated)}</span>`;
   } else if (!leaderboardStatus.authenticated) {
-    socialSummary.innerHTML = `<strong>${t("leaderboardLoginRequired")}</strong><span>${t("socialLoginHint")}</span>`;
-  } else if (socialPanel === "friends") {
-    socialSummary.innerHTML = `<strong>${t("socialFriendsEmpty")}</strong><span>${t("socialFriendTargetRequired")}</span>`;
-  } else if (socialPanel === "groups") {
-    socialSummary.innerHTML = `<strong>${t("socialGroupsEmpty")}</strong><span>${t("socialCreateOrJoin")}</span>`;
-  } else {
-    socialSummary.innerHTML = `<strong>${t("socialEmpty")}</strong><span>${t("socialCreateOrJoin")}</span>`;
+    summaryHtml = `<strong>${t("leaderboardLoginRequired")}</strong><span>${t("socialLoginHint")}</span>`;
   }
+  socialSummary.hidden = !summaryHtml;
+  socialSummary.innerHTML = summaryHtml;
 
   socialFriendList.innerHTML = socialFriends.length
     ? socialFriends
@@ -4331,7 +4337,7 @@ function renderSocial() {
       <span>${t("socialCreateOrJoin")}</span>
     `;
     socialInviteOutput.innerHTML = "";
-    socialGroupLeaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("socialNoGroupSelected")}</div>`;
+    socialGroupLeaderboardRows.innerHTML = groupsEmpty ? "" : `<div class="leaderboard-empty">${t("socialNoGroupSelected")}</div>`;
     return;
   }
 

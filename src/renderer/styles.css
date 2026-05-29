@@ -2960,6 +2960,11 @@ label {
   gap: 10px;
 }
 
+.social-action-stack {
+  display: grid;
+  gap: 10px;
+}
+
 .social-mini-form {
   min-width: 0;
   display: grid;
@@ -2988,6 +2993,11 @@ label {
 
 .social-summary {
   min-height: 40px;
+}
+
+.social-summary[hidden],
+.social-detail-panel[hidden] {
+  display: none;
 }
 
 .social-friends-panel {
@@ -3071,11 +3081,114 @@ label {
   font-size: 0.66rem;
 }
 
-.social-layout {
+.social-groups-shell {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(136px, 0.72fr) minmax(0, 1.28fr);
+  grid-template-columns: minmax(210px, 0.68fr) minmax(0, 1.32fr);
+  gap: 12px;
+}
+
+.social-groups-sidebar {
+  min-width: 0;
+  display: grid;
+  align-content: start;
   gap: 10px;
+}
+
+.social-groups-panel.is-empty .social-groups-shell {
+  width: 100%;
+  max-width: 560px;
+  margin-inline: auto;
+  grid-template-columns: 1fr;
+}
+
+.social-groups-panel.is-empty .social-empty-copy {
+  min-height: 72px;
+}
+
+.social-groups-panel.is-empty .social-groups-sidebar {
+  gap: 12px;
+}
+
+.social-groups-panel.is-empty .social-group-list {
+  display: none;
+}
+
+.social-groups-panel.is-empty .social-group-actions-drawer {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-group-actions-drawer {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-group-actions-drawer summary {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+  list-style: none;
+}
+
+.social-group-actions-drawer summary::-webkit-details-marker {
+  display: none;
+}
+
+.social-group-actions-drawer summary::after {
+  content: "+";
+  margin-left: auto;
+  color: var(--leaf);
+}
+
+.social-group-actions-drawer[open] summary::after {
+  content: "−";
+}
+
+.social-groups-panel.is-empty .social-group-actions-drawer summary {
+  cursor: default;
+}
+
+.social-groups-panel.is-empty .social-group-actions-drawer summary::after {
+  display: none;
+}
+
+.social-group-actions-drawer .social-action-stack {
+  padding: 0 10px 10px;
+}
+
+.social-empty-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-empty-copy strong {
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+
+.social-empty-copy span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.social-groups-panel:not(.is-empty) .social-empty-copy {
+  display: none;
 }
 
 .social-group-list {
@@ -4860,7 +4973,7 @@ label {
     grid-template-rows: none;
   }
 
-  .social-layout,
+  .social-groups-shell,
   .social-friends-panel,
   .social-action-grid {
     grid-template-columns: 1fr;
