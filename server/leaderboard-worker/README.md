@@ -90,10 +90,12 @@ Remote tree existence is true when the account has any tree events, achievements
    npm run db:migrate:sources
    npm run db:migrate:dedupe
    npm run db:migrate:devices
+   npm run db:migrate:hourly
+   npm run db:migrate:delta
    npm run deploy
    ```
 
-   For a fresh database, `db:migrate` creates all current tables. The extra migration scripts are safe to run for upgraded deployments that may already contain older cloud-tree tables or old source rows.
+   For a fresh database, `db:migrate` creates all current tables. The extra migration scripts are safe to run for upgraded deployments that may already contain older cloud-tree tables, old source rows, missing hourly leaderboard rows, or missing `tree_device_stats` device contribution totals.
 
 5. Start the desktop app with the Worker URL, or set this as the production default in the Electron app.
 
