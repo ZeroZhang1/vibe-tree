@@ -182,6 +182,7 @@ let socialGroupsUpdatedAt: string | undefined;
 let socialSelectedGroupId: string | null = null;
 let socialLoading = false;
 let socialError = "";
+let socialNotice = "";
 let socialInvite: SocialGroupInvite | null = null;
 let socialInviteCopiedAt = 0;
 let socialGroupRange: LeaderboardRange = "24h";
@@ -1316,6 +1317,7 @@ function bindEvents() {
     const nextPanel = button.dataset.socialPanel === "groups" ? "groups" : "friends";
     if (nextPanel === socialPanel) return;
     socialPanel = nextPanel;
+    socialNotice = "";
     if (socialPanel !== "groups") setSocialGroupActionsOpen(false);
     socialRenderKey = "";
     renderSocial();
@@ -1678,12 +1680,15 @@ async function requestSocialFriendFromInput() {
   }
   socialLoading = true;
   socialError = "";
+  socialNotice = "";
   socialRenderKey = "";
   renderSocial();
   try {
     const friend = await window.bonsai.requestSocialFriend({ username });
     socialFriendUsernameInput!.value = "";
     upsertSocialFriend(friend);
+    // GitHub usernames can be renamed/reclaimed, so confirm the resolved identity.
+    socialNotice = t("socialFriendRequestSent").replace("{name}", friend.username);
   } catch (error) {
     socialError = error instanceof Error ? error.message : t("socialFriendRequestFailed");
   } finally {
@@ -4487,6 +4492,8 @@ function renderSocial() {
     summaryHtml = `<strong>${t("socialLoading")}</strong><span>${socialPanel === "groups" ? leaderboardRangeLabel(socialGroupRange) : t("socialPanelFriends")}</span>`;
   } else if (socialError) {
     summaryHtml = `<strong>${escapeHtml(socialError)}</strong><span>${t("socialRefresh")}</span>`;
+  } else if (socialPanel === "friends" && socialNotice) {
+    summaryHtml = `<strong>${escapeHtml(socialNotice)}</strong><span>${t("socialFriendRequestSentHint")}</span>`;
   } else if (socialPanel === "friends" && socialFriends.length) {
     const updatedAt = socialFriendsUpdatedAt;
     const updated = updatedAt ? `${t("socialUpdated")} ${formatRelativeTime(updatedAt)}` : "";
@@ -5288,6 +5295,7 @@ function socialRenderSignature() {
     loading: socialLoading,
     boardLoading: socialGroupLeaderboardLoading,
     error: socialError,
+    notice: socialNotice,
     selectedGroupId: socialSelectedGroupId,
     range: socialGroupRange,
     friendsUpdatedAt: socialFriendsUpdatedAt,

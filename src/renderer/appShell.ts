@@ -256,6 +256,7 @@ export function appShellHtml(viewMode: ViewMode) {
               <button class="icon-button" id="socialGroupActionsCloseButton" type="button" aria-label="关闭设置" data-i18n-aria="closeSettings">×</button>
             </header>
             <div class="social-action-stack">
+              <p class="social-visibility-note" data-i18n="socialGroupVisibilityNote">加入群组后，群成员可以看到你的 Token 总用量（不含提示词、会话或文件）。可在群组详情里随时停止共享。</p>
               <form class="social-mini-form" id="socialCreateGroupForm">
                 <label for="socialGroupNameInput" data-i18n="socialCreateGroup">创建群组</label>
                 <div class="social-input-row">
