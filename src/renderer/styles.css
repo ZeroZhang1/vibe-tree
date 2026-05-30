@@ -1053,10 +1053,12 @@ button {
   opacity: 0.9;
 }
 
-/* Energy flowing along the line while tokens are streaming in. */
+/* A single coherent highlight that flows along the line toward the leading
+   dot while tokens stream in. The dash gap is set inline to the path's real
+   length, so exactly one streak is on the curve at a time (no broken blobs). */
 .menubar-wave-flow {
-  stroke: var(--progress-highlight);
-  stroke-width: 2.4;
+  stroke: color-mix(in srgb, var(--leaf) 55%, white);
+  stroke-width: 2.6;
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
@@ -1064,14 +1066,14 @@ button {
 }
 
 .menubar-wave-flow.active {
-  opacity: 0.9;
-  stroke-dasharray: 26 150;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--leaf) 70%, transparent));
   animation: menubar-wave-flow 1.5s linear infinite;
 }
 
 @keyframes menubar-wave-flow {
   from {
-    stroke-dashoffset: 176;
+    stroke-dashoffset: var(--menubar-flow-from, 200);
   }
   to {
     stroke-dashoffset: 0;
@@ -1087,7 +1089,7 @@ button {
   fill: var(--leaf);
   opacity: 1;
   filter: drop-shadow(0 0 6px var(--leaf-glow));
-  animation: menubar-wave-pulse 1.6s ease-in-out infinite;
+  animation: menubar-wave-pulse 1.9s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: center;
 }
@@ -1111,7 +1113,7 @@ button {
 }
 
 .menubar-wave-halo.active {
-  animation: menubar-wave-halo 1.6s ease-in-out infinite;
+  animation: menubar-wave-halo 1.9s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: center;
 }
@@ -1154,6 +1156,21 @@ button {
   font-size: 14px;
   font-weight: 950;
   font-variant-numeric: tabular-nums;
+}
+
+/* Peak reference reading — sits between the window label and the running
+   total, deliberately quiet so it never competes with the headline number.
+   The foot uses space-between, so this naturally centres between the two. */
+.menubar-speed-peak {
+  color: var(--muted-light);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.menubar-speed-peak[hidden] {
+  display: none;
 }
 
 /* ---- page dots ---- */

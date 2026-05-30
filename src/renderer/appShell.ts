@@ -102,6 +102,7 @@ export function appShellHtml(viewMode: ViewMode) {
             <div class="menubar-wave" id="menubarWave" aria-hidden="true"></div>
             <div class="menubar-speed-foot">
               <span id="menubarSpeedWindow">近 5 分钟</span>
+              <span class="menubar-speed-peak" id="menubarSpeedPeak"></span>
               <strong id="menubarSpeedTotal">+0</strong>
             </div>
           </article>

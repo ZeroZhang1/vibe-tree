@@ -317,6 +317,7 @@ const menubarWave = document.querySelector<HTMLElement>("#menubarWave");
 const menubarSpeedMeta = document.querySelector<HTMLElement>("#menubarSpeedMeta");
 const menubarSpeedWindow = document.querySelector<HTMLElement>("#menubarSpeedWindow");
 const menubarSpeedTotal = document.querySelector<HTMLElement>("#menubarSpeedTotal");
+const menubarSpeedPeak = document.querySelector<HTMLElement>("#menubarSpeedPeak");
 const menubarSyncButton = document.querySelector<HTMLButtonElement>("#menubarSyncButton");
 const menubarSyncList = document.querySelector<HTMLElement>("#menubarSyncList");
 const menubarActivityMeta = document.querySelector<HTMLElement>("#menubarActivityMeta");
@@ -3207,6 +3208,18 @@ function renderMenubarSpeed(stats: Stats) {
   const bottom = 68;
   const samples = menubarRecentRateBuckets(300, 30);
   const max = Math.max(rate, ...samples, 1);
+  // Peak rate seen across the 5-minute window — a reference point for the
+  // current instantaneous reading. Hidden until it is meaningfully above now.
+  if (menubarSpeedPeak) {
+    const peak = Math.max(0, ...samples);
+    if (peak > 0 && peak > rate * 1.15) {
+      menubarSpeedPeak.textContent = `${t("menubarSpeedPeak")} ${formatCompact(peak)}/min`;
+      menubarSpeedPeak.hidden = false;
+    } else {
+      menubarSpeedPeak.textContent = "";
+      menubarSpeedPeak.hidden = true;
+    }
+  }
   const coords = samples.map((value, index) => {
     const x = padX + (index / (samples.length - 1)) * (width - padX * 2);
     const y = bottom - clamp(value / max, 0, 1) * (bottom - top);
@@ -3222,19 +3235,26 @@ function renderMenubarSpeed(stats: Stats) {
   }, "");
   const areaPath = `${linePath} L${width - padX},${bottom} L${padX},${bottom} Z`;
   const lastPoint = coords[coords.length - 1] ?? { x: width - padX, y: bottom };
+  // Approximate the drawn path length so the flowing highlight is exactly one
+  // coherent streak (dash gap === path length) instead of several broken dashes.
+  let waveLen = 0;
+  for (let index = 1; index < coords.length; index += 1) {
+    waveLen += Math.hypot(coords[index].x - coords[index - 1].x, coords[index].y - coords[index - 1].y);
+  }
+  waveLen = Math.max(waveLen, 1);
   menubarWave.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
       <defs>
         <linearGradient id="menubarWaveGradient" x1="0" y1="${top}" x2="0" y2="${bottom}" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#caff6b" stop-opacity="${rate > 0 ? "0.34" : "0.12"}" />
-          <stop offset="0.7" stop-color="#caff6b" stop-opacity="${rate > 0 ? "0.16" : "0.06"}" />
-          <stop offset="1" stop-color="#caff6b" stop-opacity="0" />
+          <stop offset="0" style="stop-color: var(--leaf); stop-opacity: ${rate > 0 ? "0.32" : "0.12"};" />
+          <stop offset="0.7" style="stop-color: var(--leaf); stop-opacity: ${rate > 0 ? "0.14" : "0.05"};" />
+          <stop offset="1" style="stop-color: var(--leaf); stop-opacity: 0;" />
         </linearGradient>
       </defs>
       <path d="${areaPath}" class="menubar-wave-area${rate > 0 ? " active" : ""}" fill="url(#menubarWaveGradient)" />
       <path d="${linePath}" class="menubar-wave-glow${rate > 0 ? " active" : ""}" fill="none" />
       <path d="${linePath}" class="menubar-wave-line${rate > 0 ? " active" : ""}" fill="none" />
-      <path d="${linePath}" class="menubar-wave-flow${rate > 0 ? " active" : ""}" />
+      <path d="${linePath}" class="menubar-wave-flow${rate > 0 ? " active" : ""}" style="stroke-dasharray: 30 ${waveLen.toFixed(1)}; --menubar-flow-from: ${(waveLen + 30).toFixed(1)};" />
       <line x1="${padX}" y1="${bottom}" x2="${width - padX}" y2="${bottom}" class="menubar-wave-base" />
       <circle cx="${lastPoint.x.toFixed(1)}" cy="${lastPoint.y.toFixed(1)}" r="9" class="menubar-wave-halo${rate > 0 ? " active" : ""}" />
       <circle cx="${lastPoint.x.toFixed(1)}" cy="${lastPoint.y.toFixed(1)}" r="4" class="menubar-wave-dot${rate > 0 ? " active" : ""}" />
