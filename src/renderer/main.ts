@@ -2738,7 +2738,8 @@ function renderMenubarRhythm() {
       const heightPct = value <= 0 ? 0 : Math.max(6, Math.round((value / max) * 100));
       const lit = value >= max * 0.85 ? " lit" : "";
       const now = hour === nowHour ? " now" : "";
-      return `<span class="menubar-rhythm-bar${lit}${now}" style="height:${heightPct}%" title="${hour}:00"></span>`;
+      const quiet = value <= 0 ? " quiet" : "";
+      return `<span class="menubar-rhythm-bar${lit}${now}${quiet}" style="--bar-height:${heightPct}%" title="${hour}:00"></span>`;
     })
     .join("");
   if (menubarRhythmMeta) {
@@ -2758,20 +2759,29 @@ function renderMenubarSources(visibility: SourceVisibility) {
       : "";
   }
   if (!menubarSourceList) return;
+  const topRows = activeRows.slice(0, 3);
+  const stackSegments = topRows
+    .map((row, index) => {
+      const percent = totalSourceXp > 0 ? clamp((row.xp / totalSourceXp) * 100, 0, 100) : 0;
+      return `<span class="menubar-source-stack-segment" data-source="${escapeHtml(row.sourceKey)}" style="width:${Math.max(percent, 4)}%; --segment-index:${index}"></span>`;
+    })
+    .join("");
   menubarSourceList.innerHTML = activeRows.length
-    ? activeRows
-        .slice(0, 3)
+    ? `
+        <div class="menubar-source-stack" aria-hidden="true">${stackSegments}</div>
+        ${topRows
         .map((row) => {
           const percent = totalSourceXp > 0 ? clamp((row.xp / totalSourceXp) * 100, 0, 100) : 0;
           return `
-            <article class="menubar-source-row">
+            <article class="menubar-source-row" data-source="${escapeHtml(row.sourceKey)}">
               <span class="menubar-source-name">${escapeHtml(row.label)}</span>
               <span class="source-meter" aria-hidden="true"><span style="width:${percent}%"></span></span>
               <b class="menubar-source-val">${formatCompact(row.xp)}</b>
             </article>
           `;
         })
-        .join("")
+        .join("")}
+      `
     : `<div class="menubar-viz-empty">${escapeHtml(t("waitingTodayTokens"))}</div>`;
 }
 
@@ -2781,20 +2791,50 @@ function renderMenubarSpeed(stats: Stats) {
     menubarSpeedMeta.textContent = `${formatCompact(rate)}/min · ${rate > 0 ? t("menubarSpeedActive") : t("menubarSpeedCalm")}`;
   }
   if (!menubarWave) return;
-  // A simple deterministic waveform whose amplitude follows the current rate.
-  const points = 40;
-  const baseline = 30;
-  const amplitude = rate > 0 ? clamp(4 + rate / 8, 4, 26) : 2;
-  const path: string[] = [];
-  for (let i = 0; i <= points; i += 1) {
-    const x = (i / points) * 320;
-    const y = baseline - Math.sin(i / 3) * amplitude * (rate > 0 ? 1 : 0.35);
-    path.push(`${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`);
-  }
+  const width = 320;
+  const height = 82;
+  const padX = 4;
+  const top = 8;
+  const bottom = 68;
+  const hourlyBuckets = menubarTodayHourBuckets();
+  const liveHourlyRate = rate * 60;
+  const points = 32;
+  const samples = Array.from({ length: points }, (_unused, index) => {
+    const hour = Math.round((index / (points - 1)) * 23);
+    const bucket = hourlyBuckets[hour] ?? 0;
+    const liveWeight = index > points - 7 ? (index - (points - 7)) / 6 : 0;
+    return Math.max(bucket, liveHourlyRate * liveWeight);
+  });
+  const max = Math.max(liveHourlyRate, ...hourlyBuckets, 1);
+  const coords = samples.map((value, index) => {
+    const x = padX + (index / (points - 1)) * (width - padX * 2);
+    const y = bottom - clamp(value / max, 0, 1) * (bottom - top);
+    return { x, y };
+  });
+  const linePath = coords.reduce((path, point, index) => {
+    if (index === 0) return `M${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    if (index === coords.length - 1) return `${path} L${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    const next = coords[index + 1];
+    const midX = (point.x + next.x) / 2;
+    const midY = (point.y + next.y) / 2;
+    return `${path} Q${point.x.toFixed(1)},${point.y.toFixed(1)} ${midX.toFixed(1)},${midY.toFixed(1)}`;
+  }, "");
+  const areaPath = `${linePath} L${width - padX},${bottom} L${padX},${bottom} Z`;
+  const lastPoint = coords[coords.length - 1] ?? { x: width - padX, y: bottom };
   menubarWave.innerHTML = `
-    <svg viewBox="0 0 320 60" preserveAspectRatio="none" aria-hidden="true">
-      <line x1="0" y1="${baseline}" x2="320" y2="${baseline}" class="menubar-wave-base" />
-      <path d="${path.join(" ")}" class="menubar-wave-line${rate > 0 ? " active" : ""}" fill="none" />
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="menubarWaveGradient" x1="0" y1="${top}" x2="0" y2="${bottom}" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#caff6b" stop-opacity="${rate > 0 ? "0.34" : "0.12"}" />
+          <stop offset="0.7" stop-color="#caff6b" stop-opacity="${rate > 0 ? "0.16" : "0.06"}" />
+          <stop offset="1" stop-color="#caff6b" stop-opacity="0" />
+        </linearGradient>
+      </defs>
+      <path d="${areaPath}" class="menubar-wave-area${rate > 0 ? " active" : ""}" fill="url(#menubarWaveGradient)" />
+      <path d="${linePath}" class="menubar-wave-glow${rate > 0 ? " active" : ""}" fill="none" />
+      <path d="${linePath}" class="menubar-wave-line${rate > 0 ? " active" : ""}" fill="none" />
+      <line x1="${padX}" y1="${bottom}" x2="${width - padX}" y2="${bottom}" class="menubar-wave-base" />
+      <circle cx="${lastPoint.x.toFixed(1)}" cy="${lastPoint.y.toFixed(1)}" r="4" class="menubar-wave-dot${rate > 0 ? " active" : ""}" />
     </svg>
   `;
 }

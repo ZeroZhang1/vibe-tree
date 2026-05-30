@@ -365,9 +365,10 @@ button {
 .menubar-root[data-ui-theme="day"] .menubar-panel,
 .menubar-root[data-ui-theme="soft"] .menubar-panel {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 88%, transparent), color-mix(in srgb, var(--bg-warm) 94%, transparent)),
-    color-mix(in srgb, var(--bg) 86%, transparent);
-  box-shadow: 0 18px 36px rgba(46, 42, 28, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+    radial-gradient(circle at 86% 12%, color-mix(in srgb, var(--leaf) 18%, transparent), transparent 36%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 96%, var(--leaf) 4%), color-mix(in srgb, var(--bg-warm) 90%, var(--bg) 10%)),
+    var(--bg);
+  box-shadow: 0 18px 36px rgba(46, 42, 28, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .menubar-panel::before {
@@ -484,6 +485,12 @@ button {
   text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.32);
 }
 
+.menubar-root[data-ui-theme="day"] .menubar-hero-value,
+.menubar-root[data-ui-theme="soft"] .menubar-hero-value {
+  color: var(--leaf-dark);
+  text-shadow: 1px 1px 0 color-mix(in srgb, var(--bg) 88%, transparent);
+}
+
 .menubar-hero-ctx {
   flex: none;
   max-width: 46%;
@@ -496,12 +503,37 @@ button {
 /* ---- switchable visualization slot ---- */
 .menubar-slot {
   position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 96px;
-  padding: 11px 12px 9px;
+  padding: 12px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--bg-light) 64%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at 82% 14%, color-mix(in srgb, var(--leaf) 18%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-light) 70%, transparent), color-mix(in srgb, var(--bg) 42%, transparent));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.menubar-root[data-ui-theme="day"] .menubar-slot,
+.menubar-root[data-ui-theme="soft"] .menubar-slot {
+  border-color: color-mix(in srgb, var(--border-strong) 76%, var(--leaf) 14%);
+  background:
+    radial-gradient(circle at 82% 16%, color-mix(in srgb, var(--leaf) 16%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-card) 82%, transparent), color-mix(in srgb, var(--bg-warm) 76%, var(--bg) 24%));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 10px 24px color-mix(in srgb, var(--leaf-glow) 42%, transparent);
+}
+
+.menubar-slot::before {
+  content: "";
+  position: absolute;
+  inset: 34px 12px 34px;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--border-strong) 56%, transparent), transparent),
+    linear-gradient(180deg, transparent, color-mix(in srgb, var(--border) 70%, transparent), transparent);
+  opacity: 0.45;
 }
 
 .menubar-viz {
@@ -509,7 +541,9 @@ button {
 }
 
 .menubar-viz.active {
-  display: block;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
   animation: menubar-fade 0.32s ease;
 }
 
@@ -523,18 +557,20 @@ button {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 9px;
+  margin-bottom: 10px;
 }
 
 .menubar-viz-title {
-  color: var(--muted);
+  color: var(--ink-soft);
   font-size: 11px;
+  font-weight: 800;
   letter-spacing: 0.04em;
 }
 
 .menubar-viz-meta {
-  color: var(--ink-soft);
+  color: var(--ink);
   font-size: 11px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -554,7 +590,7 @@ button {
 
 .menubar-viz-empty {
   display: grid;
-  min-height: 56px;
+  min-height: 86px;
   place-items: center;
   color: var(--muted);
   font-size: 11px;
@@ -562,38 +598,57 @@ button {
 
 /* panel: 24h rhythm bars */
 .menubar-rhythm-bars {
+  position: relative;
   display: flex;
   align-items: flex-end;
-  gap: 2px;
-  height: 56px;
+  gap: 3px;
+  min-height: 0;
+  padding: 8px 0 0;
 }
 
 .menubar-rhythm-bar {
+  position: relative;
   flex: 1;
   min-height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: var(--leaf-dark);
+  height: var(--bar-height);
+  border-radius: 3px 3px 1px 1px;
+  background: color-mix(in srgb, var(--leaf) 52%, var(--bg-light));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transform-origin: 50% 100%;
+}
+
+.menubar-rhythm-bar.quiet {
+  height: 3px;
+  background: color-mix(in srgb, var(--leaf-dark) 26%, transparent);
+  box-shadow: none;
 }
 
 .menubar-rhythm-bar.lit {
   background: linear-gradient(180deg, var(--progress-highlight), var(--leaf));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--leaf) 22%, transparent);
 }
 
 .menubar-rhythm-bar.now {
   background: linear-gradient(180deg, var(--storm), var(--soil));
-  box-shadow: 0 0 8px rgba(245, 166, 35, 0.5);
-  animation: menubar-now 1.4s infinite;
+  box-shadow: 0 0 9px color-mix(in srgb, var(--soil) 42%, transparent);
 }
 
-@keyframes menubar-now {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
+.menubar-rhythm-bar.now::after {
+  content: "";
+  position: absolute;
+  right: 1px;
+  left: 1px;
+  top: -5px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--soil);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--soil) 46%, transparent);
 }
 
 .menubar-rhythm-axis {
   display: flex;
   justify-content: space-between;
-  margin-top: 5px;
+  margin-top: 7px;
   color: var(--muted-light);
   font-size: 9px;
 }
@@ -601,7 +656,36 @@ button {
 /* panel: today's sources */
 .menubar-source-list {
   display: grid;
-  gap: 7px;
+  grid-template-rows: 10px repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+
+.menubar-source-stack {
+  display: flex;
+  gap: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 74%, transparent);
+}
+
+.menubar-source-stack-segment {
+  min-width: 4px;
+  border-radius: 999px;
+  background: var(--leaf);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--leaf) 16%, transparent);
+}
+
+.menubar-source-stack-segment[data-source="openclaw"] {
+  background: var(--rain);
+}
+
+.menubar-source-stack-segment[data-source="claude"] {
+  background: var(--soil);
+}
+
+.menubar-source-stack-segment[data-source="cloud"] {
+  background: var(--muted-light);
 }
 
 .menubar-source-row {
@@ -609,6 +693,16 @@ button {
   grid-template-columns: minmax(48px, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
+  min-height: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-light) 42%, transparent);
+}
+
+.menubar-root[data-ui-theme="day"] .menubar-source-row,
+.menubar-root[data-ui-theme="soft"] .menubar-source-row {
+  background: color-mix(in srgb, var(--bg-card) 78%, transparent);
 }
 
 .menubar-source-name {
@@ -630,14 +724,20 @@ button {
   height: 5px;
 }
 
+.menubar-panel .source-meter {
+  border-color: color-mix(in srgb, var(--border-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+
 /* panel: live speed waveform */
 .menubar-wave {
-  height: 56px;
+  min-height: 0;
 }
 
 .menubar-wave svg {
   width: 100%;
-  height: 56px;
+  height: 100%;
+  min-height: 96px;
 }
 
 .menubar-wave-base {
@@ -646,15 +746,49 @@ button {
   stroke-dasharray: 3 3;
 }
 
+.menubar-wave-area {
+  opacity: 0.5;
+}
+
+.menubar-wave-area.active {
+  opacity: 1;
+}
+
+.menubar-wave-glow {
+  stroke: color-mix(in srgb, var(--leaf) 42%, transparent);
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  filter: blur(6px);
+}
+
+.menubar-wave-glow.active {
+  opacity: 0.34;
+}
+
 .menubar-wave-line {
   stroke: var(--muted-light);
-  stroke-width: 1.5;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   opacity: 0.7;
 }
 
 .menubar-wave-line.active {
   stroke: var(--leaf);
   opacity: 0.9;
+}
+
+.menubar-wave-dot {
+  fill: var(--muted-light);
+  opacity: 0.7;
+}
+
+.menubar-wave-dot.active {
+  fill: var(--leaf);
+  opacity: 1;
+  filter: drop-shadow(0 0 6px var(--leaf-glow));
 }
 
 /* ---- carousel dots ---- */
