@@ -228,25 +228,7 @@ export function appShellHtml(viewMode: ViewMode) {
                   <strong data-i18n="socialGroupsEmpty">还没有群组</strong>
                   <span data-i18n="socialCreateOrJoin">创建一个群组，或用邀请码加入朋友的群组。</span>
                 </div>
-                <details class="social-group-actions-drawer" id="socialGroupActionsDrawer" open>
-                  <summary data-i18n="socialGroupActions">创建或加入群组</summary>
-                  <div class="social-action-stack">
-                    <form class="social-mini-form" id="socialCreateGroupForm">
-                      <label for="socialGroupNameInput" data-i18n="socialCreateGroup">创建群组</label>
-                      <div class="social-input-row">
-                        <input id="socialGroupNameInput" type="text" maxlength="48" autocomplete="off" placeholder="群组名" data-i18n-placeholder="socialGroupNamePlaceholder" />
-                        <button class="secondary-button" id="socialCreateGroupButton" type="submit" data-i18n="socialCreateGroupAction">创建</button>
-                      </div>
-                    </form>
-                    <form class="social-mini-form" id="socialJoinInviteForm">
-                      <label for="socialInviteCodeInput" data-i18n="socialJoinInvite">邀请码加入</label>
-                      <div class="social-input-row">
-                        <input id="socialInviteCodeInput" type="text" autocomplete="off" spellcheck="false" placeholder="邀请码" data-i18n-placeholder="socialInvitePlaceholder" />
-                        <button class="secondary-button" id="socialJoinInviteButton" type="submit" data-i18n="socialJoinInviteAction">加入</button>
-                      </div>
-                    </form>
-                  </div>
-                </details>
+                <button class="secondary-button social-group-manage-button" id="socialGroupManageButton" type="button" data-i18n="socialGroupManage">管理群组</button>
                 <div class="social-group-list" id="socialGroupList"></div>
               </div>
               <div class="social-detail-panel" id="socialGroupDetailPanel">
@@ -258,11 +240,42 @@ export function appShellHtml(viewMode: ViewMode) {
                     <button type="button" data-social-group-range="30d" data-i18n="leaderboard30d">30 天</button>
                     <button type="button" data-social-group-range="all" data-i18n="leaderboardAllTime">全部</button>
                   </div>
-                  <button class="secondary-button social-invite-button" id="socialCreateInviteButton" type="button" data-i18n="socialCreateInvite">生成邀请</button>
                 </div>
-                <div class="social-invite-output" id="socialInviteOutput"></div>
                 <div class="leaderboard-rows social-leaderboard-rows" id="socialGroupLeaderboardRows"></div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="social-group-actions-modal" id="socialGroupActionsModal" aria-hidden="true" hidden>
+          <div class="social-group-actions-backdrop" id="socialGroupActionsBackdrop"></div>
+          <div class="social-group-actions-panel" role="dialog" aria-modal="true" aria-labelledby="socialGroupActionsTitle">
+            <header>
+              <p class="eyebrow" data-i18n="socialEyebrow">Guild hall</p>
+              <h3 id="socialGroupActionsTitle" data-i18n="socialGroupActions">创建或加入群组</h3>
+              <button class="icon-button" id="socialGroupActionsCloseButton" type="button" aria-label="关闭设置" data-i18n-aria="closeSettings">×</button>
+            </header>
+            <div class="social-action-stack">
+              <form class="social-mini-form" id="socialCreateGroupForm">
+                <label for="socialGroupNameInput" data-i18n="socialCreateGroup">创建群组</label>
+                <div class="social-input-row">
+                  <input id="socialGroupNameInput" type="text" maxlength="48" autocomplete="off" placeholder="群组名" data-i18n-placeholder="socialGroupNamePlaceholder" />
+                  <button class="secondary-button" id="socialCreateGroupButton" type="submit" data-i18n="socialCreateGroupAction">创建</button>
+                </div>
+              </form>
+              <form class="social-mini-form" id="socialJoinInviteForm">
+                <label for="socialInviteCodeInput" data-i18n="socialJoinInvite">邀请码加入</label>
+                <div class="social-input-row">
+                  <input id="socialInviteCodeInput" type="text" autocomplete="off" spellcheck="false" placeholder="邀请码" data-i18n-placeholder="socialInvitePlaceholder" />
+                  <button class="secondary-button" id="socialJoinInviteButton" type="submit" data-i18n="socialJoinInviteAction">加入</button>
+                </div>
+              </form>
+              <section class="social-mini-form social-invite-manager" id="socialInviteManager" hidden>
+                <div class="social-mini-form-label" data-i18n="socialInviteManager">当前群组邀请</div>
+                <div class="social-invite-manager-summary" id="socialInviteGroupSummary"></div>
+                <button class="secondary-button social-invite-button" id="socialCreateInviteButton" type="button" data-i18n="socialCreateInvite">生成邀请</button>
+                <div class="social-invite-output" id="socialInviteOutput"></div>
+              </section>
             </div>
           </div>
         </section>

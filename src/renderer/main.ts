@@ -355,7 +355,10 @@ const socialRefreshButton = document.querySelector<HTMLButtonElement>("#socialRe
 const socialModeTabs = document.querySelector<HTMLElement>("#socialModeTabs");
 const socialFriendsPanel = document.querySelector<HTMLElement>("#socialFriendsPanel");
 const socialGroupsPanel = document.querySelector<HTMLElement>("#socialGroupsPanel");
-const socialGroupActionsDrawer = document.querySelector<HTMLDetailsElement>("#socialGroupActionsDrawer");
+const socialGroupManageButton = document.querySelector<HTMLButtonElement>("#socialGroupManageButton");
+const socialGroupActionsModal = document.querySelector<HTMLElement>("#socialGroupActionsModal");
+const socialGroupActionsBackdrop = document.querySelector<HTMLElement>("#socialGroupActionsBackdrop");
+const socialGroupActionsCloseButton = document.querySelector<HTMLButtonElement>("#socialGroupActionsCloseButton");
 const socialGroupDetailPanel = document.querySelector<HTMLElement>("#socialGroupDetailPanel");
 const socialAddFriendForm = document.querySelector<HTMLFormElement>("#socialAddFriendForm");
 const socialFriendUsernameInput = document.querySelector<HTMLInputElement>("#socialFriendUsernameInput");
@@ -368,6 +371,8 @@ const socialSummary = document.querySelector<HTMLElement>("#socialSummary");
 const socialGroupList = document.querySelector<HTMLElement>("#socialGroupList");
 const socialGroupDetail = document.querySelector<HTMLElement>("#socialGroupDetail");
 const socialGroupRangeTabs = document.querySelector<HTMLElement>("#socialGroupRangeTabs");
+const socialInviteManager = document.querySelector<HTMLElement>("#socialInviteManager");
+const socialInviteGroupSummary = document.querySelector<HTMLElement>("#socialInviteGroupSummary");
 const socialCreateInviteButton = document.querySelector<HTMLButtonElement>("#socialCreateInviteButton");
 const socialInviteOutput = document.querySelector<HTMLElement>("#socialInviteOutput");
 const socialGroupLeaderboardRows = document.querySelector<HTMLElement>("#socialGroupLeaderboardRows");
@@ -953,6 +958,18 @@ function bindEvents() {
     setSettingsOpen(false);
   });
 
+  socialGroupManageButton?.addEventListener("click", () => {
+    setSocialGroupActionsOpen(true);
+  });
+
+  socialGroupActionsCloseButton?.addEventListener("click", () => {
+    setSocialGroupActionsOpen(false);
+  });
+
+  socialGroupActionsBackdrop?.addEventListener("click", () => {
+    setSocialGroupActionsOpen(false);
+  });
+
   settingsNav?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-settings-category-button]");
     const category = button?.dataset.settingsCategoryButton;
@@ -970,7 +987,10 @@ function bindEvents() {
   });
 
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") setSettingsOpen(false);
+    if (event.key === "Escape") {
+      setSettingsOpen(false);
+      setSocialGroupActionsOpen(false);
+    }
   });
 
   scaleSelect?.addEventListener("change", async () => {
@@ -1257,6 +1277,7 @@ function bindEvents() {
     const nextTab = button.dataset.dashboardTab as DashboardTab | undefined;
     if (!nextTab || nextTab === dashboardTab) return;
     dashboardTab = nextTab;
+    if (dashboardTab !== "social") setSocialGroupActionsOpen(false);
     renderDashboardTabs();
     if (dashboardTab === "leaderboard") {
       ensureLeaderboardLoaded();
@@ -1295,6 +1316,7 @@ function bindEvents() {
     const nextPanel = button.dataset.socialPanel === "groups" ? "groups" : "friends";
     if (nextPanel === socialPanel) return;
     socialPanel = nextPanel;
+    if (socialPanel !== "groups") setSocialGroupActionsOpen(false);
     socialRenderKey = "";
     renderSocial();
     if (socialPanel === "groups" && socialSelectedGroupId && !socialGroupLeaderboard) {
@@ -1708,12 +1730,14 @@ async function createSocialGroupFromInput() {
   clearSocialInvite();
   socialRenderKey = "";
   renderSocial();
+  let created = false;
   try {
     const group = await window.bonsai.createSocialGroup({ name, visibility: "invite" });
     socialGroupNameInput!.value = "";
     upsertSocialGroup(group);
     socialSelectedGroupId = group.groupId;
     socialGroupLeaderboard = null;
+    created = true;
   } catch (error) {
     socialError = error instanceof Error ? error.message : t("socialGroupCreateFailed");
   } finally {
@@ -1721,6 +1745,7 @@ async function createSocialGroupFromInput() {
     socialRenderKey = "";
     renderSocial();
   }
+  if (created) setSocialGroupActionsOpen(false);
   if (socialSelectedGroupId) await refreshSocialGroupLeaderboard();
 }
 
@@ -1737,12 +1762,14 @@ async function acceptSocialInviteFromInput() {
   clearSocialInvite();
   socialRenderKey = "";
   renderSocial();
+  let joined = false;
   try {
     const group = await window.bonsai.acceptSocialGroupInvite(code);
     socialInviteCodeInput!.value = "";
     upsertSocialGroup(group);
     socialSelectedGroupId = group.groupId;
     socialGroupLeaderboard = null;
+    joined = true;
   } catch (error) {
     socialError = error instanceof Error ? error.message : t("socialInviteAcceptFailed");
   } finally {
@@ -1750,6 +1777,7 @@ async function acceptSocialInviteFromInput() {
     socialRenderKey = "";
     renderSocial();
   }
+  if (joined) setSocialGroupActionsOpen(false);
   if (socialSelectedGroupId) await refreshSocialGroupLeaderboard();
 }
 
@@ -1993,6 +2021,18 @@ function setSettingsOpen(open: boolean) {
   if (open) activateSettingsCategory(activeSettingsCategory);
   settingsModal.classList.toggle("open", open);
   settingsModal.setAttribute("aria-hidden", String(!open));
+}
+
+function setSocialGroupActionsOpen(open: boolean) {
+  if (!socialGroupActionsModal) return;
+  socialGroupActionsModal.hidden = !open;
+  socialGroupActionsModal.classList.toggle("open", open);
+  socialGroupActionsModal.setAttribute("aria-hidden", String(!open));
+  if (open) {
+    window.setTimeout(() => {
+      (socialGroups.length ? socialInviteCodeInput : socialGroupNameInput)?.focus();
+    }, 0);
+  }
 }
 
 function isSettingsCategory(value: string | undefined): value is SettingsCategory {
@@ -4334,16 +4374,9 @@ function renderSocial() {
   socialGroupsPanel.hidden = socialPanel !== "groups";
   socialGroupsPanel.classList.toggle("is-empty", groupsEmpty);
   socialGroupDetailPanel.hidden = groupsEmpty;
-  if (socialGroupActionsDrawer) {
-    const initialized = socialGroupActionsDrawer.dataset.empty === "true" || socialGroupActionsDrawer.dataset.empty === "false";
-    const wasEmpty = socialGroupActionsDrawer.dataset.empty === "true";
-    if (groupsEmpty) {
-      socialGroupActionsDrawer.open = true;
-      socialGroupActionsDrawer.dataset.empty = "true";
-    } else {
-      if (!initialized || wasEmpty) socialGroupActionsDrawer.open = false;
-      socialGroupActionsDrawer.dataset.empty = "false";
-    }
+  if (socialGroupManageButton) {
+    socialGroupManageButton.disabled = socialLoading;
+    socialGroupManageButton.textContent = groupsEmpty ? t("socialGroupActions") : t("socialGroupManage");
   }
   socialAddFriendForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
     element.disabled = socialLoading;
@@ -4354,6 +4387,17 @@ function renderSocial() {
   socialJoinInviteForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
     element.disabled = socialLoading;
   });
+  if (socialInviteManager) {
+    socialInviteManager.hidden = !group;
+  }
+  if (socialInviteGroupSummary) {
+    socialInviteGroupSummary.innerHTML = group
+      ? `
+        <strong>${escapeHtml(group.name)}</strong>
+        <span>${formatNumber(group.memberCount)} ${t("socialMembers")} · ${socialRoleLabel(group.role)}</span>
+      `
+      : `<span>${t("socialNoGroupSelected")}</span>`;
+  }
   if (socialCreateInviteButton) {
     socialCreateInviteButton.disabled = socialLoading || !canManageGroup;
     socialCreateInviteButton.textContent = hasActiveInvite ? t("socialCopyInvite") : t("socialCreateInvite");

@@ -832,6 +832,7 @@ h4 {
 
 .side-tabs button {
   position: relative;
+  min-width: 0;
   min-height: 36px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -841,6 +842,8 @@ h4 {
   font-size: 0.78rem;
   font-weight: 700;
   padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   transition: all 0.1s;
 }
@@ -2440,7 +2443,8 @@ input:disabled {
 .metric-grid span,
 .progress-meta,
 .section-header span,
-label {
+label,
+.social-mini-form-label {
   color: var(--muted);
   font-size: 0.72rem;
 }
@@ -3114,64 +3118,18 @@ label {
   display: none;
 }
 
-.social-groups-panel.is-empty .social-group-actions-drawer {
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-light);
-}
-
 .social-groups-panel:not(.is-empty) .social-group-list {
   order: 1;
 }
 
-.social-groups-panel:not(.is-empty) .social-group-actions-drawer {
+.social-groups-panel:not(.is-empty) .social-group-manage-button {
   order: 2;
 }
 
-.social-group-actions-drawer {
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-light);
-}
-
-.social-group-actions-drawer summary {
+.social-group-manage-button {
+  width: 100%;
   min-height: 38px;
-  display: flex;
-  align-items: center;
-  padding: 0 10px;
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 0.72rem;
-  font-weight: 900;
-  list-style: none;
-}
-
-.social-group-actions-drawer summary::-webkit-details-marker {
-  display: none;
-}
-
-.social-group-actions-drawer summary::after {
-  content: "+";
-  margin-left: auto;
-  color: var(--leaf);
-}
-
-.social-group-actions-drawer[open] summary::after {
-  content: "−";
-}
-
-.social-groups-panel.is-empty .social-group-actions-drawer summary {
-  cursor: default;
-}
-
-.social-groups-panel.is-empty .social-group-actions-drawer summary::after {
-  display: none;
-}
-
-.social-group-actions-drawer .social-action-stack {
-  padding: 0 10px 10px;
+  justify-content: center;
 }
 
 .social-empty-copy {
@@ -3197,6 +3155,103 @@ label {
 
 .social-groups-panel:not(.is-empty) .social-empty-copy {
   display: none;
+}
+
+.social-group-actions-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 82;
+  display: none;
+  place-items: center;
+  padding: 24px;
+}
+
+.social-group-actions-modal.open {
+  display: grid;
+}
+
+.social-group-actions-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 12, 18, 0.56);
+  backdrop-filter: blur(3px);
+}
+
+.social-group-actions-panel {
+  position: relative;
+  width: min(460px, calc(100vw - 48px));
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+}
+
+.social-group-actions-panel header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 12px;
+  align-items: start;
+}
+
+.social-group-actions-panel header .eyebrow {
+  grid-column: 1;
+  margin: 0;
+}
+
+.social-group-actions-panel h3 {
+  grid-column: 1;
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.social-group-actions-panel .icon-button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.social-group-actions-panel .social-action-stack {
+  gap: 12px;
+}
+
+.social-group-actions-panel .social-mini-form {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-light);
+}
+
+.social-invite-manager {
+  gap: 8px;
+}
+
+.social-invite-manager-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.social-invite-manager-summary strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.social-invite-manager-summary span {
+  color: var(--muted);
+  font-size: 0.66rem;
 }
 
 .social-group-list {
@@ -3283,7 +3338,7 @@ label {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -4928,7 +4983,8 @@ label {
    FORM ELEMENTS
    ============================ */
 
-label {
+label,
+.social-mini-form-label {
   display: grid;
   gap: 5px;
   font-weight: 600;
