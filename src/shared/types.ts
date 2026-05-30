@@ -227,6 +227,7 @@ export interface Settings {
   leaderboardLastSyncedAt?: string;
   leaderboardAutoSyncEnabled: boolean;
   leaderboardPreferencesPublic: boolean;
+  socialGroupCount: number;
   cloudSyncEnabled: boolean;
   cloudSyncDeviceId?: string;
   cloudSyncLastSyncedAt?: string;

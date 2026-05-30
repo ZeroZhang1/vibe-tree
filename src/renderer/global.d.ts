@@ -55,6 +55,8 @@ declare global {
       createSocialGroup: (input: CreateSocialGroupInput) => Promise<SocialGroup>;
       createSocialGroupInvite: (groupId: string, input?: CreateSocialGroupInviteInput) => Promise<SocialGroupInvite>;
       acceptSocialGroupInvite: (code: string) => Promise<SocialGroup>;
+      leaveSocialGroup: (groupId: string) => Promise<void>;
+      setSocialGroupShareUsage: (groupId: string, shareUsage: boolean) => Promise<SocialGroup>;
       getSocialGroupLeaderboard: (groupId: string, range: LeaderboardRange) => Promise<SocialGroupLeaderboardData>;
       getCloudSyncStatus: () => Promise<CloudSyncStatus>;
       startNewTree: () => Promise<CloudSyncStatus>;

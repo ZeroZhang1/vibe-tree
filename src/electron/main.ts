@@ -99,6 +99,7 @@ const DEFAULT_SETTINGS: Settings = {
   leaderboardLastSyncedAt: undefined,
   leaderboardAutoSyncEnabled: true,
   leaderboardPreferencesPublic: false,
+  socialGroupCount: 0,
   cloudSyncEnabled: false,
   cloudSyncDeviceId: undefined,
   cloudSyncLastSyncedAt: undefined,
@@ -575,6 +576,9 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     leaderboardLastSyncedAt,
     leaderboardAutoSyncEnabled: settings.leaderboardAutoSyncEnabled !== false,
     leaderboardPreferencesPublic: Boolean(settings.leaderboardPreferencesPublic),
+    socialGroupCount: Number.isFinite(Number(settings.socialGroupCount))
+      ? Math.max(0, Math.round(Number(settings.socialGroupCount)))
+      : 0,
     cloudSyncEnabled: Boolean(settings.cloudSyncEnabled && leaderboardProfile),
     cloudSyncDeviceId: cleanDeviceId(settings.cloudSyncDeviceId),
     cloudSyncLastSyncedAt,
@@ -1570,7 +1574,8 @@ function updateSettings(partial: Partial<Settings>) {
     previous.cloudSyncEnabled !== ledger.settings.cloudSyncEnabled ||
     previous.leaderboardAutoSyncEnabled !== ledger.settings.leaderboardAutoSyncEnabled ||
     previous.cloudSyncAutoSyncEnabled !== ledger.settings.cloudSyncAutoSyncEnabled ||
-    previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id
+    previous.leaderboardProfile?.id !== ledger.settings.leaderboardProfile?.id ||
+    (previous.socialGroupCount > 0) !== (ledger.settings.socialGroupCount > 0)
   ) {
     leaderboardService.startSync();
   } else if (
@@ -2844,6 +2849,10 @@ ipcMain.handle("social:create-invite", (_event, groupId: string, input) =>
   leaderboardService.createSocialGroupInvite(groupId, input),
 );
 ipcMain.handle("social:accept-invite", (_event, code: string) => leaderboardService.acceptSocialGroupInvite(code));
+ipcMain.handle("social:leave-group", (_event, groupId: string) => leaderboardService.leaveSocialGroup(groupId));
+ipcMain.handle("social:set-group-share-usage", (_event, groupId: string, shareUsage: boolean) =>
+  leaderboardService.setSocialGroupShareUsage(groupId, Boolean(shareUsage)),
+);
 ipcMain.handle("social:group-leaderboard", (_event, groupId: string, range?: unknown) =>
   leaderboardService.getSocialGroupLeaderboard(groupId, range),
 );

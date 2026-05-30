@@ -132,6 +132,13 @@ CREATE TABLE IF NOT EXISTS sync_limits (
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS usage_visibility (
+  user_id TEXT PRIMARY KEY,
+  public_global INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS security_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL,

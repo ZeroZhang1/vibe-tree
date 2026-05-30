@@ -487,11 +487,34 @@ async function leaveLeaderboard(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
+  await ensureSocialTables(env);
+  const now = new Date().toISOString();
+
+  // Leaving the global board hides the user from it but keeps their usage data
+  // so group leaderboards still work. Only prune the usage tables when the user
+  // is not in any group, to avoid retaining orphaned data.
+  const groupCount = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM social_group_members WHERE user_id = ?",
+  ).bind(user.userId).first<{ count?: number }>();
+  const inAnyGroup = (groupCount?.count ?? 0) > 0;
+
   await env.DB.batch([
-    env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
-    env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
+    ...(inAnyGroup
+      ? []
+      : [
+          env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
+          env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
+        ]),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare(
+      `INSERT INTO usage_visibility (user_id, public_global, updated_at)
+       VALUES (?, 0, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         public_global = 0,
+         updated_at = excluded.updated_at`,
+    ).bind(user.userId, now),
   ]);
   leaderboardCache.clear();
   return json({ ok: true }, env);
@@ -525,6 +548,16 @@ async function handleSocialRoute(request: Request, env: Env) {
   const inviteCreateMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/invites$/);
   if (inviteCreateMatch && request.method === "POST") {
     return await createSocialGroupInvite(request, env, decodeURIComponent(inviteCreateMatch[1]));
+  }
+
+  const leaveGroupMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/members\/me$/);
+  if (leaveGroupMatch && request.method === "DELETE") {
+    return await leaveSocialGroup(request, env, decodeURIComponent(leaveGroupMatch[1]));
+  }
+
+  const membershipMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/membership$/);
+  if (membershipMatch && request.method === "POST") {
+    return await setSocialGroupShareUsage(request, env, decodeURIComponent(membershipMatch[1]));
   }
 
   const groupLeaderboardMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/leaderboard$/);
@@ -699,6 +732,34 @@ async function createSocialGroupInvite(request: Request, env: Env, groupId: stri
       createdAt: now,
     },
   }, env, 201);
+}
+
+async function leaveSocialGroup(request: Request, env: Env, groupId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  await requireSocialGroupMembership(groupId, user.userId, env);
+  const group = await env.DB.prepare(
+    "SELECT owner_user_id AS ownerUserId FROM social_groups WHERE group_id = ?",
+  ).bind(groupId).first<{ ownerUserId?: string }>();
+  if (group && String(group.ownerUserId) === user.userId) {
+    throw new HttpError(409, "Group owners must delete the group instead of leaving.");
+  }
+  await env.DB.prepare("DELETE FROM social_group_members WHERE group_id = ? AND user_id = ?")
+    .bind(groupId, user.userId)
+    .run();
+  return json({ ok: true }, env);
+}
+
+async function setSocialGroupShareUsage(request: Request, env: Env, groupId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  await requireSocialGroupMembership(groupId, user.userId, env);
+  const body = await request.json().catch(() => undefined) as { shareUsage?: unknown } | undefined;
+  const shareUsage = body?.shareUsage === true ? 1 : 0;
+  await env.DB.prepare(
+    "UPDATE social_group_members SET share_usage = ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
+  ).bind(shareUsage, new Date().toISOString(), groupId, user.userId).run();
+  return json({ group: await requireSocialGroupPayload(groupId, user.userId, env) }, env);
 }
 
 async function acceptSocialGroupInvite(request: Request, env: Env, code: string) {
@@ -973,6 +1034,7 @@ async function syncDailyUsage(request: Request, env: Env) {
         appVersion?: string;
         usageStartDate?: string;
         forceSync?: boolean;
+        usagePublic?: boolean;
         usagePreferencesPublic?: boolean;
         usagePreferences?: unknown[];
       }
@@ -983,6 +1045,7 @@ async function syncDailyUsage(request: Request, env: Env) {
   const hours = hasHourlyUsage ? body.hours?.slice(0, MAX_HOURLY_BACKFILL_HOURS + 2) ?? [] : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
   const usageStartDate = normalizeUsageStartDate(body?.usageStartDate);
+  const usagePublic = body?.usagePublic !== false;
   const usagePreferencesPublic = body?.usagePreferencesPublic === true;
   const usagePreferenceInput = Array.isArray(body?.usagePreferences) ? body.usagePreferences : [];
   const now = new Date().toISOString();
@@ -1043,6 +1106,7 @@ async function syncDailyUsage(request: Request, env: Env) {
 
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date >= ? AND date <= ?")
       .bind(user.userId, syncWindow.earliest, syncWindow.latest),
@@ -1066,6 +1130,13 @@ async function syncDailyUsage(request: Request, env: Env) {
        VALUES (?, ?)
        ON CONFLICT(user_id) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
     ).bind(user.userId, now),
+    env.DB.prepare(
+      `INSERT INTO usage_visibility (user_id, public_global, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         public_global = excluded.public_global,
+         updated_at = excluded.updated_at`,
+    ).bind(user.userId, usagePublic ? 1 : 0, now),
   ]);
   leaderboardCache.clear();
   return json(
@@ -1142,6 +1213,17 @@ async function ensureHourlyUsageTable(env: Env) {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour ON hourly_usage(hour_start_utc)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_user ON hourly_usage(user_id)"),
   ]);
+}
+
+async function ensureUsageVisibilityTable(env: Env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS usage_visibility (
+      user_id TEXT PRIMARY KEY,
+      public_global INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+    )`,
+  ).run();
 }
 
 async function ensureCloudTreeTables(env: Env) {
@@ -1991,6 +2073,7 @@ function dailySyncWindow(usageStartDate: string | undefined) {
 async function getLeaderboard(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   const url = new URL(request.url);
   const rawRange = url.searchParams.get("range");
   const range = normalizeRange(url.searchParams.get("range"));
@@ -2002,6 +2085,7 @@ async function getLeaderboard(request: Request, env: Env) {
 async function getLeaderboards(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   const requestUser = await optionalAuth(request, env);
   const updatedAt = new Date().toISOString();
   const pairs = await Promise.all(
@@ -2058,6 +2142,8 @@ async function leaderboardDataForRange(
        FROM daily_usage d
        JOIN users u ON u.user_id = d.user_id
        LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       LEFT JOIN usage_visibility v ON v.user_id = u.user_id
+       WHERE COALESCE(v.public_global, 1) = 1
        GROUP BY u.user_id
        HAVING tokens > 0
        ORDER BY tokens DESC
@@ -2111,6 +2197,8 @@ async function leaderboardDataForRange(
        FROM range_totals r
        JOIN users u ON u.user_id = r.user_id
        LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       LEFT JOIN usage_visibility v ON v.user_id = u.user_id
+       WHERE COALESCE(v.public_global, 1) = 1
        GROUP BY u.user_id
        HAVING tokens > 0
        ORDER BY tokens DESC
@@ -2147,7 +2235,9 @@ async function leaderboardDataForRange(
        JOIN daily_usage d ON d.user_id = c.user_id
        JOIN users u ON u.user_id = d.user_id
        LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       LEFT JOIN usage_visibility v ON v.user_id = u.user_id
        WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
+         AND COALESCE(v.public_global, 1) = 1
        GROUP BY u.user_id
        HAVING tokens > 0
        ORDER BY tokens DESC

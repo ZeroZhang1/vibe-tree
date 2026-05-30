@@ -185,13 +185,20 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     authServer = null;
   }
 
+  // Usage uploads feed both the global leaderboard (when joined) and group
+  // leaderboards (when in any group). Group-only users still upload, but mark
+  // their data non-public so they never appear on the global board.
+  function shouldSyncUsage() {
+    return ledger().settings.leaderboardEnabled === true || (ledger().settings.socialGroupCount ?? 0) > 0;
+  }
+
   function scheduleNextSync() {
     if (syncTimer) {
       clearTimeout(syncTimer);
       syncTimer = null;
     }
 
-    if (!configured || !auth.token || !ledger().settings.leaderboardEnabled || !ledger().settings.leaderboardAutoSyncEnabled) return;
+    if (!configured || !auth.token || !shouldSyncUsage() || !ledger().settings.leaderboardAutoSyncEnabled) return;
 
     syncTimer = setTimeout(() => {
       syncTimer = null;
@@ -313,9 +320,10 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
   async function syncUsage(syncOptions: LeaderboardSyncOptions = {}): Promise<LeaderboardStatus> {
     if (!configured) return status(text("leaderboardServiceNotConfigured"));
     if (!auth.token || !auth.profile) return status(text("leaderboardLoginRequired"));
-    if (!ledger().settings.leaderboardEnabled) return status();
+    if (!shouldSyncUsage()) return status();
     if (syncing) return status();
 
+    const leaderboardEnabled = ledger().settings.leaderboardEnabled === true;
     syncing = true;
     lastSyncAttemptAt = new Date().toISOString();
     broadcast();
@@ -331,13 +339,14 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
           usageStartDate: usageStartDate(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           forceSync: syncOptions.force === true,
-          usagePreferencesPublic: ledger().settings.leaderboardPreferencesPublic,
-          usagePreferences: ledger().settings.leaderboardPreferencesPublic ? usagePreferences() : undefined,
+          usagePublic: leaderboardEnabled,
+          usagePreferencesPublic: leaderboardEnabled && ledger().settings.leaderboardPreferencesPublic,
+          usagePreferences:
+            leaderboardEnabled && ledger().settings.leaderboardPreferencesPublic ? usagePreferences() : undefined,
         },
       });
       syncing = false;
       options.updateSettings({
-        leaderboardEnabled: true,
         leaderboardProfile: auth.profile,
         leaderboardLastSyncedAt: new Date().toISOString(),
       });
@@ -605,13 +614,24 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     return normalizeSocialFriendList(data);
   }
 
+  // Cache the group count in settings so the main-process sync timer can cheaply
+  // decide whether to upload usage (group-only members upload too). Bumping it
+  // re-arms the timer via the updateSettings change detection in main.ts.
+  function setSocialGroupCount(count: number) {
+    const next = Number.isFinite(count) ? Math.max(0, Math.round(count)) : 0;
+    if (ledger().settings.socialGroupCount === next) return;
+    options.updateSettings({ socialGroupCount: next });
+  }
+
   async function getSocialGroups(): Promise<SocialGroupList> {
     if (!configured) return socialGroupListWithError(text("leaderboardServiceNotConfigured"));
     if (!auth.token) return socialGroupListWithError(text("leaderboardLoginRequired"));
 
     try {
       const data = await requestJson<unknown>(apiUrl("/api/social/groups"), { token: auth.token });
-      return normalizeSocialGroupList(data);
+      const list = normalizeSocialGroupList(data);
+      if (!list.error) setSocialGroupCount(list.groups.length);
+      return list;
     } catch (error) {
       return socialGroupListWithError(error instanceof Error ? error.message : text("socialGroupsLoadFailed"));
     }
@@ -636,6 +656,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     });
     const group = normalizeSocialGroup((data as { group?: unknown })?.group ?? data);
     if (!group) throw new Error(text("socialGroupCreateFailed"));
+    setSocialGroupCount((ledger().settings.socialGroupCount ?? 0) + 1);
     return group;
   }
 
@@ -674,6 +695,38 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     });
     const group = normalizeSocialGroup((data as { group?: unknown })?.group ?? data);
     if (!group) throw new Error(text("socialInviteAcceptFailed"));
+    setSocialGroupCount((ledger().settings.socialGroupCount ?? 0) + 1);
+    return group;
+  }
+
+  async function leaveSocialGroup(groupId: string): Promise<void> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+
+    const targetGroupId = cleanOptionalString(groupId, 80);
+    if (!targetGroupId) throw new Error(text("socialGroupLeaveFailed"));
+    await requestJson<unknown>(apiUrl(`/api/social/groups/${encodeURIComponent(targetGroupId)}/members/me`), {
+      method: "DELETE",
+      token: auth.token,
+    });
+    setSocialGroupCount(Math.max(0, (ledger().settings.socialGroupCount ?? 0) - 1));
+  }
+
+  async function setSocialGroupShareUsage(groupId: string, shareUsage: boolean): Promise<SocialGroup> {
+    if (!configured) throw new Error(text("leaderboardServiceNotConfigured"));
+    await authenticate();
+    if (!auth.token) throw new Error(text("leaderboardLoginRequired"));
+
+    const targetGroupId = cleanOptionalString(groupId, 80);
+    if (!targetGroupId) throw new Error(text("socialGroupShareToggleFailed"));
+    const data = await requestJson<unknown>(apiUrl(`/api/social/groups/${encodeURIComponent(targetGroupId)}/membership`), {
+      method: "POST",
+      token: auth.token,
+      body: { shareUsage: shareUsage === true },
+    });
+    const group = normalizeSocialGroup((data as { group?: unknown })?.group ?? data);
+    if (!group) throw new Error(text("socialGroupShareToggleFailed"));
     return group;
   }
 
@@ -1168,6 +1221,8 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     createSocialGroup,
     createSocialGroupInvite,
     acceptSocialGroupInvite,
+    leaveSocialGroup,
+    setSocialGroupShareUsage,
     getSocialGroupLeaderboard,
   };
 }

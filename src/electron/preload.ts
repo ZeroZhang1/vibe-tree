@@ -63,6 +63,9 @@ const api = {
   createSocialGroupInvite: (groupId: string, input?: CreateSocialGroupInviteInput) =>
     ipcRenderer.invoke("social:create-invite", groupId, input) as Promise<SocialGroupInvite>,
   acceptSocialGroupInvite: (code: string) => ipcRenderer.invoke("social:accept-invite", code) as Promise<SocialGroup>,
+  leaveSocialGroup: (groupId: string) => ipcRenderer.invoke("social:leave-group", groupId) as Promise<void>,
+  setSocialGroupShareUsage: (groupId: string, shareUsage: boolean) =>
+    ipcRenderer.invoke("social:set-group-share-usage", groupId, shareUsage) as Promise<SocialGroup>,
   getSocialGroupLeaderboard: (groupId: string, range: LeaderboardRange) =>
     ipcRenderer.invoke("social:group-leaderboard", groupId, range) as Promise<SocialGroupLeaderboardData>,
   getCloudSyncStatus: () => ipcRenderer.invoke("cloud-sync:get-status") as Promise<CloudSyncStatus>,

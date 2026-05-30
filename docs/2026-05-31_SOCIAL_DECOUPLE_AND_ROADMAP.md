@@ -1,0 +1,210 @@
+# Vibe Tree 社交功能:Review 现状、解耦方案与路线图
+
+> 承接 [`2026-05-29_SOCIAL_FRIENDS_GROUPS_PLAN.md`](./2026-05-29_SOCIAL_FRIENDS_GROUPS_PLAN.md)。
+> 分支:`JJJyuhao-social-friends-groups`,基线 main / v0.6.0(commit 448f0f4)。
+> 本文档为**设计稿**,记录 review 结论、已定稿的解耦架构、分期路线图。撰写时尚未写实现代码。
+
+---
+
+## 1. Review 现状总结
+
+好友/群组 MVP 已实现:Worker + D1 数据模型(4 张 social 表)、Electron 服务层(9 个社交 API)、社交 UI(好友/群组双 tab、管理弹窗、群组榜、前端缓存)。
+
+**工程质量:扎实,可作为合并基线。**
+
+- 类型链路完整无断点:`shared/types.ts` → `preload.ts`/`preload.cjs` → `global.d.ts` → `renderer`。
+- Worker 端 normalize / 输入校验防御到位(`cleanShortText`、`normalizeSocialGroupRole`、`cleanInviteCode` 等)。
+- `ensureSocialTables` 用 `CREATE TABLE/INDEX IF NOT EXISTS`,与 migration 幂等一致,deploy 顺序安全(即使忘跑 migration,首个请求也会建表)。
+- `verify-worker-api.mjs` 覆盖好友 pending→accept→remove 全流程、建组、邀请加入、群组榜两成员排序。
+- i18n 中英双语齐全;`npm run typecheck` 通过。
+- `deleteMe` 已补 social 表的级联清理(交接未提,但做对了)。
+
+**一个贯穿性架构事实(非 bug,但决定后续):**
+
+群组排行榜和全球排行榜**共用同一份数据、同一个开关**。群组榜查的是 `daily_usage` / `hourly_usage`([`socialGroupLeaderboardDataForRange`](../server/leaderboard-worker/src/index.ts) `index.ts:1509`),而这两张表只在用户"加入全球榜"(`leaderboardEnabled`)后由客户端 `syncUsage` 写入。全球榜查询([`leaderboardDataForRange`](../server/leaderboard-worker/src/index.ts) `index.ts:2028`)**无任何 opt-in 列过滤**——成员资格 == "表里有没有你的行"。
+
+也就是说,当前三件事被绑成一个:**"上传数据" == "daily_usage 里有行" == "出现在全球榜"**。这与原 PLAN.md「加入群组 ≠ 加入全球榜」(`PLAN.md:54`)矛盾,对"公司 token 统计"场景尤其致命:员工必须先公开上全球榜,公司群才看得到数据。第 3 节解决此问题。
+
+---
+
+## 2. 确认的 Bug 清单(分级)
+
+### A. 真正会产生错误行为
+
+- **A1. 退出全球榜静默清零群组贡献。** [`leaveLeaderboard`](../server/leaderboard-worker/src/index.ts) `index.ts:486` 删除 `daily_usage` + `hourly_usage`,用户不会知道这同时让自己在所有群组榜归零。两个本该独立的关系被耦合在同一张表上。→ 第 3 节 Step 3 修复。
+- **A2. username 改名 / 抢注可能加错人。** [`resolveSocialFriendTarget`](../server/leaderboard-worker/src/index.ts) `index.ts:1376` 用 `lower(username) = lower(?)` + `ORDER BY updated_at DESC LIMIT 1`。GitHub 用户名虽唯一但可改名:A 改名后 B 占用旧名并登录,按旧名加好友会命中"最近登录的那个"(= B)。**修法(轻):** 加好友成功后 UI 明确展示头像 + 用户名,让用户确认是不是本人。
+- **A3. 邀请 `maxUses` 并发竞态。** 用量检查与 `uses + 1` 不在同一事务([`acceptSocialGroupInvite`](../server/leaderboard-worker/src/index.ts) `index.ts:720-738`),临界点可超发。MVP 可接受,记账。
+
+### B. 半成品 / 接线断裂
+
+- **B1. `share_usage` 过滤是死代码。** 字段、类型、UI 布尔全有,但插入永远写死 `1`([index.ts:657](../server/leaderboard-worker/src/index.ts)、[:731](../server/leaderboard-worker/src/index.ts)),无任何 `UPDATE`、无开关接口,`WHERE share_usage > 0` 恒真。**这正是 per-group 隐私开关的地基,接上即可用。** → 第 3 节 Step 4。
+
+### C. 架构耦合(第 3 节解决)
+
+- **C1. 群组数据完全依赖"已加入全球榜"。** 见第 1 节。
+
+### 技术债(随手级)
+
+- 冗余 migration:`20260529_social_friendships_indexes.sql` 只重建主 migration 里已有的索引,无害但易混淆。
+- social 路由限流 keyPrefix 纯按 IP(`api:/api/social`),公司 NAT 出口多人会互挤额度——又踩中公司场景。
+- 无建组 / 好友请求数量上限,可被刷。
+
+---
+
+## 3. 解耦架构方案(已定稿)
+
+### 已拍板的产品决策(硬约束)
+
+1. **群组不强制加入全球榜。** 在群组里可以让用量喂给群组榜,而不出现在全球榜。
+2. **加入即共享,可按群关闭。** 加入群组默认共享用量给该群(`share_usage` 默认开),提供 per-group 开关关闭。
+3. **退出全球榜保留数据,仅隐藏全球榜。** 离开全球榜必须保留已上传用量(群组仍可用),只把自己从全球榜隐藏。账号删除(`deleteMe`)仍全级联。
+4. **必须加退群能力。**
+5. **群主禁止直接退群**(需先转让或删群,留 P1)。
+6. 群内展示方向:个人资料卡 + 可选隐私设置(P1);加入后贡献指标(P2)。
+
+### 机制一句话
+
+引入一个**独立于"数据是否存在"的 per-user 全球可见性标记**,只有全球榜查询认它,群组榜刻意忽略它;并把"数据上传"与"全球可见"解耦。
+
+### 已确认的复用基础
+
+- 架构里**已有两条独立上传管线**:`leaderboardEnabled` → `daily_usage`、`cloudSyncEnabled` → `tree_events`。"上传数据、按功能开关门控"是既有模式,解耦不是从零发明。
+- 已有可复用 opt-in 模式:`Settings.leaderboardPreferencesPublic` → 请求体 `usagePreferencesPublic` → worker 按标志写入([leaderboard.ts:334](../src/electron/leaderboard.ts)、[index.ts:986](../server/leaderboard-worker/src/index.ts))。
+- `daily_usage` / `hourly_usage` **只被全球榜 + 群组榜消费**(加上 deleteMe/leaveLeaderboard/syncDailyUsage 的清理),无其他读取方,改动面可控。
+
+### Step 1 — 服务端:per-user 全球可见性标记
+
+新建小表,用 lazy 建表(仿 [`ensureUsagePreferencesTable`](../server/leaderboard-worker/src/index.ts) `index.ts:1107`):
+
+```sql
+CREATE TABLE IF NOT EXISTS usage_visibility (
+  user_id TEXT PRIMARY KEY,
+  public_global INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+```
+
+- **不用 `users` 表加列**:OAuth upsert([index.ts:368](../server/leaderboard-worker/src/index.ts))每次登录 `ON CONFLICT DO UPDATE`,会 clobber 该标记。
+- **不复用 `sync_limits`**:单一职责(冷却),且它是 `leaveLeaderboard` 会删的表。
+- 新增 `ensureUsageVisibilityTable(env)`,在 `getLeaderboard` / `getLeaderboards` 读路径里调用。
+
+**全球榜 3 个 range 分支**([`leaderboardDataForRange`](../server/leaderboard-worker/src/index.ts) `index.ts:2028-2178`)统一加:
+
+```sql
+LEFT JOIN usage_visibility v ON v.user_id = u.user_id
+WHERE COALESCE(v.public_global, 1) = 1
+```
+
+**向后兼容关键:** 老客户端从不写该表 → 无行 → `COALESCE(..., 1)` 默认 1 → 仍可见。只有新客户端显式写 `public_global = 0`(退出全球榜或群组-only)才隐藏。
+
+**群组榜不动**([`socialGroupLeaderboardDataForRange`](../server/leaderboard-worker/src/index.ts) `index.ts:1509`),仍只看 `m.share_usage > 0`。这是解耦的核心:`public_global = 0` + `share_usage = 1` ⇒ 上群组榜、不上全球榜。
+
+### Step 2 — 服务端:`/api/usage/daily` 接受 `usagePublic`
+
+[`syncDailyUsage`](../server/leaderboard-worker/src/index.ts) `index.ts:966`:
+- body 加 `usagePublic?: boolean`,解析为 `const usagePublic = body?.usagePublic !== false;`(**默认 true**,与 COALESCE 一致)。
+- 数据写入仍**无条件**(上传 ≠ 可见)。
+- 在现有 `env.DB.batch([...])` 里加 `usage_visibility` upsert(仿 `sync_limits` upsert `index.ts:1064`),绑定 `(userId, usagePublic ? 1 : 0, now)`。`leaderboardCache.clear()`(`:1070`)已覆盖。
+
+### Step 3 — 服务端:`leaveLeaderboard` 保留数据(修 A1)
+
+[`leaveLeaderboard`](../server/leaderboard-worker/src/index.ts) `index.ts:486`:
+- **移除** `DELETE FROM daily_usage` / `DELETE FROM hourly_usage`(`:491-492`)。
+- 改为 upsert `usage_visibility` 设 `public_global = 0`(保留数据,仅隐藏全球榜)。
+- 保留删 `usage_preferences`(全球榜展示用的额外信息,重新加入时会再上传)、`sync_limits`、`leaderboardCache.clear()`。
+- **优化:** 先查 `social_group_members` 计数,若用户在 **0 个群组**才连带删 usage(避免孤儿数据);在任意群则保留。`deleteMe`(`index.ts:447`)全级联不变。
+
+### Step 4 — 服务端:退群 + share_usage 开关 API(接 B1)
+
+接入 [`handleSocialRoute`](../server/leaderboard-worker/src/index.ts) `index.ts:500`,用现有 `url.pathname.match(...)` 风格:
+
+- **`DELETE /api/social/groups/:groupId/members/me`** —— 退群。`requireSocialGroupMembership` 校验 → 若 `owner_user_id === user.userId` 则 **409 拒绝**(群主需删群,避免无主群)→ 否则删 membership。不动 usage 表。
+- **`POST /api/social/groups/:groupId/membership`** `{ shareUsage: boolean }` —— 切换 per-group 共享。`UPDATE social_group_members SET share_usage = ?, updated_at = ?`,返回刷新后的 group payload(`requireSocialGroupPayload`)。
+- 两路由已被 `/api/social/` 的 WRITE 限流覆盖。
+
+### Step 5 — 客户端:解耦上传门控([leaderboard.ts](../src/electron/leaderboard.ts))
+
+主进程同步定时器需要便宜地感知"是否在任何群组"。方案:Settings 缓存计数。
+
+- `Settings` 加 `socialGroupCount: number`(默认 0),在 `getSocialGroups`(权威,每次刷新面板都跑)/ `createSocialGroup` / `acceptSocialGroupInvite` / `leaveSocialGroup` 维护(复用 `options.updateSettings`)。
+- 新增门控 `shouldSyncUsage = () => leaderboardEnabled || socialGroupCount > 0`,替换 [`scheduleNextSync`](../src/electron/leaderboard.ts) `:194` 和 [`syncUsage`](../src/electron/leaderboard.ts) `:316` 的 `!leaderboardEnabled` 判断。**在 0 群且未上全球榜的用户不投机上传**(隐私)。
+- 请求体加 `usagePublic: leaderboardEnabled === true`(全球榜开 ⇒ 可见;群组-only ⇒ 上传但隐藏)。
+- **Bug 修正:** 删 `syncUsage` 成功块里的 `leaderboardEnabled: true` 副作用([:340](../src/electron/leaderboard.ts))——否则会替群组-only 用户重新打开全球榜。`login`/`setEnabled` 已显式设此标志,安全。
+- 主进程 [`updateSettings`](../src/electron/main.ts) `main.ts:1568` 的 `startSync` 变更检测加 `socialGroupCount`,使 0→1 群立即重排定时器。
+
+### Step 6 — 类型 + 服务方法 + IPC + preload(两份)+ renderer
+
+- `shared/types.ts`:`Settings.socialGroupCount`。
+- `leaderboard.ts`:`leaveSocialGroup(groupId)`、`setSocialGroupShareUsage(groupId, shareUsage)`(仿 [`removeSocialFriend`](../src/electron/leaderboard.ts) `:595`),并导出。
+- `main.ts`:2 个 `ipcMain.handle`(`social:leave-group`、`social:set-group-share-usage`);`DEFAULT_SETTINGS` + `normalizeSettings` 加 `socialGroupCount`。
+- `preload.ts` + `preload.cjs`(**两份手维护**)+ `global.d.ts`:补签名。
+- `renderer/main.ts`:群组详情区([renderSocial](../src/renderer/main.ts) `:4491`)加退群按钮(群主隐藏)+ per-group 共享开关;`socialGroupDetail` 加点击委托(仿好友列表 [:1335](../src/renderer/main.ts));`socialRenderSignature`([:4358](../src/renderer/main.ts))纳入 `shareUsage` 以触发重渲染。退群用 `showAppConfirm` 二次确认。
+- `i18n.ts`:中英双补 `socialGroupLeave` / 退群确认文案 / `socialGroupShareOn` / `socialGroupShareOff` / `socialGroupOwnerCannotLeave` / 失败文案等。
+
+### Step 7 — 迁移
+
+- 新建 `server/leaderboard-worker/migrations/20260531_usage_visibility.sql`(`usage_visibility` 建表),并**同步 `schema.sql`**(verify 脚本整体加载 `schema.sql`,不同步会导致新的全球榜 `LEFT JOIN` 在测试下找不到表)。生产环境靠 lazy `ensureUsageVisibilityTable` 覆盖既有 DB。
+- 注:冗余 migration `20260529_social_friendships_indexes.sql` 留作单独清理,不属本次。
+
+### Step 8 — `verify-worker-api.mjs` 断言
+
+复用已有 fixture(`user-verify` 群主 + `user-friend` 成员,均已共享用量):
+- **(a)** 非 public 群成员:`POST /api/usage/daily {usagePublic:false}` 后,全球榜无该成员、群组榜有。
+- **(b)** 退出全球榜后群组数据仍在(`DELETE /api/leaderboard` 后群组榜仍含该用户,全球榜不含;保留现有 tree-events leave-safety 断言)。
+- **(c)** 退群移除成员 + 群主退群被 `assertRejects` 拒。
+- **(d)** `share_usage=false` 从群组榜隐藏,`true` 重新出现。
+- 顺序:(a)/(b)/(d) 在两人都是成员时跑,(c) 最后(移除 `user-friend` + 校验群主拒绝)。
+
+### 部署顺序(关键)
+
+1. `schema.sql` + migration 先行。
+2. 部署 Worker 并对生产 D1 apply migration,**早于**客户端发布(老 Worker + 新客户端会 404 新路由)。
+3. 向后兼容靠 `COALESCE(public_global, 1) = 1`(老客户端仍可见)+ `share_usage DEFAULT 1`(老 membership 仍共享)。
+
+---
+
+## 4. 分期路线图
+
+### P0(合并前 / 紧接)
+- 退群接口 + UI(本方案 Step 4 + Step 6)。
+- 群组榜与全球榜解耦(本方案 Step 1-3、5、7、8)。
+- 加群 / 建组时**明示数据可见范围**(文案级,低成本)。
+- 修 A2:加好友后展示头像 + 用户名确认。
+
+### P1(公会成熟度)
+- **个人资料卡 / 主页**:头像、小树等级、成就、好友 / 群组关系 —— 区别于"用量后台"的关键。
+- `share_usage` per-group 隐私开关的完整 UI(对应"可选隐私设置")。
+- 邀请管理:撤销(`revoked_at` 字段已在,缺接口)、列出当前有效邀请。
+- 角色管理:踢人、任命 officer、转让群主、删群。
+
+### P2(可玩性)
+- **加入后贡献指标**(群内增量,而非历史总量)—— 更像公会战,顺带强化隐私语义。
+- 好友 / 群组未读 badge(有 incoming pending 时社交 tab 红点)—— 解决"对方不刷新看不到请求",比 WebSocket 性价比高。
+- 群组成就 / 等级 / 赛季榜。
+
+### 技术债
+- 事务化邀请计数(修 A3)。
+- 限流 key 加 actorId(缓解公司 NAT 互挤)。
+- 清理冗余 migration。
+- 建组 / 好友数量上限。
+
+---
+
+## 5. 实现状态(2026-05-31)
+
+第 3 节 Step 1-8 的**解耦方案已实现**(commit 待提交)。改动文件:
+
+- **Worker** [`index.ts`](../server/leaderboard-worker/src/index.ts):`ensureUsageVisibilityTable`、全球榜 3 个 range 分支加 `LEFT JOIN usage_visibility v ... COALESCE(v.public_global,1)=1`、`syncDailyUsage` 接受 `usagePublic` 并 upsert、`leaveLeaderboard` 改为设 `public_global=0`(0 群才删数据)、新增 `leaveSocialGroup`(群主 409)+ `setSocialGroupShareUsage` 并接入 `handleSocialRoute`。
+- **Schema/迁移**:[`schema.sql`](../server/leaderboard-worker/schema.sql) 加 `usage_visibility`、新建 [`migrations/20260531_usage_visibility.sql`](../server/leaderboard-worker/migrations/20260531_usage_visibility.sql)、`package.json` 加 `db:migrate:usage-visibility[:local]`。
+- **客户端** [`leaderboard.ts`](../src/electron/leaderboard.ts):`shouldSyncUsage`(leaderboardEnabled || socialGroupCount>0)、`syncUsage` 发 `usagePublic` 并去掉 `leaderboardEnabled:true` 副作用、`socialGroupCount` 维护、`leaveSocialGroup`/`setSocialGroupShareUsage` 方法。
+- **类型/IPC/preload**:`shared/types.ts` 加 `Settings.socialGroupCount`;`main.ts` 加 2 个 IPC + DEFAULT_SETTINGS/normalizeSettings/startSync 变更检测;`preload.ts`+`preload.cjs`+`global.d.ts` 补签名。
+- **Renderer** [`main.ts`](../src/renderer/main.ts):群组详情区退群按钮(群主隐藏)+ per-group 共享开关 + 点击委托 + 处理函数 + `socialRenderSignature` 纳入 shareUsage;`styles.css` 加 `.social-group-detail-actions`;`i18n.ts` 中英双补。
+- **verify** [`verify-worker-api.mjs`](../server/leaderboard-worker/scripts/verify-worker-api.mjs):新增 (a) 非 public 成员全球榜隐藏/群组榜可见、(b) 退全球榜保留群组数据、(c) 退群移除成员+群主退群被拒、(d) share_usage 开关。
+
+**验证状态:**
+- ✅ `npm run typecheck` 通过。
+- ✅ `npm run build` 通过。
+- ⚠️ `verify-worker-api.mjs` **未在本环境运行**:沙箱禁止访问 npm registry,无法安装 `wrangler` / `@cloudflare/workers-types`,`wrangler dev` 起不来。断言代码已写好,需在有网络的环境跑一次确认。worker `index.ts` 单独 tsc 仅报缺 D1 类型定义的既有错误(非本次改动引入)。
+
+**部署提醒:** 先 apply migration + 部署 Worker,再发客户端(老 Worker 会 404 新路由)。

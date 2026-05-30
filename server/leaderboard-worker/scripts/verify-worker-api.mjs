@@ -356,6 +356,59 @@ VALUES ('${friendTokenHash}', 'user-friend', '${now}', '${expiresAt}');
   assert(groupLeaderboard.entries?.[0]?.tokens === 3333, "group leaderboard should rank the highest member first");
   assert(groupLeaderboard.entries?.[1]?.tokens === 777, "group leaderboard should include the invited member contribution");
 
+  // (d) share_usage=false hides a member from the group board; restoring it shows them again.
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/membership`, {
+    method: "POST",
+    token: friendToken,
+    body: { shareUsage: false },
+  });
+  const groupBoardNoShare = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    !groupBoardNoShare.entries?.some((entry) => entry.userId === "user-friend"),
+    "share_usage=false should hide the member from the group board",
+  );
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/membership`, {
+    method: "POST",
+    token: friendToken,
+    body: { shareUsage: true },
+  });
+  const groupBoardShare = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    groupBoardShare.entries?.some((entry) => entry.userId === "user-friend"),
+    "restoring share_usage should show the member on the group board again",
+  );
+
+  // (a) a non-public member is hidden from the GLOBAL board but stays on the GROUP board.
+  await requestJson("/api/usage/daily", {
+    method: "POST",
+    token: friendToken,
+    body: {
+      appVersion: "0.5.5-test",
+      forceSync: true,
+      usagePublic: false,
+      usageStartDate: utcToday,
+      days: [{ date: eastOfUtcToday, tokens: 777 }],
+      hours: [{ hourStartUtc: currentHour, tokens: 777 }],
+    },
+  });
+  const globalAfterPrivate = await requestJson("/api/leaderboard?range=24h", { token: friendToken });
+  assert(
+    !globalAfterPrivate.entries?.some((entry) => entry.userId === "user-friend"),
+    "non-public member should not appear on the global board",
+  );
+  assert(
+    globalAfterPrivate.entries?.some((entry) => entry.userId === "user-verify"),
+    "public member should still appear on the global board",
+  );
+  const groupAfterPrivate = await requestJson(
+    `/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`,
+    { token: friendToken },
+  );
+  assert(
+    groupAfterPrivate.entries?.some((entry) => entry.userId === "user-friend"),
+    "non-public member should still appear on the group board",
+  );
+
   await assertRejects(
     () =>
       requestJson("/api/usage/daily", {
@@ -375,7 +428,40 @@ VALUES ('${friendTokenHash}', 'user-friend', '${now}', '${expiresAt}');
   assert(cloudTree.summary?.entryCount === 2, "leaving leaderboard must not delete cloud tree events");
   assert(cloudTree.summary?.achievementCount === 2, "leaving leaderboard must not delete cloud tree achievements");
 
-  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, social friends, social groups/invites/group leaderboard, legacy fallback, and leaderboard leave safety passed.");
+  // (b) leaving the global board keeps group data: user-verify (in a group) drops off the
+  // global board but stays on the group board with the same contribution.
+  const globalAfterLeave = await requestJson("/api/leaderboard?range=24h");
+  assert(
+    !globalAfterLeave.entries?.some((entry) => entry.userId === "user-verify"),
+    "leaving the global board should hide the user from it",
+  );
+  const groupAfterLeave = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    groupAfterLeave.entries?.some((entry) => entry.userId === "user-verify"),
+    "leaving the global board must keep the user's group contribution",
+  );
+
+  // (c) leaving a group removes the member; the owner cannot leave their own group.
+  await assertRejects(
+    () => requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/members/me`, { method: "DELETE" }),
+    "group owner should not be able to leave their own group",
+  );
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/members/me`, {
+    method: "DELETE",
+    token: friendToken,
+  });
+  const friendGroupsAfterLeave = await requestJson("/api/social/groups", { token: friendToken });
+  assert(
+    !friendGroupsAfterLeave.groups?.some((group) => group.groupId === groupId),
+    "leaving a group should remove it from the member's group list",
+  );
+  const groupAfterMemberLeave = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    !groupAfterMemberLeave.entries?.some((entry) => entry.userId === "user-friend"),
+    "leaving a group should remove the member from the group board",
+  );
+
+  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, social friends, social groups/invites/group leaderboard, group/global decoupling (private members, leave-keeps-group-data, leave-group, share toggle), legacy fallback, and leaderboard leave safety passed.");
 } finally {
   if (devProcess) await terminate(devProcess);
   rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });

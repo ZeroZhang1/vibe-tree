@@ -3378,6 +3378,13 @@ label,
   justify-content: space-between;
 }
 
+.social-group-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .social-invite-output {
   display: none;
   min-height: 38px;

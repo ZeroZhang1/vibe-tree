@@ -1368,6 +1368,18 @@ function bindEvents() {
     if (!socialGroupLeaderboard) void refreshSocialGroupLeaderboard();
   });
 
+  socialGroupDetail?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-group-action]");
+    if (!button) return;
+    const groupId = button.dataset.groupId;
+    if (!groupId) return;
+    if (button.dataset.socialGroupAction === "leave") {
+      void leaveSocialGroupRelationship(groupId);
+    } else if (button.dataset.socialGroupAction === "toggle-share") {
+      void toggleSocialGroupShareUsage(groupId);
+    }
+  });
+
   socialGroupRangeTabs?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-group-range]");
     if (!button) return;
@@ -1779,6 +1791,60 @@ async function acceptSocialInviteFromInput() {
   }
   if (joined) setSocialGroupActionsOpen(false);
   if (socialSelectedGroupId) await refreshSocialGroupLeaderboard();
+}
+
+async function leaveSocialGroupRelationship(groupId: string) {
+  const group = socialGroups.find((item) => item.groupId === groupId);
+  const confirmed = await showAppConfirm({
+    title: t("socialGroupLeaveConfirmTitle"),
+    body: group ? `${group.name}\n\n${t("socialGroupLeaveConfirmBody")}` : t("socialGroupLeaveConfirmBody"),
+    confirmText: t("socialGroupLeaveConfirmAction"),
+    tone: "danger",
+  });
+  if (!confirmed.confirmed) return;
+  socialLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    await window.bonsai.leaveSocialGroup(groupId);
+    socialGroups = socialGroups.filter((item) => item.groupId !== groupId);
+    socialGroupLeaderboardCache.delete(socialGroupLeaderboardCacheKey(groupId, socialGroupRange));
+    if (socialSelectedGroupId === groupId) {
+      socialSelectedGroupId = socialGroups[0]?.groupId ?? null;
+      socialGroupLeaderboard = socialSelectedGroupId
+        ? cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange)
+        : null;
+      clearSocialInvite();
+    }
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialGroupLeaveFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+  if (socialSelectedGroupId && !socialGroupLeaderboard) await refreshSocialGroupLeaderboard();
+}
+
+async function toggleSocialGroupShareUsage(groupId: string) {
+  const group = socialGroups.find((item) => item.groupId === groupId);
+  if (!group) return;
+  socialLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    const updated = await window.bonsai.setSocialGroupShareUsage(groupId, group.shareUsage === false);
+    upsertSocialGroup(updated);
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialGroupShareToggleFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+  await refreshSocialGroupLeaderboard({ force: true });
 }
 
 async function createSocialInviteForSelectedGroup() {
@@ -4488,6 +4554,8 @@ function renderSocial() {
     return;
   }
 
+  const isOwner = group.ownerUserId === leaderboardStatus.profile?.id;
+  const sharing = group.shareUsage !== false;
   socialGroupDetail.innerHTML = `
     <div class="social-group-title">
       <span class="social-group-icon large" aria-hidden="true">${escapeHtml(group.iconEmoji || "VT")}</span>
@@ -4497,6 +4565,16 @@ function renderSocial() {
       </div>
     </div>
     ${group.description ? `<p>${escapeHtml(group.description)}</p>` : ""}
+    <div class="social-group-detail-actions">
+      <button class="secondary-button" type="button" data-social-group-action="toggle-share" data-group-id="${escapeHtml(group.groupId)}" aria-pressed="${sharing ? "true" : "false"}">
+        ${sharing ? t("socialGroupShareOn") : t("socialGroupShareOff")}
+      </button>
+      ${
+        isOwner
+          ? ""
+          : `<button class="secondary-button danger-button" type="button" data-social-group-action="leave" data-group-id="${escapeHtml(group.groupId)}">${t("socialGroupLeave")}</button>`
+      }
+    </div>
   `;
 
   socialInviteOutput.innerHTML = socialInvite
@@ -5245,6 +5323,7 @@ function socialRenderSignature() {
       group.role ?? "",
       group.updatedAt ?? "",
       group.members?.length ?? 0,
+      group.shareUsage === false ? 0 : 1,
     ]),
     board: socialGroupLeaderboard
       ? {
