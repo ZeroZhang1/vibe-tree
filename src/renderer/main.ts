@@ -299,22 +299,24 @@ if (viewMode === "pet") {
 root.dataset.platform = platformName;
 const treeImage = document.querySelector<HTMLImageElement>("#treeImage");
 const previewTreeImage = document.querySelector<HTMLImageElement>("#previewTreeImage");
-const menubarTreeImage = document.querySelector<HTMLImageElement>("#menubarTreeImage");
-const menubarLevelTitle = document.querySelector<HTMLElement>("#menubarLevelTitle");
+const menubarLevelChip = document.querySelector<HTMLElement>("#menubarLevelChip");
 const menubarWeatherText = document.querySelector<HTMLElement>("#menubarWeatherText");
-const menubarRateText = document.querySelector<HTMLElement>("#menubarRateText");
-const menubarRateHint = document.querySelector<HTMLElement>("#menubarRateHint");
+const menubarLiveDot = document.querySelector<HTMLElement>("#menubarLiveDot");
 const menubarTodayText = document.querySelector<HTMLElement>("#menubarTodayText");
-const menubarTodayHint = document.querySelector<HTMLElement>("#menubarTodayHint");
+const menubarTodayCtx = document.querySelector<HTMLElement>("#menubarTodayCtx");
 const menubarNextLevelText = document.querySelector<HTMLElement>("#menubarNextLevelText");
 const menubarProgressPercent = document.querySelector<HTMLElement>("#menubarProgressPercent");
 const menubarProgressText = document.querySelector<HTMLElement>("#menubarProgressText");
 const menubarProgressBar = document.querySelector<HTMLElement>("#menubarProgressBar");
+const menubarRhythmBars = document.querySelector<HTMLElement>("#menubarRhythmBars");
+const menubarRhythmMeta = document.querySelector<HTMLElement>("#menubarRhythmMeta");
 const menubarSourceSummary = document.querySelector<HTMLElement>("#menubarSourceSummary");
 const menubarSourceList = document.querySelector<HTMLElement>("#menubarSourceList");
-const menubarCloudStatus = document.querySelector<HTMLElement>("#menubarCloudStatus");
-const menubarLeaderboardStatus = document.querySelector<HTMLElement>("#menubarLeaderboardStatus");
-const menubarSyncButton = document.querySelector<HTMLButtonElement>("#menubarSyncButton");
+const menubarWave = document.querySelector<HTMLElement>("#menubarWave");
+const menubarSpeedMeta = document.querySelector<HTMLElement>("#menubarSpeedMeta");
+const menubarDots = document.querySelector<HTMLElement>("#menubarDots");
+const menubarFootDot = document.querySelector<HTMLElement>("#menubarFootDot");
+const menubarFootText = document.querySelector<HTMLElement>("#menubarFootText");
 const weatherBack = document.querySelector<HTMLElement>("#weatherBack");
 const weatherFront = document.querySelector<HTMLElement>("#weatherFront");
 const previewWeatherBack = document.querySelector<HTMLElement>("#previewWeatherBack");
@@ -561,16 +563,7 @@ function isCacheableLeaderboardEntry(entry: unknown): entry is LeaderboardEntry 
 }
 
 function applyUiTheme(theme: UiTheme) {
-  if (viewMode === "menubar") {
-    root.addEventListener("click", (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-menubar-action]");
-      if (!button) return;
-      void handleMenubarAction(button.dataset.menubarAction);
-    });
-    window.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") void window.bonsai.hideMenuBarPopover();
-    });
-  } else if (viewMode === "pet") {
+  if (viewMode === "pet") {
     delete root.dataset.uiTheme;
     delete document.documentElement.dataset.uiTheme;
     cacheUiTheme(theme);
@@ -579,6 +572,21 @@ function applyUiTheme(theme: UiTheme) {
   root.dataset.uiTheme = theme;
   document.documentElement.dataset.uiTheme = theme;
   cacheUiTheme(theme);
+}
+
+// Menubar popover interactions — bound exactly once (see boot()), never inside render/applyUiTheme.
+function bindMenubarEvents() {
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") void window.bonsai.hideMenuBarPopover();
+  });
+  if (menubarDots) {
+    menubarDots.addEventListener("click", (event) => {
+      const dot = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-viz-index]");
+      if (!dot) return;
+      const index = Number(dot.dataset.vizIndex);
+      if (Number.isInteger(index)) setMenubarViz(index, true);
+    });
+  }
 }
 
 function rendererPlatform() {
@@ -778,6 +786,11 @@ async function boot() {
       renderLeaderboard();
     });
   }
+  if (viewMode === "menubar") {
+    bindMenubarEvents();
+    buildMenubarDots();
+    startMenubarCarousel();
+  }
   applyI18n();
   render();
   if (viewMode === "manager") {
@@ -823,10 +836,6 @@ function renderInitialTreePreview() {
   if (previewTreeImage) {
     previewTreeImage.src = assetUrl(stage.image);
     previewTreeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
-  }
-  if (menubarTreeImage) {
-    menubarTreeImage.src = assetUrl(stage.image);
-    menubarTreeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
   }
   if (treeStartTreeImage) {
     treeStartTreeImage.src = assetUrl(stage.image);
@@ -2513,10 +2522,6 @@ function render() {
     previewTreeImage.src = assetUrl(stats.stage.image);
     previewTreeImage.alt = `${tree.displayName} ${stageLabel(stats.stage.id, stats.stage.label)}`;
   }
-  if (menubarTreeImage) {
-    menubarTreeImage.src = assetUrl(stats.stage.image);
-    menubarTreeImage.alt = `${tree.displayName} ${stageLabel(stats.stage.id, stats.stage.label)}`;
-  }
 
   renderLevelBadge(
     "#petLevelBadge",
@@ -2619,96 +2624,193 @@ function render() {
   }
 }
 
+const MENUBAR_VIZ_COUNT = 3;
+const MENUBAR_CAROUSEL_INTERVAL_MS = 4500;
+let menubarVizIndex = 0;
+let menubarCarouselTimer: ReturnType<typeof setInterval> | null = null;
+
+function buildMenubarDots() {
+  if (!menubarDots) return;
+  menubarDots.innerHTML = Array.from({ length: MENUBAR_VIZ_COUNT }, (_unused, index) => {
+    const active = index === menubarVizIndex ? " active" : "";
+    return `<button type="button" class="menubar-dot${active}" role="tab" data-viz-index="${index}" aria-label="${index + 1}"></button>`;
+  }).join("");
+}
+
+function setMenubarViz(index: number, fromUser: boolean) {
+  menubarVizIndex = ((index % MENUBAR_VIZ_COUNT) + MENUBAR_VIZ_COUNT) % MENUBAR_VIZ_COUNT;
+  document.querySelectorAll<HTMLElement>(".menubar-viz").forEach((panel, panelIndex) => {
+    panel.classList.toggle("active", panelIndex === menubarVizIndex);
+  });
+  menubarDots?.querySelectorAll<HTMLElement>(".menubar-dot").forEach((dot, dotIndex) => {
+    dot.classList.toggle("active", dotIndex === menubarVizIndex);
+  });
+  if (fromUser) startMenubarCarousel();
+}
+
+function startMenubarCarousel() {
+  if (menubarCarouselTimer) clearInterval(menubarCarouselTimer);
+  menubarCarouselTimer = setInterval(() => setMenubarViz(menubarVizIndex + 1, false), MENUBAR_CAROUSEL_INTERVAL_MS);
+}
+
+// Token totals for a given day key, used for the "vs. yesterday" hero context.
+function menubarDayTotal(dayKey: string) {
+  const enabled = sourceVisibility().enabled;
+  let total = 0;
+  for (const entry of ledger?.entries ?? []) {
+    if (dateKey(new Date(entry.createdAt)) === dayKey) total += xpForEntry(entry, enabled);
+  }
+  return total;
+}
+
+// 24 token buckets (one per hour) for today.
+function menubarTodayHourBuckets() {
+  const enabled = sourceVisibility().enabled;
+  const buckets = Array.from({ length: 24 }, () => 0);
+  const todayKey = dateKey(new Date());
+  for (const entry of ledger?.entries ?? []) {
+    const when = new Date(entry.createdAt);
+    if (dateKey(when) !== todayKey) continue;
+    buckets[when.getHours()] += xpForEntry(entry, enabled);
+  }
+  return buckets;
+}
+
 function renderMenubarPopover(stats: Stats, visibility: SourceVisibility) {
-  text("#menubarLevelTitle", `Lv.${stats.level} ${stageLabel(stats.stage.id, stats.stage.label)}`);
   const isGrowing = stats.weather.tokensPerMinute > 0 || stats.activeSessions > 0;
+
+  // --- fixed header: identity + live dot ---
+  text("#menubarLevelChip", `Lv.${stats.level} ${stageLabel(stats.stage.id, stats.stage.label)}`);
   text(
     "#menubarWeatherText",
     `${weatherLabel(stats.weather.id, stats.weather.label)} · ${isGrowing ? t("menubarGrowing") : t("waitingNewToken")}`,
   );
-  text("#menubarRateText", `${formatCompact(stats.weather.tokensPerMinute)}/min`);
-  text(
-    "#menubarRateHint",
-    stats.activeSessions > 0
-      ? `${t("metricSessions")} ${stats.activeSessions} ${t("sessionsUnit")}`
-      : t("waitingNewToken"),
-  );
+  if (menubarLiveDot) menubarLiveDot.dataset.on = String(isGrowing);
+
+  // --- hero: today's growth as the star ---
   text("#menubarTodayText", `+${formatCompact(stats.todayXp)}`);
+  if (menubarTodayCtx) menubarTodayCtx.textContent = menubarTodayContext(stats);
+
+  // --- progress ---
   text("#menubarNextLevelText", `${t("nextLevel")}${stats.level + 1}`);
   text("#menubarProgressPercent", `${Math.round(stats.levelProgress * 100)}%`);
   text("#menubarProgressText", `${formatCompact(stats.levelXp)} / ${formatCompact(stats.nextLevelXp)} token`);
   if (menubarProgressBar) menubarProgressBar.style.width = `${stats.levelProgress * 100}%`;
 
-  const todayKey = dateKey(new Date());
-  const todayEntries = (ledger?.entries ?? []).filter((entry) => dateKey(new Date(entry.createdAt)) === todayKey);
-  const sourceRows = getMonitorSourceRows(
-    getSourceBreakdown(todayEntries, visibility.enabled, sourceLabel),
-    visibility,
-  );
-  const activeRows = sourceRows.filter((row) => row.xp > 0).sort((left, right) => right.xp - left.xp);
-  const totalSourceXp = activeRows.reduce((total, row) => total + row.xp, 0);
-  if (menubarTodayHint) {
-    menubarTodayHint.textContent = activeRows.length
-      ? `${activeRows.length} ${t("sourceTodayActive")}`
-      : t("waitingTodayTokens");
-  }
-  if (menubarSourceSummary) menubarSourceSummary.textContent = `${formatCompact(totalSourceXp)} token`;
-  if (menubarSourceList) {
-    menubarSourceList.innerHTML = activeRows.length
-      ? activeRows
-          .slice(0, 3)
-          .map((row) => {
-            const percent = totalSourceXp > 0 ? clamp((row.xp / totalSourceXp) * 100, 0, 100) : 0;
-            return `
-              <article class="menubar-source-row">
-                <div>
-                  <strong>${escapeHtml(row.label)}</strong>
-                  <span>${escapeHtml(row.status)}</span>
-                </div>
-                <b>${formatCompact(row.xp)}</b>
-                <div class="source-meter" aria-hidden="true"><span style="width:${percent}%"></span></div>
-              </article>
-            `;
-          })
-          .join("")
-      : `<div class="menubar-empty">${escapeHtml(t("waitingTodayTokens"))}</div>`;
-  }
+  renderMenubarRhythm();
+  renderMenubarSources(visibility);
+  renderMenubarSpeed(stats);
+  renderMenubarFootline();
+}
 
-  if (menubarCloudStatus) {
-    menubarCloudStatus.innerHTML = renderMenubarStatusLine(
-      cloudSyncStatus.enabled ? t("cloudSyncEnabled") : t("cloudSyncDisabled"),
-      cloudSyncStatusCopy(),
-      cloudSyncStatus.syncing ? "busy" : cloudSyncStatus.enabled ? "good" : "idle",
-    );
+// Hero subline: "vs. yesterday +X%" when comparable, otherwise a gentle first-day copy.
+function menubarTodayContext(stats: Stats): string {
+  if (stats.activeSessions > 0) {
+    return `${stats.activeSessions} ${t("menubarSessionsWriting")}`;
   }
-  if (menubarLeaderboardStatus) {
-    const leaderboardCopy = leaderboardStatusCopy();
-    menubarLeaderboardStatus.innerHTML = renderMenubarStatusLine(
-      leaderboardCopy.title,
-      leaderboardCopy.detail,
-      leaderboardStatus.syncing ? "busy" : leaderboardStatus.joined ? "good" : "idle",
-    );
+  const today = stats.todayXp;
+  const yesterdayKey = dateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  const yesterday = menubarDayTotal(yesterdayKey);
+  if (yesterday <= 0) {
+    return today > 0 ? "" : t("menubarTodayFirstDay");
   }
-  if (menubarSyncButton) {
-    menubarSyncButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
-    menubarSyncButton.querySelector("span")?.replaceChildren(
-      cloudSyncStatus.syncing
-        ? t("cloudSyncSyncing")
-        : cloudSyncStatus.enabled
-          ? t("cloudSyncSyncTree")
-          : t("cloudSyncConnectAndSync"),
-    );
+  const deltaPct = Math.round(((today - yesterday) / yesterday) * 100);
+  if (deltaPct >= 0) return `${t("menubarTodayVsYesterday")} +${deltaPct}%`;
+  return `${t("menubarTodayBelowYesterday")} ${deltaPct}%`;
+}
+
+function renderMenubarRhythm() {
+  if (!menubarRhythmBars) return;
+  const buckets = menubarTodayHourBuckets();
+  const max = Math.max(0, ...buckets);
+  const nowHour = new Date().getHours();
+  if (max <= 0) {
+    menubarRhythmBars.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(t("menubarRhythmQuiet"))}</div>`;
+    if (menubarRhythmMeta) menubarRhythmMeta.textContent = "";
+    return;
+  }
+  let peakHour = 0;
+  buckets.forEach((value, hour) => {
+    if (value > buckets[peakHour]) peakHour = hour;
+  });
+  menubarRhythmBars.innerHTML = buckets
+    .map((value, hour) => {
+      const heightPct = value <= 0 ? 0 : Math.max(6, Math.round((value / max) * 100));
+      const lit = value >= max * 0.85 ? " lit" : "";
+      const now = hour === nowHour ? " now" : "";
+      return `<span class="menubar-rhythm-bar${lit}${now}" style="height:${heightPct}%" title="${hour}:00"></span>`;
+    })
+    .join("");
+  if (menubarRhythmMeta) {
+    menubarRhythmMeta.textContent = `${t("menubarRhythmPeak")} ${String(peakHour).padStart(2, "0")}:00`;
   }
 }
 
-function renderMenubarStatusLine(title: string, detail: string, tone: "busy" | "good" | "idle") {
-  return `
-    <span class="menubar-status-dot" data-tone="${tone}" aria-hidden="true"></span>
-    <div>
-      <strong>${escapeHtml(title)}</strong>
-      <span>${escapeHtml(detail)}</span>
-    </div>
+function renderMenubarSources(visibility: SourceVisibility) {
+  const todayKey = dateKey(new Date());
+  const todayEntries = (ledger?.entries ?? []).filter((entry) => dateKey(new Date(entry.createdAt)) === todayKey);
+  const sourceRows = getMonitorSourceRows(getSourceBreakdown(todayEntries, visibility.enabled, sourceLabel), visibility);
+  const activeRows = sourceRows.filter((row) => row.xp > 0).sort((left, right) => right.xp - left.xp);
+  const totalSourceXp = activeRows.reduce((total, row) => total + row.xp, 0);
+  if (menubarSourceSummary) {
+    menubarSourceSummary.textContent = activeRows.length
+      ? `${activeRows.length} · ${formatCompact(totalSourceXp)}`
+      : "";
+  }
+  if (!menubarSourceList) return;
+  menubarSourceList.innerHTML = activeRows.length
+    ? activeRows
+        .slice(0, 3)
+        .map((row) => {
+          const percent = totalSourceXp > 0 ? clamp((row.xp / totalSourceXp) * 100, 0, 100) : 0;
+          return `
+            <article class="menubar-source-row">
+              <span class="menubar-source-name">${escapeHtml(row.label)}</span>
+              <span class="source-meter" aria-hidden="true"><span style="width:${percent}%"></span></span>
+              <b class="menubar-source-val">${formatCompact(row.xp)}</b>
+            </article>
+          `;
+        })
+        .join("")
+    : `<div class="menubar-viz-empty">${escapeHtml(t("waitingTodayTokens"))}</div>`;
+}
+
+function renderMenubarSpeed(stats: Stats) {
+  const rate = stats.weather.tokensPerMinute;
+  if (menubarSpeedMeta) {
+    menubarSpeedMeta.textContent = `${formatCompact(rate)}/min · ${rate > 0 ? t("menubarSpeedActive") : t("menubarSpeedCalm")}`;
+  }
+  if (!menubarWave) return;
+  // A simple deterministic waveform whose amplitude follows the current rate.
+  const points = 40;
+  const baseline = 30;
+  const amplitude = rate > 0 ? clamp(4 + rate / 8, 4, 26) : 2;
+  const path: string[] = [];
+  for (let i = 0; i <= points; i += 1) {
+    const x = (i / points) * 320;
+    const y = baseline - Math.sin(i / 3) * amplitude * (rate > 0 ? 1 : 0.35);
+    path.push(`${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`);
+  }
+  menubarWave.innerHTML = `
+    <svg viewBox="0 0 320 60" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="0" y1="${baseline}" x2="320" y2="${baseline}" class="menubar-wave-base" />
+      <path d="${path.join(" ")}" class="menubar-wave-line${rate > 0 ? " active" : ""}" fill="none" />
+    </svg>
   `;
+}
+
+function renderMenubarFootline() {
+  if (!menubarFootDot && !menubarFootText) return;
+  const tone = cloudSyncStatus.syncing ? "busy" : cloudSyncStatus.enabled ? "good" : "idle";
+  if (menubarFootDot) menubarFootDot.dataset.tone = tone;
+  if (menubarFootText) {
+    const statusLabel = cloudSyncStatus.syncing
+      ? t("menubarFootSyncing")
+      : cloudSyncStatus.enabled
+        ? t("menubarFootSynced")
+        : t("menubarFootLocal");
+    menubarFootText.textContent = `${statusLabel} · ${t("menubarFootHint")}`;
+  }
 }
 
 function renderDashboardTabs() {
@@ -3769,33 +3871,6 @@ function clearTreeStartPending(pendingVersion?: number) {
 
 function wait(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function handleMenubarAction(action: string | undefined) {
-  if (!action) return;
-  if (action === "home" || action === "achievements" || action === "leaderboard") {
-    await window.bonsai.openManagerTab(action);
-    await window.bonsai.hideMenuBarPopover();
-    return;
-  }
-  if (action === "settings") {
-    await window.bonsai.openManagerSettings();
-    await window.bonsai.hideMenuBarPopover();
-    return;
-  }
-  if (action === "sync") {
-    if (menubarSyncButton) menubarSyncButton.disabled = true;
-    try {
-      cloudSyncStatus = cloudSyncStatus.enabled
-        ? await window.bonsai.syncCloudTree()
-        : await window.bonsai.enableCloudSync();
-      ledger = await window.bonsai.getLedger();
-      achievementState = await window.bonsai.getAchievements();
-      render();
-    } finally {
-      if (menubarSyncButton) menubarSyncButton.disabled = false;
-    }
-  }
 }
 
 function renderCloudSyncSettings() {

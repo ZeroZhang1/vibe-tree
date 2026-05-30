@@ -24,32 +24,57 @@ export function appShellHtml(viewMode: ViewMode) {
     return `
     <main class="menubar-root" data-weather="clear" data-active="false">
       <section class="menubar-panel" aria-label="Vibe Tree">
-        <header class="menubar-hero">
-          <div class="menubar-tree-frame">
-            <img class="menubar-tree-image" id="menubarTreeImage" alt="Vibe Tree" draggable="false" />
-          </div>
-          <div class="menubar-title-group">
+        <header class="menubar-topbar">
+          <div class="menubar-brand">
             <p class="eyebrow">Vibe Tree</p>
-            <h1 id="menubarLevelTitle">Lv.1</h1>
-            <span id="menubarWeatherText">0 token/min</span>
+            <span class="menubar-lv-chip" id="menubarLevelChip">Lv.1</span>
+          </div>
+          <div class="menubar-weather">
+            <span class="menubar-live-dot" id="menubarLiveDot" aria-hidden="true"></span>
+            <span id="menubarWeatherText">—</span>
           </div>
         </header>
 
-        <div class="menubar-focus-grid">
-          <article>
-            <span data-i18n="menubarCurrentRate">当前速度</span>
-            <strong id="menubarRateText">0/min</strong>
-            <small id="menubarRateHint" data-i18n="waitingNewToken">等待新 token</small>
+        <div class="menubar-hero-growth">
+          <div class="menubar-hero-main">
+            <span class="menubar-hero-label" data-i18n="metricToday">今日成长</span>
+            <strong class="menubar-hero-value" id="menubarTodayText">+0</strong>
+          </div>
+          <div class="menubar-hero-ctx" id="menubarTodayCtx"></div>
+        </div>
+
+        <div class="menubar-slot">
+          <article class="menubar-viz active" data-viz="rhythm">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarRhythmTitle">今日 24 小时节奏</span>
+              <span class="menubar-viz-meta" id="menubarRhythmMeta"></span>
+            </div>
+            <div class="menubar-rhythm-bars" id="menubarRhythmBars" aria-hidden="true"></div>
+            <div class="menubar-rhythm-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
           </article>
-          <article>
-            <span data-i18n="metricToday">今日成长</span>
-            <strong id="menubarTodayText">+0</strong>
-            <small id="menubarTodayHint" data-i18n="waitingTodayTokens">今日等待 token</small>
+
+          <article class="menubar-viz" data-viz="sources">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarTodaySources">今日来源</span>
+              <span class="menubar-viz-meta" id="menubarSourceSummary"></span>
+            </div>
+            <div class="menubar-source-list" id="menubarSourceList"></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="speed">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarSpeedTitle">此刻速度</span>
+              <span class="menubar-viz-meta" id="menubarSpeedMeta"></span>
+            </div>
+            <div class="menubar-wave" id="menubarWave" aria-hidden="true"></div>
+            <small class="menubar-viz-hint" data-i18n="menubarSpeedHint">在写代码时这条波形会实时起伏</small>
           </article>
         </div>
 
+        <div class="menubar-dots" id="menubarDots" role="tablist" aria-label="可视化切换"></div>
+
         <section class="menubar-progress">
-          <div>
+          <div class="menubar-progress-row">
             <span id="menubarNextLevelText">距离 Lv.2</span>
             <strong id="menubarProgressPercent">0%</strong>
           </div>
@@ -57,37 +82,10 @@ export function appShellHtml(viewMode: ViewMode) {
           <p id="menubarProgressText">0 / 0 token</p>
         </section>
 
-        <section class="menubar-section">
-          <div class="menubar-section-title">
-            <span data-i18n="menubarTodaySources">今日来源</span>
-            <strong id="menubarSourceSummary">0 token</strong>
-          </div>
-          <div class="menubar-source-list" id="menubarSourceList"></div>
-        </section>
-
-        <section class="menubar-section menubar-status-section">
-          <div class="menubar-status-line" id="menubarCloudStatus"></div>
-          <div class="menubar-status-line" id="menubarLeaderboardStatus"></div>
-        </section>
-
-        <nav class="menubar-actions" aria-label="Vibe Tree actions">
-          <button type="button" data-menubar-action="home">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12l8 -7l8 7v8a1 1 0 0 1 -1 1h-5v-6h-4v6h-5a1 1 0 0 1 -1 -1z" /></svg>
-            <span data-i18n="home">主页</span>
-          </button>
-          <button type="button" data-menubar-action="sync" id="menubarSyncButton">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
-            <span data-i18n="cloudSyncSyncTree">同步小树</span>
-          </button>
-          <button type="button" data-menubar-action="leaderboard">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 21h8" /><path d="M12 17v4" /><path d="M7 4h10v4a5 5 0 0 1 -10 0z" /><path d="M5 5h-2v2a3 3 0 0 0 3 3" /><path d="M19 5h2v2a3 3 0 0 1 -3 3" /></svg>
-            <span data-i18n="leaderboard">排行榜</span>
-          </button>
-          <button type="button" data-menubar-action="settings">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10.3 4.3c.4 -1.7 2.9 -1.7 3.4 0a1.7 1.7 0 0 0 2.6 1.1c1.5 -.9 3.3 .8 2.4 2.4a1.7 1.7 0 0 0 1 2.5c1.8 .5 1.8 3 0 3.4a1.7 1.7 0 0 0 -1 2.6c.9 1.5 -.9 3.3 -2.4 2.4a1.7 1.7 0 0 0 -2.6 1c-.5 1.8 -3 1.8 -3.4 0a1.7 1.7 0 0 0 -2.6 -1c-1.5 .9 -3.3 -.9 -2.4 -2.4a1.7 1.7 0 0 0 -1 -2.6c-1.8 -.4 -1.8 -2.9 0 -3.4a1.7 1.7 0 0 0 1 -2.5c-.9 -1.6 .9 -3.3 2.4 -2.4a1.7 1.7 0 0 0 2.6 -1.1z" /><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" /></svg>
-            <span data-i18n="settings">设置</span>
-          </button>
-        </nav>
+        <div class="menubar-footline">
+          <span class="menubar-foot-dot" id="menubarFootDot" aria-hidden="true"></span>
+          <span id="menubarFootText" data-i18n="menubarFootHint">双击桌面小树可打开主面板</span>
+        </div>
       </section>
     </main>
   `;
