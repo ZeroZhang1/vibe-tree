@@ -58,6 +58,12 @@ const api = {
     ipcRenderer.invoke("achievements:reconcile", input) as Promise<AchievementState>,
   saveShareImage: (input: { filename: string; pngBase64: string }) =>
     ipcRenderer.invoke("share:save-image", input) as Promise<{ canceled: boolean; filePath?: string }>,
+  showManager: () => ipcRenderer.invoke("window:show-manager") as Promise<void>,
+  openManagerSettings: () => ipcRenderer.invoke("window:open-settings") as Promise<void>,
+  openManagerTab: (tab: "home" | "achievements" | "leaderboard") =>
+    ipcRenderer.invoke("window:open-manager-tab", tab) as Promise<void>,
+  toggleMenuBarPopover: () => ipcRenderer.invoke("menubar:toggle-popover") as Promise<void>,
+  hideMenuBarPopover: () => ipcRenderer.invoke("menubar:hide-popover") as Promise<void>,
   showLevelToast: (input: { from: number; to: number }) => ipcRenderer.send("level:toast", input),
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
@@ -81,6 +87,11 @@ const api = {
     const listener = () => callback();
     ipcRenderer.on("bonsai:open-settings", listener);
     return () => ipcRenderer.removeListener("bonsai:open-settings", listener);
+  },
+  onOpenDashboardTab: (callback: (tab: "home" | "achievements" | "leaderboard") => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, tab: "home" | "achievements" | "leaderboard") => callback(tab);
+    ipcRenderer.on("bonsai:open-dashboard-tab", listener);
+    return () => ipcRenderer.removeListener("bonsai:open-dashboard-tab", listener);
   },
   onUsageStatus: (callback: (status: UsageStatus) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: UsageStatus) => callback(status);

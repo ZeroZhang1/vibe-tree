@@ -121,7 +121,14 @@ document.title = "Vibe Tree";
 
 const viewParam = new URLSearchParams(location.search).get("view");
 const uiThemeParam = new URLSearchParams(location.search).get("uiTheme");
-const viewMode: ViewMode = viewParam === "manager" ? "manager" : viewParam === "toast" ? "toast" : "pet";
+const viewMode: ViewMode =
+  viewParam === "manager"
+    ? "manager"
+    : viewParam === "toast"
+      ? "toast"
+      : viewParam === "menubar"
+        ? "menubar"
+        : "pet";
 const UI_THEME_STORAGE_KEY = "vibe-tree:ui-theme";
 const LEADERBOARD_CACHE_STORAGE_KEY = "vibe-tree:leaderboard-cache";
 const LEADERBOARD_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -276,7 +283,13 @@ const statsCache = new StatsCache();
 app.innerHTML = appShellHtml(viewMode);
 
 const root = document.querySelector<HTMLElement>(
-  viewMode === "pet" ? ".pet-root" : viewMode === "manager" ? ".manager-root" : ".toast-root",
+  viewMode === "pet"
+    ? ".pet-root"
+    : viewMode === "manager"
+      ? ".manager-root"
+      : viewMode === "menubar"
+        ? ".menubar-root"
+        : ".toast-root",
 )!;
 if (viewMode === "pet") {
   delete root.dataset.uiTheme;
@@ -286,6 +299,22 @@ if (viewMode === "pet") {
 root.dataset.platform = platformName;
 const treeImage = document.querySelector<HTMLImageElement>("#treeImage");
 const previewTreeImage = document.querySelector<HTMLImageElement>("#previewTreeImage");
+const menubarTreeImage = document.querySelector<HTMLImageElement>("#menubarTreeImage");
+const menubarLevelTitle = document.querySelector<HTMLElement>("#menubarLevelTitle");
+const menubarWeatherText = document.querySelector<HTMLElement>("#menubarWeatherText");
+const menubarRateText = document.querySelector<HTMLElement>("#menubarRateText");
+const menubarRateHint = document.querySelector<HTMLElement>("#menubarRateHint");
+const menubarTodayText = document.querySelector<HTMLElement>("#menubarTodayText");
+const menubarTodayHint = document.querySelector<HTMLElement>("#menubarTodayHint");
+const menubarNextLevelText = document.querySelector<HTMLElement>("#menubarNextLevelText");
+const menubarProgressPercent = document.querySelector<HTMLElement>("#menubarProgressPercent");
+const menubarProgressText = document.querySelector<HTMLElement>("#menubarProgressText");
+const menubarProgressBar = document.querySelector<HTMLElement>("#menubarProgressBar");
+const menubarSourceSummary = document.querySelector<HTMLElement>("#menubarSourceSummary");
+const menubarSourceList = document.querySelector<HTMLElement>("#menubarSourceList");
+const menubarCloudStatus = document.querySelector<HTMLElement>("#menubarCloudStatus");
+const menubarLeaderboardStatus = document.querySelector<HTMLElement>("#menubarLeaderboardStatus");
+const menubarSyncButton = document.querySelector<HTMLButtonElement>("#menubarSyncButton");
 const weatherBack = document.querySelector<HTMLElement>("#weatherBack");
 const weatherFront = document.querySelector<HTMLElement>("#weatherFront");
 const previewWeatherBack = document.querySelector<HTMLElement>("#previewWeatherBack");
@@ -532,7 +561,16 @@ function isCacheableLeaderboardEntry(entry: unknown): entry is LeaderboardEntry 
 }
 
 function applyUiTheme(theme: UiTheme) {
-  if (viewMode === "pet") {
+  if (viewMode === "menubar") {
+    root.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-menubar-action]");
+      if (!button) return;
+      void handleMenubarAction(button.dataset.menubarAction);
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") void window.bonsai.hideMenuBarPopover();
+    });
+  } else if (viewMode === "pet") {
     delete root.dataset.uiTheme;
     delete document.documentElement.dataset.uiTheme;
     cacheUiTheme(theme);
@@ -708,7 +746,6 @@ async function boot() {
     bindToastOverlayEvents();
     return;
   }
-
   tree = buildTreeAsset(DEFAULT_PURE_SVG_MANIFEST);
   gameBalance = DEFAULT_GAME_BALANCE;
   renderInitialTreePreview();
@@ -734,6 +771,12 @@ async function boot() {
   bindEvents();
   if (viewMode === "manager") {
     window.bonsai.onOpenSettings(() => setSettingsOpen(true));
+    window.bonsai.onOpenDashboardTab((tab) => {
+      dashboardTab = tab;
+      setSettingsOpen(false);
+      renderDashboardTabs();
+      renderLeaderboard();
+    });
   }
   applyI18n();
   render();
@@ -780,6 +823,10 @@ function renderInitialTreePreview() {
   if (previewTreeImage) {
     previewTreeImage.src = assetUrl(stage.image);
     previewTreeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
+  }
+  if (menubarTreeImage) {
+    menubarTreeImage.src = assetUrl(stage.image);
+    menubarTreeImage.alt = `${tree.displayName} ${stageLabel(stage.id, stage.label)}`;
   }
   if (treeStartTreeImage) {
     treeStartTreeImage.src = assetUrl(stage.image);
@@ -2466,6 +2513,10 @@ function render() {
     previewTreeImage.src = assetUrl(stats.stage.image);
     previewTreeImage.alt = `${tree.displayName} ${stageLabel(stats.stage.id, stats.stage.label)}`;
   }
+  if (menubarTreeImage) {
+    menubarTreeImage.src = assetUrl(stats.stage.image);
+    menubarTreeImage.alt = `${tree.displayName} ${stageLabel(stats.stage.id, stats.stage.label)}`;
+  }
 
   renderLevelBadge(
     "#petLevelBadge",
@@ -2563,7 +2614,101 @@ function render() {
     renderAchievements(stats, achievementContext);
     renderDashboardTabs();
     if (achievementContext) syncAchievementsIfNeeded(stats, achievementContext);
+  } else if (viewMode === "menubar") {
+    renderMenubarPopover(stats, visibility);
   }
+}
+
+function renderMenubarPopover(stats: Stats, visibility: SourceVisibility) {
+  text("#menubarLevelTitle", `Lv.${stats.level} ${stageLabel(stats.stage.id, stats.stage.label)}`);
+  const isGrowing = stats.weather.tokensPerMinute > 0 || stats.activeSessions > 0;
+  text(
+    "#menubarWeatherText",
+    `${weatherLabel(stats.weather.id, stats.weather.label)} · ${isGrowing ? t("menubarGrowing") : t("waitingNewToken")}`,
+  );
+  text("#menubarRateText", `${formatCompact(stats.weather.tokensPerMinute)}/min`);
+  text(
+    "#menubarRateHint",
+    stats.activeSessions > 0
+      ? `${t("metricSessions")} ${stats.activeSessions} ${t("sessionsUnit")}`
+      : t("waitingNewToken"),
+  );
+  text("#menubarTodayText", `+${formatCompact(stats.todayXp)}`);
+  text("#menubarNextLevelText", `${t("nextLevel")}${stats.level + 1}`);
+  text("#menubarProgressPercent", `${Math.round(stats.levelProgress * 100)}%`);
+  text("#menubarProgressText", `${formatCompact(stats.levelXp)} / ${formatCompact(stats.nextLevelXp)} token`);
+  if (menubarProgressBar) menubarProgressBar.style.width = `${stats.levelProgress * 100}%`;
+
+  const todayKey = dateKey(new Date());
+  const todayEntries = (ledger?.entries ?? []).filter((entry) => dateKey(new Date(entry.createdAt)) === todayKey);
+  const sourceRows = getMonitorSourceRows(
+    getSourceBreakdown(todayEntries, visibility.enabled, sourceLabel),
+    visibility,
+  );
+  const activeRows = sourceRows.filter((row) => row.xp > 0).sort((left, right) => right.xp - left.xp);
+  const totalSourceXp = activeRows.reduce((total, row) => total + row.xp, 0);
+  if (menubarTodayHint) {
+    menubarTodayHint.textContent = activeRows.length
+      ? `${activeRows.length} ${t("sourceTodayActive")}`
+      : t("waitingTodayTokens");
+  }
+  if (menubarSourceSummary) menubarSourceSummary.textContent = `${formatCompact(totalSourceXp)} token`;
+  if (menubarSourceList) {
+    menubarSourceList.innerHTML = activeRows.length
+      ? activeRows
+          .slice(0, 3)
+          .map((row) => {
+            const percent = totalSourceXp > 0 ? clamp((row.xp / totalSourceXp) * 100, 0, 100) : 0;
+            return `
+              <article class="menubar-source-row">
+                <div>
+                  <strong>${escapeHtml(row.label)}</strong>
+                  <span>${escapeHtml(row.status)}</span>
+                </div>
+                <b>${formatCompact(row.xp)}</b>
+                <div class="source-meter" aria-hidden="true"><span style="width:${percent}%"></span></div>
+              </article>
+            `;
+          })
+          .join("")
+      : `<div class="menubar-empty">${escapeHtml(t("waitingTodayTokens"))}</div>`;
+  }
+
+  if (menubarCloudStatus) {
+    menubarCloudStatus.innerHTML = renderMenubarStatusLine(
+      cloudSyncStatus.enabled ? t("cloudSyncEnabled") : t("cloudSyncDisabled"),
+      cloudSyncStatusCopy(),
+      cloudSyncStatus.syncing ? "busy" : cloudSyncStatus.enabled ? "good" : "idle",
+    );
+  }
+  if (menubarLeaderboardStatus) {
+    const leaderboardCopy = leaderboardStatusCopy();
+    menubarLeaderboardStatus.innerHTML = renderMenubarStatusLine(
+      leaderboardCopy.title,
+      leaderboardCopy.detail,
+      leaderboardStatus.syncing ? "busy" : leaderboardStatus.joined ? "good" : "idle",
+    );
+  }
+  if (menubarSyncButton) {
+    menubarSyncButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
+    menubarSyncButton.querySelector("span")?.replaceChildren(
+      cloudSyncStatus.syncing
+        ? t("cloudSyncSyncing")
+        : cloudSyncStatus.enabled
+          ? t("cloudSyncSyncTree")
+          : t("cloudSyncConnectAndSync"),
+    );
+  }
+}
+
+function renderMenubarStatusLine(title: string, detail: string, tone: "busy" | "good" | "idle") {
+  return `
+    <span class="menubar-status-dot" data-tone="${tone}" aria-hidden="true"></span>
+    <div>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </div>
+  `;
 }
 
 function renderDashboardTabs() {
@@ -3624,6 +3769,33 @@ function clearTreeStartPending(pendingVersion?: number) {
 
 function wait(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function handleMenubarAction(action: string | undefined) {
+  if (!action) return;
+  if (action === "home" || action === "achievements" || action === "leaderboard") {
+    await window.bonsai.openManagerTab(action);
+    await window.bonsai.hideMenuBarPopover();
+    return;
+  }
+  if (action === "settings") {
+    await window.bonsai.openManagerSettings();
+    await window.bonsai.hideMenuBarPopover();
+    return;
+  }
+  if (action === "sync") {
+    if (menubarSyncButton) menubarSyncButton.disabled = true;
+    try {
+      cloudSyncStatus = cloudSyncStatus.enabled
+        ? await window.bonsai.syncCloudTree()
+        : await window.bonsai.enableCloudSync();
+      ledger = await window.bonsai.getLedger();
+      achievementState = await window.bonsai.getAchievements();
+      render();
+    } finally {
+      if (menubarSyncButton) menubarSyncButton.disabled = false;
+    }
+  }
 }
 
 function renderCloudSyncSettings() {

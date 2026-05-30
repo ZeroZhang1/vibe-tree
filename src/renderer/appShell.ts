@@ -18,6 +18,78 @@ export function appShellHtml(viewMode: ViewMode) {
         <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开管理窗口" data-i18n-aria="openManager"></button>
       </section>
     </main>
+	  `;
+  }
+  if (viewMode === "menubar") {
+    return `
+    <main class="menubar-root" data-weather="clear" data-active="false">
+      <section class="menubar-panel" aria-label="Vibe Tree">
+        <header class="menubar-hero">
+          <div class="menubar-tree-frame">
+            <img class="menubar-tree-image" id="menubarTreeImage" alt="Vibe Tree" draggable="false" />
+          </div>
+          <div class="menubar-title-group">
+            <p class="eyebrow">Vibe Tree</p>
+            <h1 id="menubarLevelTitle">Lv.1</h1>
+            <span id="menubarWeatherText">0 token/min</span>
+          </div>
+        </header>
+
+        <div class="menubar-focus-grid">
+          <article>
+            <span data-i18n="menubarCurrentRate">当前速度</span>
+            <strong id="menubarRateText">0/min</strong>
+            <small id="menubarRateHint" data-i18n="waitingNewToken">等待新 token</small>
+          </article>
+          <article>
+            <span data-i18n="metricToday">今日成长</span>
+            <strong id="menubarTodayText">+0</strong>
+            <small id="menubarTodayHint" data-i18n="waitingTodayTokens">今日等待 token</small>
+          </article>
+        </div>
+
+        <section class="menubar-progress">
+          <div>
+            <span id="menubarNextLevelText">距离 Lv.2</span>
+            <strong id="menubarProgressPercent">0%</strong>
+          </div>
+          <div class="source-meter" aria-hidden="true"><span id="menubarProgressBar"></span></div>
+          <p id="menubarProgressText">0 / 0 token</p>
+        </section>
+
+        <section class="menubar-section">
+          <div class="menubar-section-title">
+            <span data-i18n="menubarTodaySources">今日来源</span>
+            <strong id="menubarSourceSummary">0 token</strong>
+          </div>
+          <div class="menubar-source-list" id="menubarSourceList"></div>
+        </section>
+
+        <section class="menubar-section menubar-status-section">
+          <div class="menubar-status-line" id="menubarCloudStatus"></div>
+          <div class="menubar-status-line" id="menubarLeaderboardStatus"></div>
+        </section>
+
+        <nav class="menubar-actions" aria-label="Vibe Tree actions">
+          <button type="button" data-menubar-action="home">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12l8 -7l8 7v8a1 1 0 0 1 -1 1h-5v-6h-4v6h-5a1 1 0 0 1 -1 -1z" /></svg>
+            <span data-i18n="home">主页</span>
+          </button>
+          <button type="button" data-menubar-action="sync" id="menubarSyncButton">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
+            <span data-i18n="cloudSyncSyncTree">同步小树</span>
+          </button>
+          <button type="button" data-menubar-action="leaderboard">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 21h8" /><path d="M12 17v4" /><path d="M7 4h10v4a5 5 0 0 1 -10 0z" /><path d="M5 5h-2v2a3 3 0 0 0 3 3" /><path d="M19 5h2v2a3 3 0 0 1 -3 3" /></svg>
+            <span data-i18n="leaderboard">排行榜</span>
+          </button>
+          <button type="button" data-menubar-action="settings">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M10.3 4.3c.4 -1.7 2.9 -1.7 3.4 0a1.7 1.7 0 0 0 2.6 1.1c1.5 -.9 3.3 .8 2.4 2.4a1.7 1.7 0 0 0 1 2.5c1.8 .5 1.8 3 0 3.4a1.7 1.7 0 0 0 -1 2.6c.9 1.5 -.9 3.3 -2.4 2.4a1.7 1.7 0 0 0 -2.6 1c-.5 1.8 -3 1.8 -3.4 0a1.7 1.7 0 0 0 -2.6 -1c-1.5 .9 -3.3 -.9 -2.4 -2.4a1.7 1.7 0 0 0 -1 -2.6c-1.8 -.4 -1.8 -2.9 0 -3.4a1.7 1.7 0 0 0 1 -2.5c-.9 -1.6 .9 -3.3 2.4 -2.4a1.7 1.7 0 0 0 2.6 -1.1z" /><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" /></svg>
+            <span data-i18n="settings">设置</span>
+          </button>
+        </nav>
+      </section>
+    </main>
   `;
   }
   if (viewMode === "manager") {

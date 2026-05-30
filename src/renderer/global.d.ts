@@ -15,6 +15,7 @@ import type {
   UsageStatus,
   WindowBounds,
 } from "../shared/types";
+import type { DashboardTab } from "./types";
 
 declare global {
   interface Window {
@@ -50,6 +51,11 @@ declare global {
       updateAchievementStats: (stats: Record<string, unknown>) => Promise<AchievementState>;
       reconcileAchievements: (input: { version: number; unlockedIds: string[]; stats?: Record<string, unknown> }) => Promise<AchievementState>;
       saveShareImage: (input: { filename: string; pngBase64: string }) => Promise<{ canceled: boolean; filePath?: string }>;
+      showManager: () => Promise<void>;
+      openManagerSettings: () => Promise<void>;
+      openManagerTab: (tab: DashboardTab) => Promise<void>;
+      toggleMenuBarPopover: () => Promise<void>;
+      hideMenuBarPopover: () => Promise<void>;
       showLevelToast: (input: { from: number; to: number }) => void;
       notifyAchievementToastReady: () => void;
       notifyAchievementToastDrained: () => void;
@@ -58,6 +64,7 @@ declare global {
       onExpanded: (callback: (expanded: boolean) => void) => () => void;
       onOpenAddToken: (callback: () => void) => () => void;
       onOpenSettings: (callback: () => void) => () => void;
+      onOpenDashboardTab: (callback: (tab: DashboardTab) => void) => () => void;
       onUsageStatus: (callback: (status: UsageStatus) => void) => () => void;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       onLeaderboardStatus: (callback: (status: LeaderboardStatus) => void) => () => void;

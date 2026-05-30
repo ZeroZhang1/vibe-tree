@@ -32,6 +32,11 @@ const api = {
   updateAchievementStats: (stats) => ipcRenderer.invoke("achievements:update-stats", stats),
   reconcileAchievements: (input) => ipcRenderer.invoke("achievements:reconcile", input),
   saveShareImage: (input) => ipcRenderer.invoke("share:save-image", input),
+  showManager: () => ipcRenderer.invoke("window:show-manager"),
+  openManagerSettings: () => ipcRenderer.invoke("window:open-settings"),
+  openManagerTab: (tab) => ipcRenderer.invoke("window:open-manager-tab", tab),
+  toggleMenuBarPopover: () => ipcRenderer.invoke("menubar:toggle-popover"),
+  hideMenuBarPopover: () => ipcRenderer.invoke("menubar:hide-popover"),
   showLevelToast: (input) => ipcRenderer.send("level:toast", input),
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
@@ -55,6 +60,11 @@ const api = {
     const listener = () => callback();
     ipcRenderer.on("bonsai:open-settings", listener);
     return () => ipcRenderer.removeListener("bonsai:open-settings", listener);
+  },
+  onOpenDashboardTab: (callback) => {
+    const listener = (_event, tab) => callback(tab);
+    ipcRenderer.on("bonsai:open-dashboard-tab", listener);
+    return () => ipcRenderer.removeListener("bonsai:open-dashboard-tab", listener);
   },
   onUsageStatus: (callback) => {
     const listener = (_event, status) => callback(status);
