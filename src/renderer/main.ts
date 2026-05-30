@@ -183,8 +183,11 @@ let socialSelectedGroupId: string | null = null;
 let socialLoading = false;
 let socialError = "";
 let socialInvite: SocialGroupInvite | null = null;
+let socialInviteCopiedAt = 0;
 let socialGroupRange: LeaderboardRange = "24h";
 let socialGroupLeaderboard: SocialGroupLeaderboardData | null = null;
+let socialGroupLeaderboardLoading = false;
+const socialGroupLeaderboardCache = new Map<string, SocialGroupLeaderboardData>();
 let socialRenderKey = "";
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
@@ -1295,7 +1298,10 @@ function bindEvents() {
     socialRenderKey = "";
     renderSocial();
     if (socialPanel === "groups" && socialSelectedGroupId && !socialGroupLeaderboard) {
-      void refreshSocialGroupLeaderboard();
+      socialGroupLeaderboard = cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange);
+      socialRenderKey = "";
+      renderSocial();
+      if (!socialGroupLeaderboard) void refreshSocialGroupLeaderboard();
     }
   });
 
@@ -1333,11 +1339,11 @@ function bindEvents() {
     const nextGroupId = button.dataset.socialGroupId;
     if (!nextGroupId || nextGroupId === socialSelectedGroupId) return;
     socialSelectedGroupId = nextGroupId;
-    socialInvite = null;
-    socialGroupLeaderboard = null;
+    clearSocialInvite();
+    socialGroupLeaderboard = cachedSocialGroupLeaderboard(nextGroupId, socialGroupRange);
     socialRenderKey = "";
     renderSocial();
-    void refreshSocialGroupLeaderboard();
+    if (!socialGroupLeaderboard) void refreshSocialGroupLeaderboard();
   });
 
   socialGroupRangeTabs?.addEventListener("click", (event) => {
@@ -1346,14 +1352,16 @@ function bindEvents() {
     const nextRange = normalizeLeaderboardRange(button.dataset.socialGroupRange);
     if (nextRange === socialGroupRange) return;
     socialGroupRange = nextRange;
-    socialGroupLeaderboard = null;
+    socialGroupLeaderboard = socialSelectedGroupId
+      ? cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange)
+      : null;
     socialRenderKey = "";
     renderSocial();
-    void refreshSocialGroupLeaderboard();
+    if (!socialGroupLeaderboard) void refreshSocialGroupLeaderboard();
   });
 
   socialCreateInviteButton?.addEventListener("click", () => {
-    void createSocialInviteForSelectedGroup();
+    void createOrCopySocialInviteForSelectedGroup();
   });
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
@@ -1531,7 +1539,7 @@ function ensureLeaderboardLoaded() {
 
 function ensureSocialLoaded() {
   renderSocial();
-  if (socialFriends.length || socialGroups.length || socialLoading || socialError) return;
+  if (socialFriends.length || socialGroups.length || socialLoading || socialGroupLeaderboardLoading || socialError) return;
   void refreshSocial();
 }
 
@@ -1558,7 +1566,11 @@ async function refreshSocial(options: { syncFirst?: boolean } = {}) {
     if (!socialSelectedGroupId || !socialGroups.some((group) => group.groupId === socialSelectedGroupId)) {
       socialSelectedGroupId = socialGroups[0]?.groupId ?? null;
     }
-    socialGroupLeaderboard = null;
+    if (!socialSelectedGroupId) {
+      socialGroupLeaderboard = null;
+    } else if (socialGroupLeaderboard?.groupId !== socialSelectedGroupId) {
+      socialGroupLeaderboard = cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange);
+    }
   } catch (error) {
     socialError = error instanceof Error ? error.message : t("socialGroupsLoadFailed");
   } finally {
@@ -1567,21 +1579,32 @@ async function refreshSocial(options: { syncFirst?: boolean } = {}) {
     renderLeaderboardSettings();
     renderSocial();
   }
-  if (socialSelectedGroupId) await refreshSocialGroupLeaderboard();
+  if (socialSelectedGroupId && (options.syncFirst || !cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange))) {
+    await refreshSocialGroupLeaderboard({ force: options.syncFirst });
+  }
 }
 
-async function refreshSocialGroupLeaderboard() {
+async function refreshSocialGroupLeaderboard(options: { force?: boolean } = {}) {
   const groupId = socialSelectedGroupId;
-  if (!groupId || socialLoading) {
+  if (!groupId || socialLoading || socialGroupLeaderboardLoading) {
     renderSocial();
     return;
   }
-  socialLoading = true;
+  const cached = cachedSocialGroupLeaderboard(groupId, socialGroupRange);
+  if (cached && !options.force) {
+    socialGroupLeaderboard = cached;
+    socialError = cached.error ?? "";
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  socialGroupLeaderboardLoading = true;
   socialError = "";
   socialRenderKey = "";
   renderSocial();
   try {
     socialGroupLeaderboard = await window.bonsai.getSocialGroupLeaderboard(groupId, socialGroupRange);
+    cacheSocialGroupLeaderboard(socialGroupLeaderboard);
     socialError = socialGroupLeaderboard.error ?? "";
   } catch (error) {
     socialGroupLeaderboard = {
@@ -1590,12 +1613,25 @@ async function refreshSocialGroupLeaderboard() {
       entries: [],
       error: error instanceof Error ? error.message : t("socialGroupLeaderboardLoadFailed"),
     };
+    cacheSocialGroupLeaderboard(socialGroupLeaderboard);
     socialError = socialGroupLeaderboard.error ?? "";
   } finally {
-    socialLoading = false;
+    socialGroupLeaderboardLoading = false;
     socialRenderKey = "";
     renderSocial();
   }
+}
+
+function socialGroupLeaderboardCacheKey(groupId: string, range: LeaderboardRange) {
+  return `${groupId}:${range}`;
+}
+
+function cachedSocialGroupLeaderboard(groupId: string, range: LeaderboardRange) {
+  return socialGroupLeaderboardCache.get(socialGroupLeaderboardCacheKey(groupId, range)) ?? null;
+}
+
+function cacheSocialGroupLeaderboard(board: SocialGroupLeaderboardData) {
+  socialGroupLeaderboardCache.set(socialGroupLeaderboardCacheKey(board.groupId, board.range), board);
 }
 
 async function requestSocialFriendFromInput() {
@@ -1669,7 +1705,7 @@ async function createSocialGroupFromInput() {
   }
   socialLoading = true;
   socialError = "";
-  socialInvite = null;
+  clearSocialInvite();
   socialRenderKey = "";
   renderSocial();
   try {
@@ -1698,7 +1734,7 @@ async function acceptSocialInviteFromInput() {
   }
   socialLoading = true;
   socialError = "";
-  socialInvite = null;
+  clearSocialInvite();
   socialRenderKey = "";
   renderSocial();
   try {
@@ -1727,7 +1763,7 @@ async function createSocialInviteForSelectedGroup() {
   }
   socialLoading = true;
   socialError = "";
-  socialInvite = null;
+  clearSocialInvite();
   socialRenderKey = "";
   renderSocial();
   try {
@@ -1736,6 +1772,7 @@ async function createSocialInviteForSelectedGroup() {
       maxUses: 20,
       expiresInDays: 7,
     });
+    socialInviteCopiedAt = 0;
   } catch (error) {
     socialError = error instanceof Error ? error.message : t("socialInviteCreateFailed");
   } finally {
@@ -1743,6 +1780,58 @@ async function createSocialInviteForSelectedGroup() {
     socialRenderKey = "";
     renderSocial();
   }
+}
+
+async function createOrCopySocialInviteForSelectedGroup() {
+  const group = selectedSocialGroup();
+  if (!group) {
+    socialError = t("socialNoGroupSelected");
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  if (socialInvite?.groupId === group.groupId) {
+    try {
+      await copyTextToClipboard(socialInvite.code);
+      socialInviteCopiedAt = Date.now();
+      const copiedAt = socialInviteCopiedAt;
+      window.setTimeout(() => {
+        if (socialInviteCopiedAt !== copiedAt) return;
+        socialRenderKey = "";
+        renderSocial();
+      }, 3_000);
+      socialError = "";
+    } catch {
+      socialError = t("socialInviteCopyFailed");
+    } finally {
+      socialRenderKey = "";
+      renderSocial();
+    }
+    return;
+  }
+  await createSocialInviteForSelectedGroup();
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("copy failed");
+}
+
+function clearSocialInvite() {
+  socialInvite = null;
+  socialInviteCopiedAt = 0;
 }
 
 function upsertSocialFriend(friend: SocialFriend) {
@@ -4233,8 +4322,9 @@ function renderSocial() {
   const group = selectedSocialGroup();
   const canManageGroup = group?.role === "leader" || group?.role === "officer";
   const groupsEmpty = socialPanel === "groups" && !socialGroups.length;
+  const hasActiveInvite = Boolean(group && socialInvite?.groupId === group.groupId);
 
-  socialRefreshButton && (socialRefreshButton.disabled = socialLoading);
+  socialRefreshButton && (socialRefreshButton.disabled = socialLoading || socialGroupLeaderboardLoading);
   socialModeTabs?.querySelectorAll<HTMLButtonElement>("[data-social-panel]").forEach((button) => {
     const active = button.dataset.socialPanel === socialPanel;
     button.classList.toggle("active", active);
@@ -4245,7 +4335,15 @@ function renderSocial() {
   socialGroupsPanel.classList.toggle("is-empty", groupsEmpty);
   socialGroupDetailPanel.hidden = groupsEmpty;
   if (socialGroupActionsDrawer) {
-    socialGroupActionsDrawer.open = groupsEmpty || socialGroupActionsDrawer.open;
+    const initialized = socialGroupActionsDrawer.dataset.empty === "true" || socialGroupActionsDrawer.dataset.empty === "false";
+    const wasEmpty = socialGroupActionsDrawer.dataset.empty === "true";
+    if (groupsEmpty) {
+      socialGroupActionsDrawer.open = true;
+      socialGroupActionsDrawer.dataset.empty = "true";
+    } else {
+      if (!initialized || wasEmpty) socialGroupActionsDrawer.open = false;
+      socialGroupActionsDrawer.dataset.empty = "false";
+    }
   }
   socialAddFriendForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
     element.disabled = socialLoading;
@@ -4258,7 +4356,12 @@ function renderSocial() {
   });
   if (socialCreateInviteButton) {
     socialCreateInviteButton.disabled = socialLoading || !canManageGroup;
-    socialCreateInviteButton.title = canManageGroup ? t("socialCreateInvite") : t("socialInviteOfficerOnly");
+    socialCreateInviteButton.textContent = hasActiveInvite ? t("socialCopyInvite") : t("socialCreateInvite");
+    socialCreateInviteButton.title = canManageGroup
+      ? hasActiveInvite
+        ? t("socialCopyInvite")
+        : t("socialCreateInvite")
+      : t("socialInviteOfficerOnly");
   }
 
   socialGroupRangeTabs?.querySelectorAll<HTMLButtonElement>("[data-social-group-range]").forEach((button) => {
@@ -4356,13 +4459,13 @@ function renderSocial() {
     ? `
       <strong>${t("socialInviteReady")}</strong>
       <code>${escapeHtml(socialInvite.code)}</code>
-      <span>${t("socialInviteHint")}</span>
+      <span>${Date.now() - socialInviteCopiedAt < 3_000 ? t("socialInviteCopied") : t("socialInviteHint")}</span>
     `
     : "";
 
   const board = socialGroupLeaderboard;
-  if (socialLoading && !board) {
-    socialGroupLeaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("socialLoading")}</div>`;
+  if (socialGroupLeaderboardLoading && (!board || board.groupId !== group.groupId || board.range !== socialGroupRange)) {
+    socialGroupLeaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("socialLeaderboardLoading")}</div>`;
     return;
   }
 
@@ -5061,6 +5164,7 @@ function socialRenderSignature() {
     bucket: relativeRenderBucket(30_000),
     panel: socialPanel,
     loading: socialLoading,
+    boardLoading: socialGroupLeaderboardLoading,
     error: socialError,
     selectedGroupId: socialSelectedGroupId,
     range: socialGroupRange,
@@ -5078,6 +5182,7 @@ function socialRenderSignature() {
           role: socialInvite.role,
           maxUses: socialInvite.maxUses,
           expiresAt: socialInvite.expiresAt,
+          copiedAt: socialInviteCopiedAt,
         }
       : null,
     friends: socialFriends.map((friend) => [

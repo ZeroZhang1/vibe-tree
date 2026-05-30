@@ -3121,6 +3121,14 @@ label {
   background: var(--bg-light);
 }
 
+.social-groups-panel:not(.is-empty) .social-group-list {
+  order: 1;
+}
+
+.social-groups-panel:not(.is-empty) .social-group-actions-drawer {
+  order: 2;
+}
+
 .social-group-actions-drawer {
   min-width: 0;
   border: 1px solid var(--border);
