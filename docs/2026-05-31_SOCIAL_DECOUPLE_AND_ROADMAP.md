@@ -184,9 +184,9 @@ WHERE COALESCE(v.public_global, 1) = 1
 - 群组成就 / 等级 / 赛季榜。
 
 ### 技术债
-- 事务化邀请计数(修 A3)。
+- ✅ 原子化邀请计数(修 A3):`uses = uses + 1` 改为带 `AND (max_uses IS NULL OR uses < max_uses)` 条件的单条 UPDATE,按 `meta.changes` 判定是否成功,SQLite 写串行化保证不超发。见第 6 节。
 - 限流 key 加 actorId(缓解公司 NAT 互挤)。
-- 清理冗余 migration。
+- 清理冗余 migration(`20260529_social_friendships_indexes.sql`)——评估后暂留:仅重建已有索引,无害,且删除会让既有 runbook 失效,价值极低。
 - 建组 / 好友数量上限。
 
 ---
@@ -230,3 +230,7 @@ WHERE COALESCE(v.public_global, 1) = 1
 - **verify** [`verify-worker-api.mjs`](../server/leaderboard-worker/scripts/verify-worker-api.mjs):加 `user-stranger` fixture + 断言 (e):本人卡含成就 / 总量 / 入会;同群查看公开成员用量可见;查看共享群成员用量可见;无关系陌生人 404。
 
 **验证:** ✅ typecheck + build 通过;⚠️ verify 断言同样待联网环境跑(沙箱禁 npm registry)。
+
+### A3 修复:原子化邀请 maxUses(随手清技术债)
+
+原 [`acceptSocialGroupInvite`](../server/leaderboard-worker/src/index.ts) 先 `SELECT uses` 判断 `uses >= maxUses`,再在独立 batch 里 `uses = uses + 1`——两步之间存在 TOCTOU 竞态,并发接受可超发。改为**条件化单条 UPDATE**:`SET uses = uses + 1 WHERE invite_code_hash = ? AND revoked_at IS NULL AND (expires_at ...) AND (max_uses IS NULL OR uses < max_uses)`,以 `result.meta.changes` 判定是否抢到名额;抢不到(`changes === 0`)直接 410。SQLite 写串行化 ⇒ 恰好 maxUses 次 UPDATE 成功。抢到后再 `INSERT OR IGNORE` 成员(PK `group_id+user_id` 幂等)。保留原有 revoked/expired/used-up 预检以提供常态下的友好报错。verify 加断言 (f):单次邀请被消费后,即便加入者退群,`uses` 不回退、邀请码不可复用。

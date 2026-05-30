@@ -888,18 +888,24 @@ async function acceptSocialGroupInvite(request: Request, env: Env, code: string)
   const groupId = String(invite.groupId);
   const existing = await socialGroupMembership(groupId, user.userId, env);
   if (!existing) {
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO social_group_members
-           (group_id, user_id, role, share_usage, joined_at, updated_at)
-         VALUES (?, ?, ?, 1, ?, ?)`,
-      ).bind(groupId, user.userId, normalizeSocialGroupRole(invite.role) ?? "member", now, now),
-      env.DB.prepare(
-        `UPDATE social_group_invites
-         SET uses = uses + 1, updated_at = ?
-         WHERE invite_code_hash = ?`,
-      ).bind(now, codeHash),
-    ]);
+    // Atomically claim a use: the WHERE re-checks max_uses inside the write so two
+    // concurrent accepts can't both pass the read above and over-issue the invite.
+    // SQLite serializes writes, so exactly maxUses updates win. We consume the use
+    // first, then INSERT OR IGNORE the membership (PK group_id+user_id keeps it idempotent).
+    const claim = await env.DB.prepare(
+      `UPDATE social_group_invites
+       SET uses = uses + 1, updated_at = ?
+       WHERE invite_code_hash = ?
+         AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > ?)
+         AND (max_uses IS NULL OR uses < max_uses)`,
+    ).bind(now, codeHash, now).run();
+    if (!claim.meta.changes) throw new HttpError(410, "Invite has been used up.");
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO social_group_members
+         (group_id, user_id, role, share_usage, joined_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?)`,
+    ).bind(groupId, user.userId, normalizeSocialGroupRole(invite.role) ?? "member", now, now).run();
   }
 
   return json({

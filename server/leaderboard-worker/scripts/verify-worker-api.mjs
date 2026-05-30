@@ -504,7 +504,36 @@ VALUES ('${strangerTokenHash}', 'user-stranger', '${now}', '${expiresAt}');
     "leaving a group should remove the member from the group board",
   );
 
-  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, social friends, social groups/invites/group leaderboard, group/global decoupling (private members, leave-keeps-group-data, leave-group, share toggle), relationship-gated profile cards (self/co-member/sharing/stranger), legacy fallback, and leaderboard leave safety passed.");
+  // (f) invite maxUses is consumed atomically: a single-use invite can't be re-spent
+  // after the use is claimed, even if the joiner later leaves (uses must not reset).
+  const singleUseInvite = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/invites`, {
+    method: "POST",
+    body: { maxUses: 1 },
+  });
+  const singleUseCode = singleUseInvite.invite?.code;
+  assert(typeof singleUseCode === "string", "single-use invite should return a code");
+  const strangerJoin = await requestJson(`/api/social/invites/${encodeURIComponent(singleUseCode)}/accept`, {
+    method: "POST",
+    token: strangerToken,
+  });
+  assert(
+    strangerJoin.group?.members?.some((member) => member.userId === "user-stranger"),
+    "single-use invite should admit the first accepter",
+  );
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/members/me`, {
+    method: "DELETE",
+    token: strangerToken,
+  });
+  await assertRejects(
+    () =>
+      requestJson(`/api/social/invites/${encodeURIComponent(singleUseCode)}/accept`, {
+        method: "POST",
+        token: strangerToken,
+      }),
+    "an exhausted single-use invite must not be reusable after the use is claimed",
+  );
+
+  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, social friends, social groups/invites/group leaderboard, group/global decoupling (private members, leave-keeps-group-data, leave-group, share toggle), relationship-gated profile cards (self/co-member/sharing/stranger), atomic invite maxUses, legacy fallback, and leaderboard leave safety passed.");
 } finally {
   if (devProcess) await terminate(devProcess);
   rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
