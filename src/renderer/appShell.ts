@@ -43,14 +43,47 @@ export function appShellHtml(viewMode: ViewMode) {
           <div class="menubar-hero-ctx" id="menubarTodayCtx"></div>
         </div>
 
+        <section class="menubar-progress">
+          <div class="menubar-progress-row">
+            <span id="menubarNextLevelText">距离 Lv.2</span>
+            <strong id="menubarProgressPercent">0%</strong>
+          </div>
+          <div class="source-meter" aria-hidden="true"><span id="menubarProgressBar"></span></div>
+          <p id="menubarProgressText">0 / 0 token</p>
+        </section>
+
         <div class="menubar-slot">
           <article class="menubar-viz active" data-viz="rhythm">
             <div class="menubar-viz-head">
-              <span class="menubar-viz-title" data-i18n="menubarRhythmTitle">今日 24 小时节奏</span>
+              <span class="menubar-viz-title" data-i18n="menubarRhythmTitle">24h 节奏</span>
               <span class="menubar-viz-meta" id="menubarRhythmMeta"></span>
             </div>
             <div class="menubar-rhythm-bars" id="menubarRhythmBars" aria-hidden="true"></div>
             <div class="menubar-rhythm-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="sync">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarSyncTitle">同养小树</span>
+              <button class="menubar-action" id="menubarSyncButton" type="button" data-i18n="menubarSyncAction">同步</button>
+            </div>
+            <div class="menubar-sync-list" id="menubarSyncList"></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="activity">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarActivityTitle">Agent 状态</span>
+              <span class="menubar-viz-meta" id="menubarActivityMeta"></span>
+            </div>
+            <div class="menubar-activity-list" id="menubarActivityList"></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="rank">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="leaderboard">排行榜</span>
+              <button class="menubar-action" id="menubarRankRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新榜单</button>
+            </div>
+            <div class="menubar-rank-list" id="menubarRankList"></div>
           </article>
 
           <article class="menubar-viz" data-viz="sources">
@@ -63,29 +96,18 @@ export function appShellHtml(viewMode: ViewMode) {
 
           <article class="menubar-viz" data-viz="speed">
             <div class="menubar-viz-head">
-              <span class="menubar-viz-title" data-i18n="menubarSpeedTitle">此刻速度</span>
+              <span class="menubar-viz-title" data-i18n="menubarSpeedTitle">实时速率</span>
               <span class="menubar-viz-meta" id="menubarSpeedMeta"></span>
             </div>
             <div class="menubar-wave" id="menubarWave" aria-hidden="true"></div>
-            <small class="menubar-viz-hint" data-i18n="menubarSpeedHint">在写代码时这条波形会实时起伏</small>
+            <div class="menubar-speed-foot">
+              <span id="menubarSpeedWindow">近 5 分钟</span>
+              <strong id="menubarSpeedTotal">+0</strong>
+            </div>
           </article>
         </div>
 
         <div class="menubar-dots" id="menubarDots" role="tablist" aria-label="可视化切换"></div>
-
-        <section class="menubar-progress">
-          <div class="menubar-progress-row">
-            <span id="menubarNextLevelText">距离 Lv.2</span>
-            <strong id="menubarProgressPercent">0%</strong>
-          </div>
-          <div class="source-meter" aria-hidden="true"><span id="menubarProgressBar"></span></div>
-          <p id="menubarProgressText">0 / 0 token</p>
-        </section>
-
-        <div class="menubar-footline">
-          <span class="menubar-foot-dot" id="menubarFootDot" aria-hidden="true"></span>
-          <span id="menubarFootText" data-i18n="menubarFootHint">双击桌面小树可打开主面板</span>
-        </div>
       </section>
     </main>
   `;

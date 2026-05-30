@@ -9,6 +9,7 @@ import type {
   LeaderboardEntry,
   LeaderboardRange,
   LeaderboardStatus,
+  SessionMonitorStatus,
   TreeAsset,
   UiTheme,
   UpdateStatus,
@@ -314,9 +315,16 @@ const menubarSourceSummary = document.querySelector<HTMLElement>("#menubarSource
 const menubarSourceList = document.querySelector<HTMLElement>("#menubarSourceList");
 const menubarWave = document.querySelector<HTMLElement>("#menubarWave");
 const menubarSpeedMeta = document.querySelector<HTMLElement>("#menubarSpeedMeta");
+const menubarSpeedWindow = document.querySelector<HTMLElement>("#menubarSpeedWindow");
+const menubarSpeedTotal = document.querySelector<HTMLElement>("#menubarSpeedTotal");
+const menubarSyncButton = document.querySelector<HTMLButtonElement>("#menubarSyncButton");
+const menubarSyncList = document.querySelector<HTMLElement>("#menubarSyncList");
+const menubarActivityMeta = document.querySelector<HTMLElement>("#menubarActivityMeta");
+const menubarActivityList = document.querySelector<HTMLElement>("#menubarActivityList");
+const menubarRankRefreshButton = document.querySelector<HTMLButtonElement>("#menubarRankRefreshButton");
+const menubarRankList = document.querySelector<HTMLElement>("#menubarRankList");
 const menubarDots = document.querySelector<HTMLElement>("#menubarDots");
-const menubarFootDot = document.querySelector<HTMLElement>("#menubarFootDot");
-const menubarFootText = document.querySelector<HTMLElement>("#menubarFootText");
+const menubarSlot = document.querySelector<HTMLElement>(".menubar-slot");
 const weatherBack = document.querySelector<HTMLElement>("#weatherBack");
 const weatherFront = document.querySelector<HTMLElement>("#weatherFront");
 const previewWeatherBack = document.querySelector<HTMLElement>("#previewWeatherBack");
@@ -574,7 +582,6 @@ function applyUiTheme(theme: UiTheme) {
   cacheUiTheme(theme);
 }
 
-// Menubar popover interactions — bound exactly once (see boot()), never inside render/applyUiTheme.
 function bindMenubarEvents() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") void window.bonsai.hideMenuBarPopover();
@@ -584,9 +591,92 @@ function bindMenubarEvents() {
       const dot = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-viz-index]");
       if (!dot) return;
       const index = Number(dot.dataset.vizIndex);
-      if (Number.isInteger(index)) setMenubarViz(index, true);
+      if (Number.isInteger(index)) setMenubarViz(index);
     });
   }
+  menubarSlot?.addEventListener("pointerdown", (event) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button")) return;
+    // Inside a scrollable list, leave the gesture to native vertical scroll.
+    if (target.closest(MENUBAR_SCROLLABLE_SELECTOR)) return;
+    menubarDragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    menubarSlot.classList.add("is-dragging");
+    menubarSlot.setPointerCapture(event.pointerId);
+  });
+  menubarSlot?.addEventListener("pointermove", (event) => {
+    if (!menubarDragState || menubarDragState.pointerId !== event.pointerId) return;
+    if (Math.hypot(event.clientX - menubarDragState.startX, event.clientY - menubarDragState.startY) > 8) {
+      menubarSlot.classList.add("is-dragging");
+    }
+  });
+  menubarSlot?.addEventListener("pointerup", (event) => {
+    if (!menubarDragState || menubarDragState.pointerId !== event.pointerId) return;
+    const dx = event.clientX - menubarDragState.startX;
+    const dy = event.clientY - menubarDragState.startY;
+    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+      setMenubarViz(menubarVizIndex + (dx < 0 ? 1 : -1));
+    }
+    clearMenubarDrag();
+  });
+  menubarSlot?.addEventListener("pointercancel", clearMenubarDrag);
+  menubarSlot?.addEventListener(
+    "wheel",
+    (event) => {
+      const horizontal = Math.abs(event.deltaX);
+      const vertical = Math.abs(event.deltaY);
+      // Page only on a clearly horizontal gesture; let mostly-vertical scrolls through.
+      if (horizontal < 24 || horizontal <= vertical * 1.5) return;
+      // Inside a scrollable list, vertical scroll wins — only page on a near-pure horizontal swipe.
+      if ((event.target as HTMLElement).closest(MENUBAR_SCROLLABLE_SELECTOR) && horizontal <= vertical * 2.5) return;
+      event.preventDefault();
+      if (menubarWheelLocked) return;
+      setMenubarViz(menubarVizIndex + (event.deltaX > 0 ? 1 : -1));
+      menubarWheelLocked = true;
+      window.setTimeout(() => {
+        menubarWheelLocked = false;
+      }, 360);
+    },
+    { passive: false },
+  );
+  menubarSyncButton?.addEventListener("click", async () => {
+    if (menubarSyncButton.disabled) return;
+    menubarSyncButton.disabled = true;
+    try {
+      cloudSyncStatus = cloudSyncStatus.enabled
+        ? await window.bonsai.syncCloudTree()
+        : await window.bonsai.enableCloudSync();
+      ledger = await window.bonsai.getLedger();
+      achievementState = await window.bonsai.getAchievements();
+      render();
+    } finally {
+      menubarSyncButton.disabled = false;
+    }
+  });
+  menubarRankRefreshButton?.addEventListener("click", () => {
+    void refreshLeaderboard({ syncFirst: leaderboardStatus.joined, forceSync: true, forceFetch: true }).then(render);
+  });
+  // Rhythm bars: hovering/focusing a bar reads out that hour's total + dominant source in the meta slot.
+  if (menubarRhythmBars) {
+    const readHour = (target: EventTarget | null) => {
+      const bar = (target as HTMLElement | null)?.closest<HTMLElement>(".menubar-rhythm-bar");
+      if (!bar) return;
+      const hour = Number(bar.dataset.hour);
+      if (Number.isInteger(hour)) showMenubarRhythmHour(hour);
+    };
+    menubarRhythmBars.addEventListener("pointermove", (event) => readHour(event.target));
+    menubarRhythmBars.addEventListener("pointerleave", resetMenubarRhythmMeta);
+    menubarRhythmBars.addEventListener("focusin", (event) => readHour(event.target));
+    menubarRhythmBars.addEventListener("focusout", resetMenubarRhythmMeta);
+  }
+}
+
+function clearMenubarDrag() {
+  menubarDragState = null;
+  menubarSlot?.classList.remove("is-dragging");
 }
 
 function rendererPlatform() {
@@ -789,7 +879,7 @@ async function boot() {
   if (viewMode === "menubar") {
     bindMenubarEvents();
     buildMenubarDots();
-    startMenubarCarousel();
+    void refreshLeaderboard({ forceFetch: true }).then(render);
   }
   applyI18n();
   render();
@@ -808,7 +898,11 @@ async function boot() {
   });
   window.bonsai.onUsageStatus((nextStatus) => {
     usageStatus = nextStatus;
-    renderUsageStatus();
+    if (viewMode === "menubar") {
+      scheduleMenubarRender();
+    } else {
+      renderUsageStatus();
+    }
   });
   window.bonsai.onUpdateStatus((nextStatus) => {
     updateStatus = nextStatus;
@@ -816,8 +910,12 @@ async function boot() {
   });
   window.bonsai.onLeaderboardStatus((nextStatus) => {
     leaderboardStatus = nextStatus;
-    renderLeaderboardSettings();
-    renderLeaderboard();
+    if (viewMode === "menubar") {
+      scheduleMenubarRender();
+    } else {
+      renderLeaderboardSettings();
+      renderLeaderboard();
+    }
   });
   window.bonsai.onAchievements((nextState, unlocked) => {
     achievementState = nextState;
@@ -2624,10 +2722,24 @@ function render() {
   }
 }
 
-const MENUBAR_VIZ_COUNT = 3;
-const MENUBAR_CAROUSEL_INTERVAL_MS = 4500;
+const MENUBAR_VIZ_IDS = ["rhythm", "sync", "activity", "rank", "sources", "speed"] as const;
+const MENUBAR_SCROLLABLE_SELECTOR = ".menubar-rank-list, .menubar-sync-list, .menubar-activity-list";
+const MENUBAR_VIZ_COUNT = MENUBAR_VIZ_IDS.length;
+const MENUBAR_LEADERBOARD_RANGE: LeaderboardRange = "24h";
 let menubarVizIndex = 0;
-let menubarCarouselTimer: ReturnType<typeof setInterval> | null = null;
+let menubarDragState: { pointerId: number; startX: number; startY: number } | null = null;
+let menubarWheelLocked = false;
+let menubarRenderHandle: number | null = null;
+
+// Usage pushes fire on every session-file change — frequent while coding. Collapse bursts into one
+// render per frame so the rebuilt lists (rank/sync/activity) don't thrash mid-scroll.
+function scheduleMenubarRender() {
+  if (menubarRenderHandle !== null) return;
+  menubarRenderHandle = window.requestAnimationFrame(() => {
+    menubarRenderHandle = null;
+    render();
+  });
+}
 
 function buildMenubarDots() {
   if (!menubarDots) return;
@@ -2637,7 +2749,7 @@ function buildMenubarDots() {
   }).join("");
 }
 
-function setMenubarViz(index: number, fromUser: boolean) {
+function setMenubarViz(index: number) {
   menubarVizIndex = ((index % MENUBAR_VIZ_COUNT) + MENUBAR_VIZ_COUNT) % MENUBAR_VIZ_COUNT;
   document.querySelectorAll<HTMLElement>(".menubar-viz").forEach((panel, panelIndex) => {
     panel.classList.toggle("active", panelIndex === menubarVizIndex);
@@ -2645,15 +2757,8 @@ function setMenubarViz(index: number, fromUser: boolean) {
   menubarDots?.querySelectorAll<HTMLElement>(".menubar-dot").forEach((dot, dotIndex) => {
     dot.classList.toggle("active", dotIndex === menubarVizIndex);
   });
-  if (fromUser) startMenubarCarousel();
 }
 
-function startMenubarCarousel() {
-  if (menubarCarouselTimer) clearInterval(menubarCarouselTimer);
-  menubarCarouselTimer = setInterval(() => setMenubarViz(menubarVizIndex + 1, false), MENUBAR_CAROUSEL_INTERVAL_MS);
-}
-
-// Token totals for a given day key, used for the "vs. yesterday" hero context.
 function menubarDayTotal(dayKey: string) {
   const enabled = sourceVisibility().enabled;
   let total = 0;
@@ -2663,23 +2768,46 @@ function menubarDayTotal(dayKey: string) {
   return total;
 }
 
-// 24 token buckets (one per hour) for today.
-function menubarTodayHourBuckets() {
+// Per-hour totals for today, each split by source so the rhythm bars can be tinted by their
+// dominant agent and hovering a bar can read out that hour's breakdown.
+function menubarTodayHourRows(): { total: number; dominant: string | null }[] {
   const enabled = sourceVisibility().enabled;
-  const buckets = Array.from({ length: 24 }, () => 0);
+  const totals = Array.from({ length: 24 }, () => 0);
+  const perSource = Array.from({ length: 24 }, () => new Map<string, number>());
   const todayKey = dateKey(new Date());
   for (const entry of ledger?.entries ?? []) {
     const when = new Date(entry.createdAt);
     if (dateKey(when) !== todayKey) continue;
-    buckets[when.getHours()] += xpForEntry(entry, enabled);
+    const xp = xpForEntry(entry, enabled);
+    if (xp <= 0) continue;
+    const hour = when.getHours();
+    totals[hour] += xp;
+    const source = historySourceId(entry) ?? "cloud";
+    const bucket = perSource[hour];
+    bucket.set(source, (bucket.get(source) ?? 0) + xp);
   }
-  return buckets;
+  return totals.map((total, hour) => {
+    let dominant: string | null = null;
+    let best = 0;
+    for (const [source, value] of perSource[hour]) {
+      if (value > best) {
+        best = value;
+        dominant = source;
+      }
+    }
+    return { total, dominant };
+  });
+}
+
+// Source id -> display name, matching the dashboard's history chart.
+function menubarSourceName(sourceId: string): string {
+  if (sourceId === "cloud") return t("cloudSource");
+  return AGENT_SOURCES.find((source) => source.id === sourceId)?.label ?? sourceId;
 }
 
 function renderMenubarPopover(stats: Stats, visibility: SourceVisibility) {
   const isGrowing = stats.weather.tokensPerMinute > 0 || stats.activeSessions > 0;
 
-  // --- fixed header: identity + live dot ---
   text("#menubarLevelChip", `Lv.${stats.level} ${stageLabel(stats.stage.id, stats.stage.label)}`);
   text(
     "#menubarWeatherText",
@@ -2687,23 +2815,22 @@ function renderMenubarPopover(stats: Stats, visibility: SourceVisibility) {
   );
   if (menubarLiveDot) menubarLiveDot.dataset.on = String(isGrowing);
 
-  // --- hero: today's growth as the star ---
   text("#menubarTodayText", `+${formatCompact(stats.todayXp)}`);
   if (menubarTodayCtx) menubarTodayCtx.textContent = menubarTodayContext(stats);
 
-  // --- progress ---
   text("#menubarNextLevelText", `${t("nextLevel")}${stats.level + 1}`);
   text("#menubarProgressPercent", `${Math.round(stats.levelProgress * 100)}%`);
   text("#menubarProgressText", `${formatCompact(stats.levelXp)} / ${formatCompact(stats.nextLevelXp)} token`);
   if (menubarProgressBar) menubarProgressBar.style.width = `${stats.levelProgress * 100}%`;
 
   renderMenubarRhythm();
+  renderMenubarSync();
+  renderMenubarActivity();
+  renderMenubarRank();
   renderMenubarSources(visibility);
   renderMenubarSpeed(stats);
-  renderMenubarFootline();
 }
 
-// Hero subline: "vs. yesterday +X%" when comparable, otherwise a gentle first-day copy.
 function menubarTodayContext(stats: Stats): string {
   if (stats.activeSessions > 0) {
     return `${stats.activeSessions} ${t("menubarSessionsWriting")}`;
@@ -2721,8 +2848,8 @@ function menubarTodayContext(stats: Stats): string {
 
 function renderMenubarRhythm() {
   if (!menubarRhythmBars) return;
-  const buckets = menubarTodayHourBuckets();
-  const max = Math.max(0, ...buckets);
+  const rows = menubarTodayHourRows();
+  const max = Math.max(0, ...rows.map((row) => row.total));
   const nowHour = new Date().getHours();
   if (max <= 0) {
     menubarRhythmBars.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(t("menubarRhythmQuiet"))}</div>`;
@@ -2730,21 +2857,301 @@ function renderMenubarRhythm() {
     return;
   }
   let peakHour = 0;
-  buckets.forEach((value, hour) => {
-    if (value > buckets[peakHour]) peakHour = hour;
+  rows.forEach((row, hour) => {
+    if (row.total > rows[peakHour].total) peakHour = hour;
   });
-  menubarRhythmBars.innerHTML = buckets
-    .map((value, hour) => {
-      const heightPct = value <= 0 ? 0 : Math.max(6, Math.round((value / max) * 100));
-      const lit = value >= max * 0.85 ? " lit" : "";
+  menubarRhythmBars.innerHTML = rows
+    .map((row, hour) => {
+      const heightPct = row.total <= 0 ? 0 : Math.max(6, Math.round((row.total / max) * 100));
+      const lit = row.total >= max * 0.85 ? " lit" : "";
       const now = hour === nowHour ? " now" : "";
-      const quiet = value <= 0 ? " quiet" : "";
-      return `<span class="menubar-rhythm-bar${lit}${now}${quiet}" style="--bar-height:${heightPct}%" title="${hour}:00"></span>`;
+      const quiet = row.total <= 0 ? " quiet" : "";
+      // Tint each bar by its dominant source, reusing the dashboard chart's colour classes.
+      const tone = row.dominant && row.total > 0 ? ` src-${row.dominant}` : "";
+      const label = row.total > 0 ? `${hour}:00 · +${formatCompact(row.total)}` : `${hour}:00`;
+      return `<span class="menubar-rhythm-bar${lit}${now}${quiet}${tone}" style="--bar-height:${heightPct}%" data-hour="${hour}" data-total="${row.total}" data-source="${row.dominant ?? ""}" title="${label}"></span>`;
     })
     .join("");
+  setMenubarRhythmMeta(peakHour, rows);
+}
+
+// Default meta = peak hour; hovering/focusing a bar swaps in that hour's readout (handled in
+// bindMenubarEvents). Stored so the hover handler can restore the default on mouseleave.
+let menubarRhythmPeakHour = 0;
+let menubarRhythmRows: { total: number; dominant: string | null }[] = [];
+
+function setMenubarRhythmMeta(peakHour: number, rows: { total: number; dominant: string | null }[]) {
+  menubarRhythmPeakHour = peakHour;
+  menubarRhythmRows = rows;
   if (menubarRhythmMeta) {
     menubarRhythmMeta.textContent = `${t("menubarRhythmPeak")} ${String(peakHour).padStart(2, "0")}:00`;
+    menubarRhythmMeta.classList.remove("is-hover");
   }
+}
+
+function showMenubarRhythmHour(hour: number) {
+  if (!menubarRhythmMeta) return;
+  const row = menubarRhythmRows[hour];
+  const hourLabel = `${String(hour).padStart(2, "0")}:00`;
+  if (!row || row.total <= 0) {
+    menubarRhythmMeta.textContent = `${hourLabel} · ${t("menubarRhythmQuietHour")}`;
+  } else {
+    const name = row.dominant ? menubarSourceName(row.dominant) : "";
+    menubarRhythmMeta.textContent = `${hourLabel} · +${formatCompact(row.total)}${name ? ` · ${name}` : ""}`;
+  }
+  menubarRhythmMeta.classList.add("is-hover");
+}
+
+function resetMenubarRhythmMeta() {
+  if (!menubarRhythmMeta) return;
+  menubarRhythmMeta.textContent = `${t("menubarRhythmPeak")} ${String(menubarRhythmPeakHour).padStart(2, "0")}:00`;
+  menubarRhythmMeta.classList.remove("is-hover");
+}
+
+function renderMenubarSync() {
+  if (menubarSyncButton) {
+    menubarSyncButton.disabled = cloudSyncStatus.syncing || !cloudSyncStatus.configured;
+    menubarSyncButton.textContent = cloudSyncStatus.syncing
+      ? t("cloudSyncSyncing")
+      : cloudSyncStatus.enabled
+        ? t("menubarSyncAction")
+        : t("cloudSyncEnable");
+  }
+  if (!menubarSyncList) return;
+  if (!cloudSyncStatus.configured) {
+    menubarSyncList.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(t("cloudSyncNotConfigured"))}</div>`;
+    return;
+  }
+  if (!cloudSyncStatus.enabled) {
+    menubarSyncList.innerHTML = `
+      <article class="menubar-row">
+        <span class="menubar-row-icon">云</span>
+        <div class="menubar-row-copy"><strong>${escapeHtml(t("cloudSyncJoin"))}</strong><span>${escapeHtml(t("cloudSyncLoginRequired"))}</span></div>
+        <b>${cloudSyncStatus.authenticated ? escapeHtml(t("cloudSyncEnable")) : "GitHub"}</b>
+      </article>
+    `;
+    return;
+  }
+
+  // Two clear layers: a cloud-link summary on top, then every participating device below it.
+  // "Cloud" is the aggregate of all devices syncing — not a sibling row next to them — so showing
+  // it as a header (rather than a peer of "this Mac" / "that Win") removes the win-vs-cloud overlap.
+  const devices = visibleCloudDevices(cloudSyncStatus.devices ?? []);
+  const transfer =
+    cloudSyncStatus.lastUploadedCount || cloudSyncStatus.lastDownloadedCount
+      ? `↑${cloudSyncStatus.lastUploadedCount ?? 0} ↓${cloudSyncStatus.lastDownloadedCount ?? 0}`
+      : "";
+  const cloudFresh = cloudSyncStatus.lastSyncedAt ? formatRelativeTime(cloudSyncStatus.lastSyncedAt) : t("neverSynced");
+  const cloudState = cloudSyncStatus.syncing
+    ? "active"
+    : cloudSyncStatus.error
+      ? "stuck"
+      : "done";
+  const cloudStateLabel = cloudSyncStatus.syncing
+    ? t("cloudSyncSyncing")
+    : cloudSyncStatus.error
+      ? t("needsAttention")
+      : t("healthy");
+
+  const header = `
+    <article class="menubar-row menubar-sync-cloud">
+      <span class="menubar-row-icon">☁</span>
+      <div class="menubar-row-copy">
+        <strong>${escapeHtml(t("cloudSource"))}</strong>
+        <span>${escapeHtml(cloudFresh)}${transfer ? ` · ${escapeHtml(transfer)}` : ""}</span>
+      </div>
+      <em class="menubar-status-pill ${cloudState}">${escapeHtml(cloudStateLabel)}</em>
+    </article>
+  `;
+
+  const deviceRows = devices.length
+    ? devices
+        .map((device) => {
+          const isCurrent = device.deviceId === cloudSyncStatus.deviceId;
+          const platform = menubarPlatformLabel(device.platform);
+          const name = isCurrent
+            ? t("cloudDeviceCurrent")
+            : device.alias || platform || `${t("device")} ${device.deviceId.slice(-4)}`;
+          const fresh = device.lastSyncedAt ? formatRelativeTime(device.lastSyncedAt) : t("neverSynced");
+          const meta = `${fresh}${platform && !isCurrent && device.alias ? ` · ${escapeHtml(platform)}` : ""}`;
+          return `
+        <article class="menubar-row${isCurrent ? " is-me" : ""}">
+          <span class="menubar-row-icon">${escapeHtml(menubarDeviceIcon(device.platform))}</span>
+          <div class="menubar-row-copy">
+            <strong>${escapeHtml(name)}</strong>
+            <span>${meta}</span>
+          </div>
+          <b>${formatCompact(device.tokens)}</b>
+        </article>
+      `;
+        })
+        .join("")
+    : "";
+
+  menubarSyncList.innerHTML = header + deviceRows;
+}
+
+// Short platform tag for the device icon chip.
+function menubarDeviceIcon(platform: string | undefined) {
+  const normalized = (platform ?? "").toLowerCase();
+  if (normalized.includes("mac") || normalized.includes("darwin")) return "Mac";
+  if (normalized.includes("win")) return "Win";
+  if (normalized.includes("linux")) return "Lin";
+  return "PC";
+}
+
+// Human-readable platform name for the device subtitle.
+function menubarPlatformLabel(platform: string | undefined) {
+  const normalized = (platform ?? "").toLowerCase();
+  if (normalized.includes("mac") || normalized.includes("darwin")) return "macOS";
+  if (normalized.includes("win")) return "Windows";
+  if (normalized.includes("linux")) return "Linux";
+  return platform ?? "";
+}
+
+function renderMenubarActivity() {
+  if (!menubarActivityList) return;
+  const rows = menubarAgentRows();
+  const activeCount = rows.filter((row) => row.stateClass === "active").length;
+  if (menubarActivityMeta) {
+    menubarActivityMeta.textContent = activeCount
+      ? `${activeCount} ${t("menubarSessionsWriting")}`
+      : `${rows.length} ${t("sourceTotalActive")}`;
+  }
+  const prevScroll = menubarActivityList.scrollTop;
+  menubarActivityList.innerHTML = rows.length
+    ? rows
+        .map(
+          (row) => `
+        <article class="menubar-row">
+          <span class="menubar-row-icon src-${row.sourceId}">${escapeHtml(row.shortLabel)}</span>
+          <div class="menubar-row-copy">
+            <strong>${escapeHtml(row.label)}</strong>
+            <span>${escapeHtml(row.meta)}</span>
+          </div>
+          <em class="menubar-status-pill ${row.stateClass}">${escapeHtml(row.state)}</em>
+        </article>
+      `,
+        )
+        .join("")
+    : `<div class="menubar-viz-empty">${escapeHtml(t("waitingTodayTokens"))}</div>`;
+  menubarActivityList.scrollTop = prevScroll;
+}
+
+function menubarAgentRows() {
+  return AGENT_SOURCES.filter((source) => source.id !== "cloud" && sourceVisibility().enabled.has(source.id))
+    .map((source) => {
+      const status = sourceMonitorStatus(source.id);
+      const view = menubarAgentStatusView(status);
+      return {
+        sourceId: source.id,
+        label: source.label,
+        shortLabel: source.label.slice(0, 1),
+        ...view,
+      };
+    })
+    .filter((row) => row.installed || row.lastSeenAt)
+    .sort((left, right) => {
+      const leftTime = left.lastSeenAt ? Date.parse(left.lastSeenAt) : 0;
+      const rightTime = right.lastSeenAt ? Date.parse(right.lastSeenAt) : 0;
+      if (left.stateClass !== right.stateClass) {
+        const order = ["active", "waiting", "stuck", "done", "idle"];
+        return order.indexOf(left.stateClass) - order.indexOf(right.stateClass);
+      }
+      return rightTime - leftTime;
+    });
+}
+
+function menubarAgentStatusView(status: SessionMonitorStatus | undefined) {
+  if (!status || !status.exists || status.filesWatched <= 0) {
+    return {
+      installed: false,
+      state: t("sourceNotInstalled"),
+      stateClass: "idle",
+      meta: t("sourceNotInstalled"),
+      freshness: t("waitingNewToken"),
+      lastSeenAt: undefined,
+    };
+  }
+  const lastSeenAt = status.lastEventAt ?? status.lastScanAt;
+  const ageMs = lastSeenAt ? Date.now() - new Date(lastSeenAt).getTime() : Number.POSITIVE_INFINITY;
+  const meta = `${status.filesWatched} ${t("files")} · ${lastSeenAt ? formatRelativeTime(lastSeenAt) : t("waitingNewToken")}`;
+  if (status.lastEventAt && ageMs < 5 * 60 * 1000) {
+    return { installed: true, state: t("menubarSpeedActive"), stateClass: "active", meta, freshness: formatRelativeTime(status.lastEventAt), lastSeenAt };
+  }
+  if (status.running && ageMs > 30 * 60 * 1000) {
+    return {
+      installed: true,
+      state: t("needsAttention"),
+      stateClass: "stuck",
+      meta,
+      freshness: lastSeenAt ? formatRelativeTime(lastSeenAt) : t("waitingNewToken"),
+      lastSeenAt,
+    };
+  }
+  if (status.running) {
+    return { installed: true, state: t("pending"), stateClass: "waiting", meta, freshness: lastSeenAt ? formatRelativeTime(lastSeenAt) : t("waitingNewToken"), lastSeenAt };
+  }
+  return { installed: true, state: t("done"), stateClass: "done", meta, freshness: lastSeenAt ? formatRelativeTime(lastSeenAt) : t("waitingNewToken"), lastSeenAt };
+}
+
+function renderMenubarRank() {
+  if (menubarRankRefreshButton) {
+    menubarRankRefreshButton.disabled = leaderboardLoading || !leaderboardStatus.configured;
+    menubarRankRefreshButton.textContent = leaderboardLoading ? t("leaderboardRefreshing") : t("refreshLeaderboard");
+  }
+  if (!menubarRankList) return;
+  if (!leaderboardStatus.configured) {
+    menubarRankList.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(t("leaderboardNoService"))}</div>`;
+    return;
+  }
+  if (leaderboardLoading) {
+    menubarRankList.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(t("leaderboardRefreshing"))}</div>`;
+    return;
+  }
+  const data = leaderboardDataCache.get(MENUBAR_LEADERBOARD_RANGE) ?? (leaderboardData.range === MENUBAR_LEADERBOARD_RANGE ? leaderboardData : undefined);
+  if (!data) {
+    menubarRankList.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(t("leaderboardClickRefresh"))}</div>`;
+    return;
+  }
+  if (data.error) {
+    menubarRankList.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(data.error)}</div>`;
+    return;
+  }
+  const myUserId = leaderboardStatus.profile?.id;
+  const rows = menubarRankRows(data);
+  if (!rows.length) {
+    menubarRankList.innerHTML = `<div class="menubar-viz-empty">${escapeHtml(t("leaderboardEmpty"))}</div>`;
+    return;
+  }
+  // Preserve scroll position: render() can fire on every usage push while the user is scrolling.
+  const prevRankScroll = menubarRankList.scrollTop;
+  menubarRankList.innerHTML = rows
+    .map((entry, index) => {
+      const isMe = entry.userId === myUserId;
+      // Mark a break in rank continuity (e.g. self at #50 appended after top 10).
+      const detached = index > 0 && entry.rank > rows[index - 1].rank + 1;
+      const classes = `menubar-row${isMe ? " is-me" : ""}${detached ? " is-gap" : ""}`;
+      const meTag = isMe ? ` <em>${escapeHtml(t("leaderboardMe"))}</em>` : "";
+      return `
+        <article class="${classes}">
+          <span class="menubar-row-icon">#${entry.rank}</span>
+          <div class="menubar-row-copy">
+            <strong>${escapeHtml(entry.username || t("unknownUser"))}${meTag}</strong>
+            <span>${entry.daysActive ? `${entry.daysActive} ${t("leaderboardDaysActive")}` : escapeHtml(leaderboardRangeLabel(MENUBAR_LEADERBOARD_RANGE))}</span>
+          </div>
+          <b>${formatCompact(entry.tokens)}</b>
+        </article>
+      `;
+    })
+    .join("");
+  menubarRankList.scrollTop = prevRankScroll;
+}
+
+function menubarRankRows(data: LeaderboardData) {
+  const rows = data.entries.slice(0, 10);
+  if (data.me && !rows.some((entry) => entry.userId === data.me?.userId)) rows.push(data.me);
+  return rows.sort((left, right) => left.rank - right.rank);
 }
 
 function renderMenubarSources(visibility: SourceVisibility) {
@@ -2774,7 +3181,7 @@ function renderMenubarSources(visibility: SourceVisibility) {
           const percent = totalSourceXp > 0 ? clamp((row.xp / totalSourceXp) * 100, 0, 100) : 0;
           return `
             <article class="menubar-source-row" data-source="${escapeHtml(row.sourceKey)}">
-              <span class="menubar-source-name">${escapeHtml(row.label)}</span>
+              <span class="menubar-source-name"><i class="menubar-source-dot" data-source="${escapeHtml(row.sourceKey)}"></i>${escapeHtml(row.label)}</span>
               <span class="source-meter" aria-hidden="true"><span style="width:${percent}%"></span></span>
               <b class="menubar-source-val">${formatCompact(row.xp)}</b>
             </article>
@@ -2788,26 +3195,20 @@ function renderMenubarSources(visibility: SourceVisibility) {
 function renderMenubarSpeed(stats: Stats) {
   const rate = stats.weather.tokensPerMinute;
   if (menubarSpeedMeta) {
-    menubarSpeedMeta.textContent = `${formatCompact(rate)}/min · ${rate > 0 ? t("menubarSpeedActive") : t("menubarSpeedCalm")}`;
+    menubarSpeedMeta.textContent = `${t("menubarSpeedWindow1m")} · ${formatCompact(rate)}/min`;
   }
+  if (menubarSpeedWindow) menubarSpeedWindow.textContent = t("menubarSpeedWindow5m");
+  if (menubarSpeedTotal) menubarSpeedTotal.textContent = `+${formatCompact(stats.lastFiveMinuteXp)}`;
   if (!menubarWave) return;
   const width = 320;
   const height = 82;
   const padX = 4;
   const top = 8;
   const bottom = 68;
-  const hourlyBuckets = menubarTodayHourBuckets();
-  const liveHourlyRate = rate * 60;
-  const points = 32;
-  const samples = Array.from({ length: points }, (_unused, index) => {
-    const hour = Math.round((index / (points - 1)) * 23);
-    const bucket = hourlyBuckets[hour] ?? 0;
-    const liveWeight = index > points - 7 ? (index - (points - 7)) / 6 : 0;
-    return Math.max(bucket, liveHourlyRate * liveWeight);
-  });
-  const max = Math.max(liveHourlyRate, ...hourlyBuckets, 1);
+  const samples = menubarRecentRateBuckets(300, 30);
+  const max = Math.max(rate, ...samples, 1);
   const coords = samples.map((value, index) => {
-    const x = padX + (index / (points - 1)) * (width - padX * 2);
+    const x = padX + (index / (samples.length - 1)) * (width - padX * 2);
     const y = bottom - clamp(value / max, 0, 1) * (bottom - top);
     return { x, y };
   });
@@ -2833,24 +3234,28 @@ function renderMenubarSpeed(stats: Stats) {
       <path d="${areaPath}" class="menubar-wave-area${rate > 0 ? " active" : ""}" fill="url(#menubarWaveGradient)" />
       <path d="${linePath}" class="menubar-wave-glow${rate > 0 ? " active" : ""}" fill="none" />
       <path d="${linePath}" class="menubar-wave-line${rate > 0 ? " active" : ""}" fill="none" />
+      <path d="${linePath}" class="menubar-wave-flow${rate > 0 ? " active" : ""}" />
       <line x1="${padX}" y1="${bottom}" x2="${width - padX}" y2="${bottom}" class="menubar-wave-base" />
+      <circle cx="${lastPoint.x.toFixed(1)}" cy="${lastPoint.y.toFixed(1)}" r="9" class="menubar-wave-halo${rate > 0 ? " active" : ""}" />
       <circle cx="${lastPoint.x.toFixed(1)}" cy="${lastPoint.y.toFixed(1)}" r="4" class="menubar-wave-dot${rate > 0 ? " active" : ""}" />
     </svg>
   `;
 }
 
-function renderMenubarFootline() {
-  if (!menubarFootDot && !menubarFootText) return;
-  const tone = cloudSyncStatus.syncing ? "busy" : cloudSyncStatus.enabled ? "good" : "idle";
-  if (menubarFootDot) menubarFootDot.dataset.tone = tone;
-  if (menubarFootText) {
-    const statusLabel = cloudSyncStatus.syncing
-      ? t("menubarFootSyncing")
-      : cloudSyncStatus.enabled
-        ? t("menubarFootSynced")
-        : t("menubarFootLocal");
-    menubarFootText.textContent = `${statusLabel} · ${t("menubarFootHint")}`;
+function menubarRecentRateBuckets(windowSeconds: number, bucketSeconds: number) {
+  const now = Date.now();
+  const enabled = sourceVisibility().enabled;
+  const bucketCount = Math.max(1, Math.ceil(windowSeconds / bucketSeconds));
+  const buckets = Array.from({ length: bucketCount }, () => 0);
+  const start = now - windowSeconds * 1000;
+  for (const entry of ledger?.entries ?? []) {
+    const createdAtMs = Date.parse(entry.createdAt);
+    if (!Number.isFinite(createdAtMs)) continue;
+    if (createdAtMs < start || createdAtMs > now) continue;
+    const index = Math.min(bucketCount - 1, Math.max(0, Math.floor((createdAtMs - start) / (bucketSeconds * 1000))));
+    buckets[index] += xpForEntry(entry, enabled);
   }
+  return buckets.map((tokens) => (tokens / bucketSeconds) * 60);
 }
 
 function renderDashboardTabs() {
