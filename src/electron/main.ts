@@ -2853,6 +2853,7 @@ ipcMain.handle("social:leave-group", (_event, groupId: string) => leaderboardSer
 ipcMain.handle("social:set-group-share-usage", (_event, groupId: string, shareUsage: boolean) =>
   leaderboardService.setSocialGroupShareUsage(groupId, Boolean(shareUsage)),
 );
+ipcMain.handle("social:get-profile", (_event, userId: string) => leaderboardService.getSocialProfile(userId));
 ipcMain.handle("social:group-leaderboard", (_event, groupId: string, range?: unknown) =>
   leaderboardService.getSocialGroupLeaderboard(groupId, range),
 );

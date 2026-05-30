@@ -19,6 +19,7 @@ import type {
   SocialGroupInvite,
   SocialGroupLeaderboardData,
   SocialGroupList,
+  SocialProfileResult,
   ToastPlacement,
   TreeToastItem,
   UpdateStatus,
@@ -66,6 +67,8 @@ const api = {
   leaveSocialGroup: (groupId: string) => ipcRenderer.invoke("social:leave-group", groupId) as Promise<void>,
   setSocialGroupShareUsage: (groupId: string, shareUsage: boolean) =>
     ipcRenderer.invoke("social:set-group-share-usage", groupId, shareUsage) as Promise<SocialGroup>,
+  getSocialProfile: (userId: string) =>
+    ipcRenderer.invoke("social:get-profile", userId) as Promise<SocialProfileResult>,
   getSocialGroupLeaderboard: (groupId: string, range: LeaderboardRange) =>
     ipcRenderer.invoke("social:group-leaderboard", groupId, range) as Promise<SocialGroupLeaderboardData>,
   getCloudSyncStatus: () => ipcRenderer.invoke("cloud-sync:get-status") as Promise<CloudSyncStatus>,

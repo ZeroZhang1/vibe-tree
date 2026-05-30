@@ -30,6 +30,7 @@ const api = {
   acceptSocialGroupInvite: (code) => ipcRenderer.invoke("social:accept-invite", code),
   leaveSocialGroup: (groupId) => ipcRenderer.invoke("social:leave-group", groupId),
   setSocialGroupShareUsage: (groupId, shareUsage) => ipcRenderer.invoke("social:set-group-share-usage", groupId, shareUsage),
+  getSocialProfile: (userId) => ipcRenderer.invoke("social:get-profile", userId),
   getSocialGroupLeaderboard: (groupId, range) => ipcRenderer.invoke("social:group-leaderboard", groupId, range),
   getCloudSyncStatus: () => ipcRenderer.invoke("cloud-sync:get-status"),
   startNewTree: () => ipcRenderer.invoke("cloud-sync:start-new"),

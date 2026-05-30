@@ -173,8 +173,8 @@ WHERE COALESCE(v.public_global, 1) = 1
 - 修 A2:加好友后展示头像 + 用户名确认。
 
 ### P1(公会成熟度)
-- **个人资料卡 / 主页**:头像、小树等级、成就、好友 / 群组关系 —— 区别于"用量后台"的关键。
-- `share_usage` per-group 隐私开关的完整 UI(对应"可选隐私设置")。
+- ✅ **个人资料卡 / 主页**:头像、小树等级 / 阶段、成就徽章、好友 / 群组关系 —— 区别于"用量后台"的关键。见第 6 节。
+- ✅ `share_usage` per-group 隐私开关的完整 UI(P0 已落地切换按钮,资料卡使用相同 consent 信号决定是否展示用量)。
 - 邀请管理:撤销(`revoked_at` 字段已在,缺接口)、列出当前有效邀请。
 - 角色管理:踢人、任命 officer、转让群主、删群。
 
@@ -208,3 +208,25 @@ WHERE COALESCE(v.public_global, 1) = 1
 - ⚠️ `verify-worker-api.mjs` **未在本环境运行**:沙箱禁止访问 npm registry,无法安装 `wrangler` / `@cloudflare/workers-types`,`wrangler dev` 起不来。断言代码已写好,需在有网络的环境跑一次确认。worker `index.ts` 单独 tsc 仅报缺 D1 类型定义的既有错误(非本次改动引入)。
 
 **部署提醒:** 先 apply migration + 部署 Worker,再发客户端(老 Worker 会 404 新路由)。
+
+---
+
+## 6. 个人资料卡(2026-05-31,P1 首项)
+
+把社交从"用量后台"推向"游戏好友"的分水岭功能:点好友 / 群成员 → 弹出资料卡。
+
+### 设计要点
+
+- **数据复用,不新建存储。** 服务端已有原始事实(`users.created_at` 入会时间、`daily_usage` 的 `SUM(xp)` 总量与活跃天数、`tree_achievements` 解锁 ID、好友 / 成员关系表)。等级 / 阶段公式(`100_000 × L^1.65`,新芽→完全体)与成就目录(名称 / 稀有度 / 图标)**都在客户端**——所以接口只回原始事实,renderer 用 `summarizeXpProgression`(从 `stats.ts` 导出,复用 dashboard 同一套公式)算等级、用 `ACHIEVEMENTS` 映射徽章。数字与全球榜口径一致(同样 `SUM(xp)` / `COUNT(xp>0)`)。
+- **两层隐私,与解耦的 consent 信号一致。**
+  - *访问门*(能否打开卡片):本人 / 已接受好友 / 同群成员,否则 **404**(连存在性都不暴露)。
+  - *用量层*(等级 / 总量 / 活跃天 / 成就是否展示):仅当目标有触达本查看者的 consent 信号——本人、已上全球榜(`public_global=1`)、或在共享群里 `share_usage=1`。好友若全关,则只显示身份层(头像 / 名字 / 入会 / 关系数)。这把"群内展示到什么程度"用既有开关回答了,而非新发明隐私模型。
+
+### 改动文件
+
+- **Worker** [`index.ts`](../server/leaderboard-worker/src/index.ts):新增 `getSocialProfile`(关系门 + consent 判定 + `SUM(xp)`/成就聚合),接入 `handleSocialRoute` 的 `GET /api/social/users/:userId/profile`。
+- **类型 / IPC / preload**:`shared/types.ts` 加 `SocialProfile` / `SocialProfileResult`;`leaderboard.ts` 加 `getSocialProfile` + `normalizeSocialProfile`;`main.ts` 加 `social:get-profile`;`preload.ts`+`preload.cjs`+`global.d.ts` 补签名。
+- **Renderer** [`main.ts`](../src/renderer/main.ts):新增资料卡 modal(`appShell.ts`)、`openSocialProfile`/`closeSocialProfile`/`renderSocialProfile`、好友行与群组榜行包成 `.social-profile-trigger` 点击触发;`stats.ts` 导出 `summarizeXpProgression`;`styles.css` 加资料卡样式(复用 `--rarity-*` 徽章色);`i18n.ts` 中英双补 `socialProfile*` 文案。
+- **verify** [`verify-worker-api.mjs`](../server/leaderboard-worker/scripts/verify-worker-api.mjs):加 `user-stranger` fixture + 断言 (e):本人卡含成就 / 总量 / 入会;同群查看公开成员用量可见;查看共享群成员用量可见;无关系陌生人 404。
+
+**验证:** ✅ typecheck + build 通过;⚠️ verify 断言同样待联网环境跑(沙箱禁 npm registry)。

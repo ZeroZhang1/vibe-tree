@@ -31,6 +31,8 @@ import type {
   SocialGroupMember,
   SocialGroupRole,
   SocialGroupVisibility,
+  SocialProfile,
+  SocialProfileResult,
 } from "../shared/types.js";
 
 interface LeaderboardAuthFile {
@@ -730,6 +732,25 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     return group;
   }
 
+  async function getSocialProfile(userId: string): Promise<SocialProfileResult> {
+    if (!configured) return { error: text("leaderboardServiceNotConfigured") };
+    if (!auth.token) return { error: text("leaderboardLoginRequired") };
+
+    const targetUserId = cleanOptionalString(userId, 80);
+    if (!targetUserId) return { error: text("socialProfileLoadFailed") };
+    try {
+      const data = await requestJson<unknown>(
+        apiUrl(`/api/social/users/${encodeURIComponent(targetUserId)}/profile`),
+        { token: auth.token },
+      );
+      const profile = normalizeSocialProfile((data as { profile?: unknown })?.profile ?? data);
+      if (!profile) return { error: text("socialProfileLoadFailed") };
+      return { profile };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : text("socialProfileLoadFailed") };
+    }
+  }
+
   async function getSocialGroupLeaderboard(groupId: string, rangeInput: unknown): Promise<SocialGroupLeaderboardData> {
     const range = normalizeRange(rangeInput);
     if (!configured) return socialGroupLeaderboardWithError(groupId, range, text("leaderboardServiceNotConfigured"));
@@ -1223,6 +1244,7 @@ export function createLeaderboardService(options: LeaderboardServiceOptions) {
     acceptSocialGroupInvite,
     leaveSocialGroup,
     setSocialGroupShareUsage,
+    getSocialProfile,
     getSocialGroupLeaderboard,
   };
 }
@@ -1725,6 +1747,46 @@ function normalizeSocialMember(value: unknown): SocialGroupMember | undefined {
   const updatedAt =
     typeof member.updatedAt === "string" && Number.isFinite(Date.parse(member.updatedAt)) ? member.updatedAt : undefined;
   return { userId, username, avatarUrl, role, shareUsage, joinedAt, updatedAt };
+}
+
+function normalizeSocialProfile(value: unknown): SocialProfile | undefined {
+  const profile = value as Partial<SocialProfile> | undefined;
+  if (!profile) return undefined;
+  const id = typeof profile.id === "string" && profile.id.trim() ? profile.id.trim() : undefined;
+  const username = typeof profile.username === "string" && profile.username.trim() ? profile.username.trim() : undefined;
+  if (!id || !username) return undefined;
+  const avatarUrl = typeof profile.avatarUrl === "string" && profile.avatarUrl.trim() ? profile.avatarUrl.trim() : undefined;
+  const joinedAt =
+    typeof profile.joinedAt === "string" && Number.isFinite(Date.parse(profile.joinedAt)) ? profile.joinedAt : undefined;
+  const usageVisible = profile.usageVisible === true;
+  const achievements: SocialProfile["achievements"] = [];
+  if (Array.isArray(profile.achievements)) {
+    for (const entry of profile.achievements) {
+      const item = entry as { id?: unknown; unlockedAt?: unknown } | undefined;
+      const achievementId = typeof item?.id === "string" && item.id.trim() ? item.id.trim() : undefined;
+      if (!achievementId) continue;
+      const unlockedAt =
+        typeof item?.unlockedAt === "string" && Number.isFinite(Date.parse(item.unlockedAt))
+          ? item.unlockedAt
+          : undefined;
+      achievements.push({ id: achievementId, unlockedAt });
+    }
+  }
+  return {
+    id,
+    username,
+    avatarUrl,
+    joinedAt,
+    isSelf: profile.isSelf === true,
+    isFriend: profile.isFriend === true,
+    mutualGroupCount: nonNegativeInteger(profile.mutualGroupCount) ?? 0,
+    friendCount: nonNegativeInteger(profile.friendCount) ?? 0,
+    groupCount: nonNegativeInteger(profile.groupCount) ?? 0,
+    usageVisible,
+    totalTokens: usageVisible ? nonNegativeInteger(profile.totalTokens) ?? 0 : undefined,
+    daysActive: usageVisible ? nonNegativeInteger(profile.daysActive) ?? 0 : undefined,
+    achievements: usageVisible ? achievements : undefined,
+  };
 }
 
 function normalizeSocialInvite(value: unknown): SocialGroupInvite | undefined {

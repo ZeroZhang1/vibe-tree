@@ -570,6 +570,11 @@ async function handleSocialRoute(request: Request, env: Env) {
     return await acceptSocialGroupInvite(request, env, decodeURIComponent(inviteAcceptMatch[1]));
   }
 
+  const profileMatch = url.pathname.match(/^\/api\/social\/users\/([^/]+)\/profile$/);
+  if (profileMatch && request.method === "GET") {
+    return await getSocialProfile(request, env, decodeURIComponent(profileMatch[1]));
+  }
+
   return json({ error: "Not found" }, env, 404);
 }
 
@@ -760,6 +765,104 @@ async function setSocialGroupShareUsage(request: Request, env: Env, groupId: str
     "UPDATE social_group_members SET share_usage = ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
   ).bind(shareUsage, new Date().toISOString(), groupId, user.userId).run();
   return json({ group: await requireSocialGroupPayload(groupId, user.userId, env) }, env);
+}
+
+async function getSocialProfile(request: Request, env: Env, targetUserId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const target = cleanShortText(targetUserId, 80);
+  if (!target) throw new HttpError(400, "Profile target is invalid.", {}, "invalid_payload");
+
+  const isSelf = target === user.userId;
+  const targetRow = await env.DB.prepare(
+    "SELECT user_id AS userId, username, avatar_url AS avatarUrl, created_at AS createdAt FROM users WHERE user_id = ?",
+  ).bind(target).first<Record<string, unknown>>();
+  // A 404 on a missing user is indistinguishable from a 404 on "no relationship",
+  // so a stranger's existence is never revealed.
+  if (!targetRow) throw new HttpError(404, "Profile not found.");
+
+  // Access gate: only self, accepted friends, or co-members may open the card.
+  let isFriend = false;
+  if (!isSelf) {
+    const pair = orderedSocialUserPair(user.userId, target);
+    const friendship = await socialFriendshipRow(pair.userLow, pair.userHigh, env);
+    isFriend = normalizeSocialFriendStatus(friendship?.status) === "accepted";
+  }
+  const mutualGroupRow = isSelf
+    ? undefined
+    : await env.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM social_group_members a
+         JOIN social_group_members b ON b.group_id = a.group_id AND b.user_id = ?
+         WHERE a.user_id = ?`,
+      ).bind(target, user.userId).first<{ count?: number }>();
+  const mutualGroupCount = numberOrZero(mutualGroupRow?.count);
+  if (!isSelf && !isFriend && mutualGroupCount === 0) {
+    throw new HttpError(404, "Profile not found.");
+  }
+
+  // Usage visibility honors the same consent signals the leaderboards use:
+  // self, opted into the global board, or sharing usage in a group we both belong to.
+  let usageVisible = isSelf;
+  if (!usageVisible) {
+    await ensureUsageVisibilityTable(env);
+    const visibilityRow = await env.DB.prepare(
+      "SELECT public_global AS publicGlobal FROM usage_visibility WHERE user_id = ?",
+    ).bind(target).first<{ publicGlobal?: number }>();
+    const publicGlobal = visibilityRow ? numberOrZero(visibilityRow.publicGlobal) > 0 : true;
+    if (publicGlobal) {
+      usageVisible = true;
+    } else {
+      const sharedRow = await env.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM social_group_members a
+         JOIN social_group_members b ON b.group_id = a.group_id AND b.user_id = ? AND b.share_usage > 0
+         WHERE a.user_id = ?`,
+      ).bind(target, user.userId).first<{ count?: number }>();
+      usageVisible = numberOrZero(sharedRow?.count) > 0;
+    }
+  }
+
+  const friendCountRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM social_friendships WHERE (user_low = ? OR user_high = ?) AND status = 'accepted'",
+  ).bind(target, target).first<{ count?: number }>();
+  const groupCountRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM social_group_members WHERE user_id = ?",
+  ).bind(target).first<{ count?: number }>();
+
+  const profile: Record<string, unknown> = {
+    id: String(targetRow.userId),
+    username: String(targetRow.username),
+    avatarUrl: typeof targetRow.avatarUrl === "string" ? targetRow.avatarUrl : undefined,
+    joinedAt: typeof targetRow.createdAt === "string" ? targetRow.createdAt : undefined,
+    isSelf,
+    isFriend,
+    mutualGroupCount,
+    friendCount: numberOrZero(friendCountRow?.count),
+    groupCount: numberOrZero(groupCountRow?.count),
+    usageVisible,
+  };
+
+  if (usageVisible) {
+    const usageRow = await env.DB.prepare(
+      `SELECT COALESCE(SUM(xp), 0) AS tokens,
+              COALESCE(SUM(CASE WHEN xp > 0 THEN 1 ELSE 0 END), 0) AS daysActive
+       FROM daily_usage WHERE user_id = ?`,
+    ).bind(target).first<{ tokens?: number; daysActive?: number }>();
+    profile.totalTokens = numberOrZero(usageRow?.tokens);
+    profile.daysActive = numberOrZero(usageRow?.daysActive);
+
+    await ensureCloudTreeTables(env);
+    const achievementRows = await env.DB.prepare(
+      "SELECT achievement_id AS id, unlocked_at AS unlockedAt FROM tree_achievements WHERE user_id = ? ORDER BY unlocked_at ASC",
+    ).bind(target).all<Record<string, unknown>>();
+    profile.achievements = (achievementRows.results || []).map((row) => ({
+      id: String(row.id),
+      unlockedAt: typeof row.unlockedAt === "string" ? row.unlockedAt : undefined,
+    }));
+  }
+
+  return json({ profile }, env);
 }
 
 async function acceptSocialGroupInvite(request: Request, env: Env, code: string) {

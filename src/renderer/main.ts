@@ -14,6 +14,7 @@ import type {
   SocialGroupInvite,
   SocialGroupLeaderboardData,
   SocialGroupRole,
+  SocialProfile,
   TreeAsset,
   UiTheme,
   UpdateStatus,
@@ -60,7 +61,7 @@ import {
   sourceVisibility as buildSourceVisibility,
   xpForEntry,
 } from "./sources";
-import { StatsCache } from "./stats";
+import { StatsCache, summarizeXpProgression } from "./stats";
 import { DEFAULT_GAME_BALANCE, DEFAULT_PURE_SVG_MANIFEST, buildTreeAsset } from "./treeAssets";
 import type {
   AchievementCategoryFilter,
@@ -190,6 +191,11 @@ let socialGroupLeaderboard: SocialGroupLeaderboardData | null = null;
 let socialGroupLeaderboardLoading = false;
 const socialGroupLeaderboardCache = new Map<string, SocialGroupLeaderboardData>();
 let socialRenderKey = "";
+let socialProfileOpen = false;
+let socialProfileLoading = false;
+let socialProfileUserId: string | null = null;
+let socialProfile: SocialProfile | null = null;
+let socialProfileError = "";
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
@@ -377,6 +383,10 @@ const socialInviteGroupSummary = document.querySelector<HTMLElement>("#socialInv
 const socialCreateInviteButton = document.querySelector<HTMLButtonElement>("#socialCreateInviteButton");
 const socialInviteOutput = document.querySelector<HTMLElement>("#socialInviteOutput");
 const socialGroupLeaderboardRows = document.querySelector<HTMLElement>("#socialGroupLeaderboardRows");
+const socialProfileModal = document.querySelector<HTMLElement>("#socialProfileModal");
+const socialProfileBackdrop = document.querySelector<HTMLElement>("#socialProfileBackdrop");
+const socialProfileCloseButton = document.querySelector<HTMLButtonElement>("#socialProfileCloseButton");
+const socialProfileBody = document.querySelector<HTMLElement>("#socialProfileBody");
 const shareExportButton = document.querySelector<HTMLButtonElement>("#shareExportButton");
 const treeStartModal = document.querySelector<HTMLElement>("#treeStartModal");
 const treeStartNewButton = document.querySelector<HTMLButtonElement>("#treeStartNewButton");
@@ -989,6 +999,10 @@ function bindEvents() {
 
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (socialProfileOpen) {
+        closeSocialProfile();
+        return;
+      }
       setSettingsOpen(false);
       setSocialGroupActionsOpen(false);
     }
@@ -1335,6 +1349,12 @@ function bindEvents() {
   });
 
   socialFriendList?.addEventListener("click", (event) => {
+    const profileTrigger = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-profile-id]");
+    if (profileTrigger) {
+      const profileUserId = profileTrigger.dataset.socialProfileId;
+      if (profileUserId) void openSocialProfile(profileUserId);
+      return;
+    }
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-friend-action]");
     if (!button) return;
     const userId = button.dataset.socialFriendId;
@@ -1380,6 +1400,21 @@ function bindEvents() {
     } else if (button.dataset.socialGroupAction === "toggle-share") {
       void toggleSocialGroupShareUsage(groupId);
     }
+  });
+
+  socialGroupLeaderboardRows?.addEventListener("click", (event) => {
+    const trigger = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-profile-id]");
+    if (!trigger) return;
+    const profileUserId = trigger.dataset.socialProfileId;
+    if (profileUserId) void openSocialProfile(profileUserId);
+  });
+
+  socialProfileCloseButton?.addEventListener("click", () => {
+    closeSocialProfile();
+  });
+
+  socialProfileBackdrop?.addEventListener("click", () => {
+    closeSocialProfile();
   });
 
   socialGroupRangeTabs?.addEventListener("click", (event) => {
@@ -2104,6 +2139,136 @@ function setSocialGroupActionsOpen(open: boolean) {
       (socialGroups.length ? socialInviteCodeInput : socialGroupNameInput)?.focus();
     }, 0);
   }
+}
+
+async function openSocialProfile(userId: string) {
+  const targetUserId = userId.trim();
+  if (!targetUserId) return;
+  socialProfileOpen = true;
+  socialProfileUserId = targetUserId;
+  socialProfileLoading = true;
+  socialProfile = null;
+  socialProfileError = "";
+  setSocialProfileModalOpen(true);
+  renderSocialProfile();
+
+  const result = await window.bonsai.getSocialProfile(targetUserId);
+  // A newer click may have superseded this fetch (or the modal was closed).
+  if (!socialProfileOpen || socialProfileUserId !== targetUserId) return;
+  socialProfileLoading = false;
+  if (result.profile) {
+    socialProfile = result.profile;
+    socialProfileError = "";
+  } else {
+    socialProfile = null;
+    socialProfileError = result.error || t("socialProfileLoadFailed");
+  }
+  renderSocialProfile();
+}
+
+function closeSocialProfile() {
+  if (!socialProfileOpen) return;
+  socialProfileOpen = false;
+  socialProfileUserId = null;
+  socialProfile = null;
+  socialProfileError = "";
+  socialProfileLoading = false;
+  setSocialProfileModalOpen(false);
+}
+
+function setSocialProfileModalOpen(open: boolean) {
+  if (!socialProfileModal) return;
+  socialProfileModal.hidden = !open;
+  socialProfileModal.classList.toggle("open", open);
+  socialProfileModal.setAttribute("aria-hidden", String(!open));
+  if (open) {
+    window.setTimeout(() => socialProfileCloseButton?.focus(), 0);
+  }
+}
+
+function renderSocialProfile() {
+  if (!socialProfileBody) return;
+  if (socialProfileLoading) {
+    socialProfileBody.innerHTML = `<div class="social-profile-status">${escapeHtml(t("socialProfileLoading"))}</div>`;
+    return;
+  }
+  if (socialProfileError) {
+    socialProfileBody.innerHTML = `<div class="social-profile-status">${escapeHtml(socialProfileError)}</div>`;
+    return;
+  }
+  const profile = socialProfile;
+  if (!profile) {
+    socialProfileBody.innerHTML = `<div class="social-profile-status">${escapeHtml(t("socialProfileLoadFailed"))}</div>`;
+    return;
+  }
+
+  const relationLabel = profile.isSelf
+    ? t("socialProfileRelationSelf")
+    : profile.isFriend
+      ? t("socialProfileRelationFriend")
+      : profile.mutualGroupCount > 0
+        ? t("socialProfileRelationGroup")
+        : "";
+  const joined = profile.joinedAt
+    ? `${t("socialProfileJoined")} ${new Date(profile.joinedAt).toLocaleDateString(languageLocale(), { year: "numeric", month: "long" })}`
+    : "";
+
+  const headerHtml = `
+    <div class="social-profile-identity">
+      ${leaderboardAvatar(profile.avatarUrl, profile.username)}
+      <div class="social-profile-identity-copy">
+        <strong>${escapeHtml(profile.username)}</strong>
+        ${relationLabel ? `<span class="social-profile-relation">${escapeHtml(relationLabel)}</span>` : ""}
+        ${joined ? `<span class="social-profile-joined">${escapeHtml(joined)}</span>` : ""}
+      </div>
+    </div>
+    <div class="social-profile-relations">
+      <article><strong>${formatNumber(profile.friendCount)}</strong><span>${escapeHtml(t("socialProfileFriends"))}</span></article>
+      <article><strong>${formatNumber(profile.groupCount)}</strong><span>${escapeHtml(t("socialProfileGroups"))}</span></article>
+    </div>
+  `;
+
+  let bodyHtml = "";
+  if (profile.usageVisible) {
+    const balance = gameBalance ?? DEFAULT_GAME_BALANCE;
+    const progression = summarizeXpProgression(profile.totalTokens ?? 0, balance);
+    const progressPercent = Math.round(progression.progress * 100);
+    bodyHtml = `
+      <div class="social-profile-level">
+        <div class="social-profile-level-head">
+          <strong>Lv.${progression.level}</strong>
+          <span>${escapeHtml(progression.stageLabel)}</span>
+        </div>
+        <div class="progress-track xp-track"><span style="width:${progressPercent}%"></span></div>
+      </div>
+      <div class="social-profile-metrics">
+        <article><strong>${formatNumber(profile.totalTokens ?? 0)}</strong><span>${escapeHtml(t("metricTotalTokens"))}</span></article>
+        <article><strong>${formatNumber(profile.daysActive ?? 0)}</strong><span>${escapeHtml(t("leaderboardDaysActive"))}</span></article>
+      </div>
+      ${renderSocialProfileAchievements(profile.achievements ?? [])}
+    `;
+  } else {
+    bodyHtml = `<div class="social-profile-private">${escapeHtml(t("socialProfileUsageHidden"))}</div>`;
+  }
+
+  socialProfileBody.innerHTML = headerHtml + bodyHtml;
+}
+
+function renderSocialProfileAchievements(achievements: SocialProfile["achievements"]) {
+  const unlocked = achievements ?? [];
+  const heading = `<div class="social-profile-section-title"><strong>${escapeHtml(t("memorialAchievements"))}</strong><span>${unlocked.length}</span></div>`;
+  if (!unlocked.length) {
+    return `<section class="social-profile-achievements">${heading}<div class="social-profile-empty">${escapeHtml(t("socialProfileNoAchievements"))}</div></section>`;
+  }
+  const byId = new Map(unlocked.map((entry) => [entry.id, entry]));
+  const defs = ACHIEVEMENTS.filter((def) => byId.has(def.id)).sort((a, b) => rarityOrder(a.rarity) - rarityOrder(b.rarity));
+  const badges = defs
+    .map((def) => {
+      const copy = achievementText(def);
+      return `<span class="social-profile-badge rarity-${def.rarity}" title="${escapeHtml(copy.description)}">${escapeHtml(copy.name)}</span>`;
+    })
+    .join("");
+  return `<section class="social-profile-achievements">${heading}<div class="social-profile-badges">${badges}</div></section>`;
 }
 
 function isSettingsCategory(value: string | undefined): value is SettingsCategory {
@@ -4515,11 +4680,13 @@ function renderSocial() {
           const removeLabel = pending && friend.direction === "outgoing" ? t("socialFriendCancel") : t("socialFriendRemove");
           return `
             <article class="social-friend-item${pending ? " pending" : ""}">
-              ${socialFriendAvatar(friend)}
-              <span class="social-friend-copy">
-                <strong>${escapeHtml(friend.username)}</strong>
-                <span>${socialFriendStatusLabel(friend)}</span>
-              </span>
+              <button class="social-profile-trigger" type="button" data-social-profile-id="${escapeHtml(friend.userId)}" title="${escapeHtml(t("socialProfileOpenHint"))}">
+                ${socialFriendAvatar(friend)}
+                <span class="social-friend-copy">
+                  <strong>${escapeHtml(friend.username)}</strong>
+                  <span>${socialFriendStatusLabel(friend)}</span>
+                </span>
+              </button>
               <span class="social-friend-actions">
                 ${
                   canAccept
@@ -4621,12 +4788,14 @@ function renderSocial() {
       return `
         <article class="leaderboard-row social-leaderboard-row${isMe ? " is-me" : ""}">
           <strong class="leaderboard-rank">#${entry.rank}</strong>
-          ${leaderboardAvatar(entry.avatarUrl, entry.username)}
-          <div class="leaderboard-person">
-            <strong>${escapeHtml(entry.username || t("unknownUser"))}${isMe ? ` <em>${t("leaderboardMe")}</em>` : ""}</strong>
-            <span>${socialRoleLabel(entry.role)}</span>
-            ${days}
-          </div>
+          <button class="social-profile-trigger leaderboard-person-trigger" type="button" data-social-profile-id="${escapeHtml(entry.userId)}" title="${escapeHtml(t("socialProfileOpenHint"))}">
+            ${leaderboardAvatar(entry.avatarUrl, entry.username)}
+            <div class="leaderboard-person">
+              <strong>${escapeHtml(entry.username || t("unknownUser"))}${isMe ? ` <em>${t("leaderboardMe")}</em>` : ""}</strong>
+              <span>${socialRoleLabel(entry.role)}</span>
+              ${days}
+            </div>
+          </button>
           <strong class="leaderboard-tokens">${formatNumber(entry.tokens)} token</strong>
         </article>
       `;

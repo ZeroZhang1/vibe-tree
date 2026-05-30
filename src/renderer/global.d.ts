@@ -18,6 +18,7 @@ import type {
   SocialGroupInvite,
   SocialGroupLeaderboardData,
   SocialGroupList,
+  SocialProfileResult,
   ToastPlacement,
   TreeToastItem,
   UpdateStatus,
@@ -57,6 +58,7 @@ declare global {
       acceptSocialGroupInvite: (code: string) => Promise<SocialGroup>;
       leaveSocialGroup: (groupId: string) => Promise<void>;
       setSocialGroupShareUsage: (groupId: string, shareUsage: boolean) => Promise<SocialGroup>;
+      getSocialProfile: (userId: string) => Promise<SocialProfileResult>;
       getSocialGroupLeaderboard: (groupId: string, range: LeaderboardRange) => Promise<SocialGroupLeaderboardData>;
       getCloudSyncStatus: () => Promise<CloudSyncStatus>;
       startNewTree: () => Promise<CloudSyncStatus>;

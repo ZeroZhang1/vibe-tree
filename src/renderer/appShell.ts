@@ -281,6 +281,18 @@ export function appShellHtml(viewMode: ViewMode) {
           </div>
         </section>
 
+        <section class="social-profile-modal" id="socialProfileModal" aria-hidden="true" hidden>
+          <div class="social-profile-backdrop" id="socialProfileBackdrop"></div>
+          <div class="social-profile-panel" role="dialog" aria-modal="true" aria-labelledby="socialProfileTitle">
+            <header>
+              <p class="eyebrow" data-i18n="socialProfileEyebrow">Adventurer</p>
+              <h3 id="socialProfileTitle" data-i18n="socialProfileTitle">资料卡</h3>
+              <button class="icon-button" id="socialProfileCloseButton" type="button" aria-label="关闭" data-i18n-aria="close">×</button>
+            </header>
+            <div class="social-profile-body" id="socialProfileBody"></div>
+          </div>
+        </section>
+
         <section class="source-card" aria-label="Token 来源" data-i18n-aria="sourceAria">
           <div class="section-header">
             <h3 data-i18n="sourceTitle">数据来源</h3>

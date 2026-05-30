@@ -174,6 +174,34 @@ export interface SocialGroupList {
   error?: string;
 }
 
+export interface SocialProfileAchievement {
+  id: string;
+  unlockedAt?: string;
+}
+
+export interface SocialProfile {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+  joinedAt?: string;
+  isSelf: boolean;
+  isFriend: boolean;
+  mutualGroupCount: number;
+  friendCount: number;
+  groupCount: number;
+  // When false, the viewer has no consent signal to see usage figures and the
+  // fields below are omitted (identity-only card).
+  usageVisible: boolean;
+  totalTokens?: number;
+  daysActive?: number;
+  achievements?: SocialProfileAchievement[];
+}
+
+export interface SocialProfileResult {
+  profile?: SocialProfile;
+  error?: string;
+}
+
 export interface CreateSocialGroupInput {
   name: string;
   description?: string;

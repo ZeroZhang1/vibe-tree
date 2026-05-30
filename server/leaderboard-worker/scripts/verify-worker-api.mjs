@@ -12,6 +12,8 @@ const token = "verify-worker-token";
 const tokenHash = createHash("sha256").update(token).digest("hex");
 const friendToken = "verify-friend-token";
 const friendTokenHash = createHash("sha256").update(friendToken).digest("hex");
+const strangerToken = "verify-stranger-token";
+const strangerTokenHash = createHash("sha256").update(strangerToken).digest("hex");
 const now = "2026-05-27T00:00:00.000Z";
 const expiresAt = "2099-01-01T00:00:00.000Z";
 const port = 17_000 + Math.floor(Math.random() * 1_000);
@@ -28,11 +30,17 @@ VALUES ('user-verify', 'verify-user', NULL, NULL, '${now}', '${now}');
 INSERT OR REPLACE INTO users (user_id, username, avatar_url, profile_url, created_at, updated_at)
 VALUES ('user-friend', 'friend-user', NULL, NULL, '${now}', '${now}');
 
+INSERT OR REPLACE INTO users (user_id, username, avatar_url, profile_url, created_at, updated_at)
+VALUES ('user-stranger', 'stranger-user', NULL, NULL, '${now}', '${now}');
+
 INSERT OR REPLACE INTO sessions (token_hash, user_id, created_at, expires_at)
 VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
 
 INSERT OR REPLACE INTO sessions (token_hash, user_id, created_at, expires_at)
 VALUES ('${friendTokenHash}', 'user-friend', '${now}', '${expiresAt}');
+
+INSERT OR REPLACE INTO sessions (token_hash, user_id, created_at, expires_at)
+VALUES ('${strangerTokenHash}', 'user-stranger', '${now}', '${expiresAt}');
 `;
 
   devProcess = spawnWrangler([
@@ -409,6 +417,41 @@ VALUES ('${friendTokenHash}', 'user-friend', '${now}', '${expiresAt}');
     "non-public member should still appear on the group board",
   );
 
+  // (e) profile cards: relationship-gated access + usage-consent honoring.
+  // user-verify and user-friend are co-members (not friends); user-verify is public-global,
+  // user-friend is private-global but shares usage in the group; user-stranger has no relationship.
+  const selfProfile = await requestJson("/api/social/users/user-verify/profile");
+  assert(selfProfile.profile?.isSelf === true, "own profile should be flagged as self");
+  assert(selfProfile.profile?.usageVisible === true, "own profile should always expose usage");
+  assert(typeof selfProfile.profile?.totalTokens === "number", "own profile should include token total");
+  assert(
+    Array.isArray(selfProfile.profile?.achievements) && selfProfile.profile.achievements.length === 2,
+    "own profile should include unlocked achievements",
+  );
+  assert(typeof selfProfile.profile?.joinedAt === "string", "profile should include the join date");
+
+  // Co-member viewing a public-global member: usage visible because they're on the global board.
+  const coMemberView = await requestJson("/api/social/users/user-verify/profile", { token: friendToken });
+  assert(coMemberView.profile?.isSelf === false, "co-member view should not be flagged as self");
+  assert(coMemberView.profile?.mutualGroupCount >= 1, "co-members should report a shared group");
+  assert(
+    coMemberView.profile?.usageVisible === true,
+    "a global-board member's usage should be visible to a co-member",
+  );
+
+  // Owner viewing the private-global member: usage still visible because they share usage in the group.
+  const sharingMemberView = await requestJson("/api/social/users/user-friend/profile");
+  assert(
+    sharingMemberView.profile?.usageVisible === true,
+    "a member sharing usage in a shared group should expose usage to a co-member",
+  );
+
+  // A stranger with no friendship and no shared group cannot even open the card (404, existence hidden).
+  await assertRejects(
+    () => requestJson("/api/social/users/user-verify/profile", { token: strangerToken }),
+    "a user with no relationship should not be able to view a profile",
+  );
+
   await assertRejects(
     () =>
       requestJson("/api/usage/daily", {
@@ -461,7 +504,7 @@ VALUES ('${friendTokenHash}', 'user-friend', '${now}', '${expiresAt}');
     "leaving a group should remove the member from the group board",
   );
 
-  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, social friends, social groups/invites/group leaderboard, group/global decoupling (private members, leave-keeps-group-data, leave-group, share toggle), legacy fallback, and leaderboard leave safety passed.");
+  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, social friends, social groups/invites/group leaderboard, group/global decoupling (private members, leave-keeps-group-data, leave-group, share toggle), relationship-gated profile cards (self/co-member/sharing/stranger), legacy fallback, and leaderboard leave safety passed.");
 } finally {
   if (devProcess) await terminate(devProcess);
   rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
