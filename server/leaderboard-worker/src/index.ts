@@ -12,6 +12,9 @@ export interface Env {
 type LeaderboardRange = "24h" | "7d" | "30d" | "all";
 type UsagePreferencePeriod = "early" | "morning" | "afternoon" | "evening" | "night";
 type RateLimitName = "PUBLIC_READ_RATE_LIMITER" | "AUTH_RATE_LIMITER" | "WRITE_RATE_LIMITER";
+type SocialFriendStatus = "pending" | "accepted";
+type SocialGroupRole = "leader" | "officer" | "member";
+type SocialGroupVisibility = "invite" | "closed";
 type SecurityEventType =
   | "rate_limited"
   | "invalid_callback"
@@ -80,6 +83,30 @@ interface LeaderboardEntry {
   usagePreference?: ReturnType<typeof rowToUsagePreference>;
 }
 
+interface SocialGroupRow {
+  groupId: string;
+  name: string;
+  description?: string | null;
+  iconEmoji?: string | null;
+  visibility: SocialGroupVisibility;
+  ownerUserId: string;
+  createdAt: string;
+  updatedAt: string;
+  memberCount?: number;
+  role?: SocialGroupRole;
+  shareUsage?: number;
+}
+
+interface SocialGroupMemberRow {
+  userId: string;
+  username: string;
+  avatarUrl?: string | null;
+  role: SocialGroupRole;
+  shareUsage: number;
+  joinedAt: string;
+  updatedAt: string;
+}
+
 class HttpError extends Error {
   constructor(
     public status: number,
@@ -118,6 +145,9 @@ export default {
       if (url.pathname === "/api/tree/events" && request.method === "POST") return await syncCloudTreeEvents(request, env);
       if (url.pathname === "/api/tree/achievements" && request.method === "POST") return await syncCloudTreeAchievements(request, env);
       if (url.pathname === "/api/usage/daily" && request.method === "POST") return await syncDailyUsage(request, env);
+      if (url.pathname === "/api/social/groups" && request.method === "GET") return await listSocialGroups(request, env);
+      if (url.pathname === "/api/social/groups" && request.method === "POST") return await createSocialGroup(request, env);
+      if (url.pathname.startsWith("/api/social/")) return await handleSocialRoute(request, env);
       if (url.pathname === "/api/leaderboards" && request.method === "GET") return await getLeaderboards(request, env);
       if (url.pathname === "/api/leaderboard" && request.method === "GET") return await getLeaderboard(request, env);
       return json({ error: "Not found" }, env, 404);
@@ -202,6 +232,9 @@ function rateLimitPolicy(request: Request): { name: RateLimitName; keyPrefix: st
     route === "POST /api/usage/daily"
   ) {
     return { name: "WRITE_RATE_LIMITER", keyPrefix: `api:${url.pathname}` };
+  }
+  if (url.pathname.startsWith("/api/social/")) {
+    return { name: "WRITE_RATE_LIMITER", keyPrefix: "api:/api/social" };
   }
 
   return undefined;
@@ -415,8 +448,29 @@ async function deleteMe(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   await ensureCloudTreeTables(env);
+  await ensureSocialTables(env);
   await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM social_group_invite_redemptions
+       WHERE user_id = ?
+          OR group_id IN (SELECT group_id FROM social_groups WHERE owner_user_id = ?)`,
+    ).bind(user.userId, user.userId),
+    env.DB.prepare(
+      `DELETE FROM social_group_invites
+       WHERE created_by_user_id = ?
+          OR group_id IN (SELECT group_id FROM social_groups WHERE owner_user_id = ?)`,
+    ).bind(user.userId, user.userId),
+    env.DB.prepare(
+      `DELETE FROM social_group_members
+       WHERE user_id = ?
+          OR group_id IN (SELECT group_id FROM social_groups WHERE owner_user_id = ?)`,
+    ).bind(user.userId, user.userId),
+    env.DB.prepare("DELETE FROM social_groups WHERE owner_user_id = ?").bind(user.userId),
+    env.DB.prepare(
+      "DELETE FROM social_friendships WHERE user_low = ? OR user_high = ? OR requester_user_id = ?",
+    ).bind(user.userId, user.userId, user.userId),
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_events WHERE user_id = ?").bind(user.userId),
@@ -425,6 +479,7 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM tree_device_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_model_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM usage_visibility WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM auth_codes WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.userId),
@@ -438,15 +493,459 @@ async function deleteMe(request: Request, env: Env) {
 async function leaveLeaderboard(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
-  await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
+  const now = new Date().toISOString();
+
+  // Leaving the global board only hides the user from public global queries.
+  // Usage rows stay intact so rejoining and group leaderboards keep continuity.
   await env.DB.batch([
-    env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
-    env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare(
+      `INSERT INTO usage_visibility (user_id, public_global, updated_at)
+       VALUES (?, 0, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         public_global = 0,
+         updated_at = excluded.updated_at`,
+    ).bind(user.userId, now),
   ]);
   leaderboardCache.clear();
   return json({ ok: true }, env);
+}
+
+async function handleSocialRoute(request: Request, env: Env) {
+  const url = new URL(request.url);
+  if (url.pathname === "/api/social/friends" && request.method === "GET") {
+    return await listSocialFriends(request, env);
+  }
+
+  if (url.pathname === "/api/social/friends" && request.method === "POST") {
+    return await requestSocialFriend(request, env);
+  }
+
+  const friendAcceptMatch = url.pathname.match(/^\/api\/social\/friends\/([^/]+)\/accept$/);
+  if (friendAcceptMatch && request.method === "POST") {
+    return await acceptSocialFriend(request, env, decodeURIComponent(friendAcceptMatch[1]));
+  }
+
+  const friendRemoveMatch = url.pathname.match(/^\/api\/social\/friends\/([^/]+)$/);
+  if (friendRemoveMatch && request.method === "DELETE") {
+    return await removeSocialFriend(request, env, decodeURIComponent(friendRemoveMatch[1]));
+  }
+
+  const groupMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)$/);
+  if (groupMatch && request.method === "GET") {
+    return await getSocialGroup(request, env, decodeURIComponent(groupMatch[1]));
+  }
+
+  const inviteCreateMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/invites$/);
+  if (inviteCreateMatch && request.method === "POST") {
+    return await createSocialGroupInvite(request, env, decodeURIComponent(inviteCreateMatch[1]));
+  }
+
+  const leaveGroupMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/members\/me$/);
+  if (leaveGroupMatch && request.method === "DELETE") {
+    return await leaveSocialGroup(request, env, decodeURIComponent(leaveGroupMatch[1]));
+  }
+
+  const membershipMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/membership$/);
+  if (membershipMatch && request.method === "POST") {
+    return await setSocialGroupShareUsage(request, env, decodeURIComponent(membershipMatch[1]));
+  }
+
+  const groupLeaderboardMatch = url.pathname.match(/^\/api\/social\/groups\/([^/]+)\/leaderboard$/);
+  if (groupLeaderboardMatch && request.method === "GET") {
+    return await getSocialGroupLeaderboard(request, env, decodeURIComponent(groupLeaderboardMatch[1]));
+  }
+
+  const inviteAcceptMatch = url.pathname.match(/^\/api\/social\/invites\/([^/]+)\/accept$/);
+  if (inviteAcceptMatch && request.method === "POST") {
+    return await acceptSocialGroupInvite(request, env, decodeURIComponent(inviteAcceptMatch[1]));
+  }
+
+  const profileMatch = url.pathname.match(/^\/api\/social\/users\/([^/]+)\/profile$/);
+  if (profileMatch && request.method === "GET") {
+    return await getSocialProfile(request, env, decodeURIComponent(profileMatch[1]));
+  }
+
+  return json({ error: "Not found" }, env, 404);
+}
+
+async function listSocialFriends(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  return json(await socialFriendListPayload(user.userId, env), env);
+}
+
+async function requestSocialFriend(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const body = await request.json().catch(() => undefined) as
+    | { username?: unknown; userId?: unknown }
+    | undefined;
+  const target = await resolveSocialFriendTarget(body, user, env);
+  const pair = orderedSocialUserPair(user.userId, target.userId);
+  const now = new Date().toISOString();
+  const existing = await socialFriendshipRow(pair.userLow, pair.userHigh, env);
+  if (!existing) {
+    await env.DB.prepare(
+      `INSERT INTO social_friendships
+         (user_low, user_high, requester_user_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'pending', ?, ?)`,
+    ).bind(pair.userLow, pair.userHigh, user.userId, now, now).run();
+    return json({ friend: await socialFriendPayload(target.userId, user.userId, env) }, env, 201);
+  }
+
+  const status = normalizeSocialFriendStatus(existing.status) ?? "pending";
+  if (status === "pending" && String(existing.requesterUserId) !== user.userId) {
+    await env.DB.prepare(
+      `UPDATE social_friendships
+       SET status = 'accepted', updated_at = ?
+       WHERE user_low = ? AND user_high = ?`,
+    ).bind(now, pair.userLow, pair.userHigh).run();
+  }
+  return json({ friend: await socialFriendPayload(target.userId, user.userId, env) }, env);
+}
+
+async function acceptSocialFriend(request: Request, env: Env, targetUserId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const target = cleanShortText(targetUserId, 80);
+  if (!target || target === user.userId) throw new HttpError(400, "Friend target is invalid.", {}, "invalid_payload");
+  const pair = orderedSocialUserPair(user.userId, target);
+  const existing = await socialFriendshipRow(pair.userLow, pair.userHigh, env);
+  if (!existing) throw new HttpError(404, "Friend request not found.");
+  const status = normalizeSocialFriendStatus(existing.status) ?? "pending";
+  if (status === "pending" && String(existing.requesterUserId) === user.userId) {
+    throw new HttpError(409, "Friend request is waiting for the other user.");
+  }
+  if (status !== "accepted") {
+    await env.DB.prepare(
+      `UPDATE social_friendships
+       SET status = 'accepted', updated_at = ?
+       WHERE user_low = ? AND user_high = ?`,
+    ).bind(new Date().toISOString(), pair.userLow, pair.userHigh).run();
+  }
+  return json({ friend: await socialFriendPayload(target, user.userId, env) }, env);
+}
+
+async function removeSocialFriend(request: Request, env: Env, targetUserId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const target = cleanShortText(targetUserId, 80);
+  if (!target || target === user.userId) throw new HttpError(400, "Friend target is invalid.", {}, "invalid_payload");
+  const pair = orderedSocialUserPair(user.userId, target);
+  await env.DB.prepare("DELETE FROM social_friendships WHERE user_low = ? AND user_high = ?")
+    .bind(pair.userLow, pair.userHigh)
+    .run();
+  return json(await socialFriendListPayload(user.userId, env), env);
+}
+
+async function listSocialGroups(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const rows = await env.DB.prepare(
+    `SELECT g.group_id AS groupId, g.name, g.description, g.icon_emoji AS iconEmoji,
+            g.visibility, g.owner_user_id AS ownerUserId, g.created_at AS createdAt,
+            g.updated_at AS updatedAt, m.role, m.share_usage AS shareUsage,
+            COUNT(all_members.user_id) AS memberCount
+     FROM social_group_members m
+     JOIN social_groups g ON g.group_id = m.group_id
+     LEFT JOIN social_group_members all_members ON all_members.group_id = g.group_id
+     WHERE m.user_id = ?
+     GROUP BY g.group_id
+     ORDER BY m.joined_at DESC`,
+  ).bind(user.userId).all<Record<string, unknown>>();
+  return json({
+    groups: (rows.results || []).map(socialGroupSummaryFromRow),
+    updatedAt: new Date().toISOString(),
+  }, env);
+}
+
+async function createSocialGroup(request: Request, env: Env) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const body = await request.json().catch(() => undefined) as
+    | { name?: unknown; description?: unknown; iconEmoji?: unknown; visibility?: unknown }
+    | undefined;
+  const name = cleanShortText(body?.name, 48);
+  if (!name) throw new HttpError(400, "Group name is required.", {}, "invalid_payload");
+  const description = cleanShortText(body?.description, 180) ?? null;
+  const iconEmoji = normalizeGroupIcon(body?.iconEmoji);
+  const visibility = normalizeSocialGroupVisibility(body?.visibility) ?? "invite";
+  const groupId = `grp_${randomToken().slice(0, 18)}`;
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO social_groups
+         (group_id, name, description, icon_emoji, visibility, owner_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(groupId, name, description, iconEmoji, visibility, user.userId, now, now),
+    env.DB.prepare(
+      `INSERT INTO social_group_members
+         (group_id, user_id, role, share_usage, joined_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(groupId, user.userId, "leader", 1, now, now),
+  ]);
+  return json({ group: await socialGroupPayload(groupId, user.userId, env) }, env, 201);
+}
+
+async function getSocialGroup(request: Request, env: Env, groupId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  return json({ group: await requireSocialGroupPayload(groupId, user.userId, env) }, env);
+}
+
+async function createSocialGroupInvite(request: Request, env: Env, groupId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const membership = await requireSocialGroupMembership(groupId, user.userId, env);
+  if (membership.role !== "leader" && membership.role !== "officer") {
+    throw new HttpError(403, "Only group leaders and officers can create invites.");
+  }
+
+  const body = await request.json().catch(() => undefined) as
+    | { role?: unknown; maxUses?: unknown; expiresInDays?: unknown }
+    | undefined;
+  const role = normalizeSocialGroupRole(body?.role) ?? "member";
+  if (role === "leader") throw new HttpError(400, "Invite role cannot be leader.", {}, "invalid_payload");
+  const maxUses = normalizeInviteMaxUses(body?.maxUses);
+  const expiresAt = inviteExpiresAt(body?.expiresInDays);
+  const code = randomInviteCode();
+  const codeHash = await hashToken(code);
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO social_group_invites
+       (invite_code_hash, group_id, created_by_user_id, role, max_uses, uses, expires_at, revoked_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 0, ?, NULL, ?, ?)`,
+  ).bind(codeHash, groupId, user.userId, role, maxUses ?? null, expiresAt, now, now).run();
+  return json({
+    invite: {
+      code,
+      groupId,
+      role,
+      maxUses,
+      uses: 0,
+      expiresAt,
+      createdAt: now,
+    },
+  }, env, 201);
+}
+
+async function leaveSocialGroup(request: Request, env: Env, groupId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  await requireSocialGroupMembership(groupId, user.userId, env);
+  const group = await env.DB.prepare(
+    "SELECT owner_user_id AS ownerUserId FROM social_groups WHERE group_id = ?",
+  ).bind(groupId).first<{ ownerUserId?: string }>();
+  if (group && String(group.ownerUserId) === user.userId) {
+    throw new HttpError(409, "Group owners must delete the group instead of leaving.");
+  }
+  await env.DB.prepare("DELETE FROM social_group_members WHERE group_id = ? AND user_id = ?")
+    .bind(groupId, user.userId)
+    .run();
+  return json({ ok: true }, env);
+}
+
+async function setSocialGroupShareUsage(request: Request, env: Env, groupId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  await requireSocialGroupMembership(groupId, user.userId, env);
+  const body = await request.json().catch(() => undefined) as { shareUsage?: unknown } | undefined;
+  const shareUsage = body?.shareUsage === true ? 1 : 0;
+  await env.DB.prepare(
+    "UPDATE social_group_members SET share_usage = ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
+  ).bind(shareUsage, new Date().toISOString(), groupId, user.userId).run();
+  return json({ group: await requireSocialGroupPayload(groupId, user.userId, env) }, env);
+}
+
+async function getSocialProfile(request: Request, env: Env, targetUserId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const target = cleanShortText(targetUserId, 80);
+  if (!target) throw new HttpError(400, "Profile target is invalid.", {}, "invalid_payload");
+
+  const isSelf = target === user.userId;
+  const targetRow = await env.DB.prepare(
+    "SELECT user_id AS userId, username, avatar_url AS avatarUrl, created_at AS createdAt FROM users WHERE user_id = ?",
+  ).bind(target).first<Record<string, unknown>>();
+  // A 404 on a missing user is indistinguishable from a 404 on "no relationship",
+  // so a stranger's existence is never revealed.
+  if (!targetRow) throw new HttpError(404, "Profile not found.");
+
+  // Access gate: only self, accepted friends, or co-members may open the card.
+  let isFriend = false;
+  if (!isSelf) {
+    const pair = orderedSocialUserPair(user.userId, target);
+    const friendship = await socialFriendshipRow(pair.userLow, pair.userHigh, env);
+    isFriend = normalizeSocialFriendStatus(friendship?.status) === "accepted";
+  }
+  const mutualGroupRow = isSelf
+    ? undefined
+    : await env.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM social_group_members a
+         JOIN social_group_members b ON b.group_id = a.group_id AND b.user_id = ?
+         WHERE a.user_id = ?`,
+      ).bind(target, user.userId).first<{ count?: number }>();
+  const mutualGroupCount = numberOrZero(mutualGroupRow?.count);
+  if (!isSelf && !isFriend && mutualGroupCount === 0) {
+    throw new HttpError(404, "Profile not found.");
+  }
+
+  // Usage visibility honors the same consent signals the leaderboards use:
+  // self, opted into the global board, or sharing usage in a group we both belong to.
+  let usageVisible = isSelf;
+  if (!usageVisible) {
+    await ensureUsageVisibilityTable(env);
+    const visibilityRow = await env.DB.prepare(
+      "SELECT public_global AS publicGlobal FROM usage_visibility WHERE user_id = ?",
+    ).bind(target).first<{ publicGlobal?: number }>();
+    const publicGlobal = visibilityRow ? numberOrZero(visibilityRow.publicGlobal) > 0 : true;
+    if (publicGlobal) {
+      usageVisible = true;
+    } else {
+      const sharedRow = await env.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM social_group_members a
+         JOIN social_group_members b ON b.group_id = a.group_id AND b.user_id = ? AND b.share_usage > 0
+         WHERE a.user_id = ?`,
+      ).bind(target, user.userId).first<{ count?: number }>();
+      usageVisible = numberOrZero(sharedRow?.count) > 0;
+    }
+  }
+
+  const friendCountRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM social_friendships WHERE (user_low = ? OR user_high = ?) AND status = 'accepted'",
+  ).bind(target, target).first<{ count?: number }>();
+  const groupCountRow = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM social_group_members WHERE user_id = ?",
+  ).bind(target).first<{ count?: number }>();
+
+  const profile: Record<string, unknown> = {
+    id: String(targetRow.userId),
+    username: String(targetRow.username),
+    avatarUrl: typeof targetRow.avatarUrl === "string" ? targetRow.avatarUrl : undefined,
+    joinedAt: typeof targetRow.createdAt === "string" ? targetRow.createdAt : undefined,
+    isSelf,
+    isFriend,
+    mutualGroupCount,
+    friendCount: numberOrZero(friendCountRow?.count),
+    groupCount: numberOrZero(groupCountRow?.count),
+    usageVisible,
+  };
+
+  if (usageVisible) {
+    const usageRow = await env.DB.prepare(
+      `SELECT COALESCE(SUM(xp), 0) AS tokens,
+              COALESCE(SUM(CASE WHEN xp > 0 THEN 1 ELSE 0 END), 0) AS daysActive
+       FROM daily_usage WHERE user_id = ?`,
+    ).bind(target).first<{ tokens?: number; daysActive?: number }>();
+    profile.totalTokens = numberOrZero(usageRow?.tokens);
+    profile.daysActive = numberOrZero(usageRow?.daysActive);
+
+    await ensureCloudTreeTables(env);
+    const achievementRows = await env.DB.prepare(
+      "SELECT achievement_id AS id, unlocked_at AS unlockedAt FROM tree_achievements WHERE user_id = ? ORDER BY unlocked_at ASC",
+    ).bind(target).all<Record<string, unknown>>();
+    profile.achievements = (achievementRows.results || []).map((row) => ({
+      id: String(row.id),
+      unlockedAt: typeof row.unlockedAt === "string" ? row.unlockedAt : undefined,
+    }));
+  }
+
+  return json({ profile }, env);
+}
+
+async function acceptSocialGroupInvite(request: Request, env: Env, code: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  const inviteCode = cleanInviteCode(code);
+  if (!inviteCode) throw new HttpError(400, "Invite code is invalid.", {}, "invalid_payload");
+  const now = new Date().toISOString();
+  const codeHash = await hashToken(inviteCode);
+  const invite = await env.DB.prepare(
+    `SELECT invite_code_hash AS inviteCodeHash, group_id AS groupId, role, max_uses AS maxUses,
+            uses, expires_at AS expiresAt, revoked_at AS revokedAt
+     FROM social_group_invites
+     WHERE invite_code_hash = ?`,
+  ).bind(codeHash).first<Record<string, unknown>>();
+  if (!invite) throw new HttpError(404, "Invite not found.");
+  if (typeof invite.revokedAt === "string") throw new HttpError(410, "Invite has been revoked.");
+  if (typeof invite.expiresAt === "string" && invite.expiresAt <= now) throw new HttpError(410, "Invite has expired.");
+  const maxUses = optionalPositiveInteger(invite.maxUses);
+  const uses = positiveInteger(invite.uses) ?? 0;
+  if (maxUses !== undefined && uses >= maxUses) throw new HttpError(410, "Invite has been used up.");
+
+  const groupId = String(invite.groupId);
+  const existing = await socialGroupMembership(groupId, user.userId, env);
+  if (!existing) {
+    const redemption = await env.DB.prepare(
+      `INSERT OR IGNORE INTO social_group_invite_redemptions
+         (invite_code_hash, user_id, group_id, created_at)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(codeHash, user.userId, groupId, now).run();
+    if (!redemption.meta.changes) {
+      const member = await socialGroupMembership(groupId, user.userId, env);
+      if (!member) throw new HttpError(409, "Invite acceptance is already in progress.");
+      return json({
+        group: await requireSocialGroupPayload(groupId, user.userId, env),
+        alreadyMember: true,
+      }, env);
+    }
+
+    // Atomically claim a use: the WHERE re-checks max_uses inside the write so two
+    // concurrent accepts can't both pass the read above and over-issue the invite.
+    // SQLite serializes writes, so exactly maxUses updates win. The redemption row
+    // above prevents one user from double-consuming the same invite in parallel.
+    const claim = await env.DB.prepare(
+      `UPDATE social_group_invites
+       SET uses = uses + 1, updated_at = ?
+       WHERE invite_code_hash = ?
+         AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > ?)
+         AND (max_uses IS NULL OR uses < max_uses)`,
+    ).bind(now, codeHash, now).run();
+    if (!claim.meta.changes) {
+      await env.DB.prepare(
+        "DELETE FROM social_group_invite_redemptions WHERE invite_code_hash = ? AND user_id = ?",
+      ).bind(codeHash, user.userId).run();
+      throw new HttpError(410, "Invite has been used up.");
+    }
+    const inserted = await env.DB.prepare(
+      `INSERT OR IGNORE INTO social_group_members
+         (group_id, user_id, role, share_usage, joined_at, updated_at)
+       VALUES (?, ?, ?, 1, ?, ?)`,
+    ).bind(groupId, user.userId, normalizeSocialGroupRole(invite.role) ?? "member", now, now).run();
+    if (!inserted.meta.changes) {
+      await env.DB.batch([
+        env.DB.prepare(
+          "DELETE FROM social_group_invite_redemptions WHERE invite_code_hash = ? AND user_id = ?",
+        ).bind(codeHash, user.userId),
+        env.DB.prepare(
+          `UPDATE social_group_invites
+           SET uses = CASE WHEN uses > 0 THEN uses - 1 ELSE 0 END, updated_at = ?
+           WHERE invite_code_hash = ?`,
+        ).bind(now, codeHash),
+      ]);
+    }
+  }
+
+  return json({
+    group: await requireSocialGroupPayload(groupId, user.userId, env),
+    alreadyMember: Boolean(existing),
+  }, env);
+}
+
+async function getSocialGroupLeaderboard(request: Request, env: Env, groupId: string) {
+  const user = await requireAuth(request, env);
+  await ensureSocialTables(env);
+  await ensureUsagePreferencesTable(env);
+  await ensureHourlyUsageTable(env);
+  await requireSocialGroupMembership(groupId, user.userId, env);
+  const range = normalizeRange(new URL(request.url).searchParams.get("range"));
+  return json(await socialGroupLeaderboardDataForRange(groupId, range, user, env, new Date().toISOString()), env);
 }
 
 async function getCloudTree(request: Request, env: Env) {
@@ -668,6 +1167,7 @@ async function syncDailyUsage(request: Request, env: Env) {
         appVersion?: string;
         usageStartDate?: string;
         forceSync?: boolean;
+        usagePublic?: boolean;
         usagePreferencesPublic?: boolean;
         usagePreferences?: unknown[];
       }
@@ -678,6 +1178,7 @@ async function syncDailyUsage(request: Request, env: Env) {
   const hours = hasHourlyUsage ? body.hours?.slice(0, MAX_HOURLY_BACKFILL_HOURS + 2) ?? [] : [];
   const appVersion = typeof body?.appVersion === "string" ? body.appVersion.slice(0, 32) : null;
   const usageStartDate = normalizeUsageStartDate(body?.usageStartDate);
+  const usagePublic = body?.usagePublic !== false;
   const usagePreferencesPublic = body?.usagePreferencesPublic === true;
   const usagePreferenceInput = Array.isArray(body?.usagePreferences) ? body.usagePreferences : [];
   const now = new Date().toISOString();
@@ -738,6 +1239,7 @@ async function syncDailyUsage(request: Request, env: Env) {
 
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ? AND date >= ? AND date <= ?")
       .bind(user.userId, syncWindow.earliest, syncWindow.latest),
@@ -761,6 +1263,13 @@ async function syncDailyUsage(request: Request, env: Env) {
        VALUES (?, ?)
        ON CONFLICT(user_id) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
     ).bind(user.userId, now),
+    env.DB.prepare(
+      `INSERT INTO usage_visibility (user_id, public_global, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         public_global = excluded.public_global,
+         updated_at = excluded.updated_at`,
+    ).bind(user.userId, usagePublic ? 1 : 0, now),
   ]);
   leaderboardCache.clear();
   return json(
@@ -837,6 +1346,17 @@ async function ensureHourlyUsageTable(env: Env) {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour ON hourly_usage(hour_start_utc)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_hourly_usage_user ON hourly_usage(user_id)"),
   ]);
+}
+
+async function ensureUsageVisibilityTable(env: Env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS usage_visibility (
+      user_id TEXT PRIMARY KEY,
+      public_global INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+    )`,
+  ).run();
 }
 
 async function ensureCloudTreeTables(env: Env) {
@@ -926,6 +1446,429 @@ async function ensureCloudTreeTables(env: Env) {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_device ON tree_model_stats(user_id, device_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_tree_model_stats_user_updated ON tree_model_stats(user_id, updated_at)"),
   ]);
+}
+
+async function ensureSocialTables(env: Env) {
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS social_friendships (
+        user_low TEXT NOT NULL,
+        user_high TEXT NOT NULL,
+        requester_user_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_low, user_high),
+        FOREIGN KEY (user_low) REFERENCES users(user_id) ON DELETE CASCADE,
+        FOREIGN KEY (user_high) REFERENCES users(user_id) ON DELETE CASCADE,
+        FOREIGN KEY (requester_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS social_groups (
+        group_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        icon_emoji TEXT,
+        visibility TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (owner_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS social_group_members (
+        group_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        share_usage INTEGER NOT NULL DEFAULT 1,
+        joined_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (group_id, user_id),
+        FOREIGN KEY (group_id) REFERENCES social_groups(group_id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS social_group_invites (
+        invite_code_hash TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL,
+        created_by_user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        max_uses INTEGER,
+        uses INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (group_id) REFERENCES social_groups(group_id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS social_group_invite_redemptions (
+        invite_code_hash TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (invite_code_hash, user_id),
+        FOREIGN KEY (invite_code_hash) REFERENCES social_group_invites(invite_code_hash) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+        FOREIGN KEY (group_id) REFERENCES social_groups(group_id) ON DELETE CASCADE
+      )`,
+    ),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_friendships_requester ON social_friendships(requester_user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_friendships_status ON social_friendships(status)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_friendships_user_high ON social_friendships(user_high)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_groups_owner ON social_groups(owner_user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_members_user ON social_group_members(user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_members_group_role ON social_group_members(group_id, role)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invites_group ON social_group_invites(group_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invites_creator ON social_group_invites(created_by_user_id)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invites_expires ON social_group_invites(expires_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invite_redemptions_user ON social_group_invite_redemptions(user_id)"),
+  ]);
+}
+
+async function socialFriendListPayload(userId: string, env: Env) {
+  const rows = await env.DB.prepare(
+    `SELECT f.user_low AS userLow, f.user_high AS userHigh, f.requester_user_id AS requesterUserId,
+            f.status, f.created_at AS createdAt, f.updated_at AS updatedAt,
+            u.user_id AS userId, u.username, u.avatar_url AS avatarUrl
+     FROM social_friendships f
+     JOIN users u ON u.user_id = CASE WHEN f.user_low = ? THEN f.user_high ELSE f.user_low END
+     WHERE f.user_low = ? OR f.user_high = ?
+     ORDER BY
+       CASE f.status WHEN 'accepted' THEN 0 ELSE 1 END,
+       f.updated_at DESC`,
+  ).bind(userId, userId, userId).all<Record<string, unknown>>();
+  return {
+    friends: (rows.results || []).map((row) => socialFriendFromRow(row, userId)),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function socialFriendPayload(targetUserId: string, currentUserId: string, env: Env) {
+  const pair = orderedSocialUserPair(targetUserId, currentUserId);
+  const row = await env.DB.prepare(
+    `SELECT f.user_low AS userLow, f.user_high AS userHigh, f.requester_user_id AS requesterUserId,
+            f.status, f.created_at AS createdAt, f.updated_at AS updatedAt,
+            u.user_id AS userId, u.username, u.avatar_url AS avatarUrl
+     FROM social_friendships f
+     JOIN users u ON u.user_id = ?
+     WHERE f.user_low = ? AND f.user_high = ?`,
+  ).bind(targetUserId, pair.userLow, pair.userHigh).first<Record<string, unknown>>();
+  if (!row) throw new HttpError(404, "Friend request not found.");
+  return socialFriendFromRow(row, currentUserId);
+}
+
+function socialFriendFromRow(row: Record<string, unknown>, currentUserId: string) {
+  const status = normalizeSocialFriendStatus(row.status) ?? "pending";
+  const requestedByMe = String(row.requesterUserId) === currentUserId;
+  return {
+    userId: String(row.userId),
+    username: String(row.username),
+    avatarUrl: typeof row.avatarUrl === "string" ? row.avatarUrl : undefined,
+    status,
+    direction: status === "pending" ? (requestedByMe ? "outgoing" : "incoming") : undefined,
+    requestedByMe,
+    createdAt: String(row.createdAt),
+    updatedAt: String(row.updatedAt),
+  };
+}
+
+async function socialFriendshipRow(userLow: string, userHigh: string, env: Env) {
+  return await env.DB.prepare(
+    `SELECT user_low AS userLow, user_high AS userHigh, requester_user_id AS requesterUserId,
+            status, created_at AS createdAt, updated_at AS updatedAt
+     FROM social_friendships
+     WHERE user_low = ? AND user_high = ?`,
+  ).bind(userLow, userHigh).first<Record<string, unknown>>();
+}
+
+async function resolveSocialFriendTarget(
+  body: { username?: unknown; userId?: unknown } | undefined,
+  user: SessionUser,
+  env: Env,
+) {
+  const userId = cleanShortText(body?.userId, 80);
+  const username = cleanShortText(body?.username, 80);
+  if (!userId && !username) throw new HttpError(400, "Friend username is required.", {}, "invalid_payload");
+  const target = userId
+    ? await env.DB.prepare(
+        `SELECT user_id AS userId, username, avatar_url AS avatarUrl
+         FROM users
+         WHERE user_id = ?`,
+      ).bind(userId).first<Record<string, unknown>>()
+    : await env.DB.prepare(
+        `SELECT user_id AS userId, username, avatar_url AS avatarUrl
+         FROM users
+         WHERE lower(username) = lower(?)
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      ).bind(username).first<Record<string, unknown>>();
+  if (!target) throw new HttpError(404, "User not found.");
+  if (String(target.userId) === user.userId) throw new HttpError(400, "You cannot add yourself.", {}, "invalid_payload");
+  return {
+    userId: String(target.userId),
+    username: String(target.username),
+    avatarUrl: typeof target.avatarUrl === "string" ? target.avatarUrl : undefined,
+  };
+}
+
+function orderedSocialUserPair(firstUserId: string, secondUserId: string) {
+  return firstUserId < secondUserId
+    ? { userLow: firstUserId, userHigh: secondUserId }
+    : { userLow: secondUserId, userHigh: firstUserId };
+}
+
+async function requireSocialGroupPayload(groupId: string, userId: string, env: Env) {
+  await requireSocialGroupMembership(groupId, userId, env);
+  return await socialGroupPayload(groupId, userId, env);
+}
+
+async function socialGroupPayload(groupId: string, userId: string, env: Env) {
+  const group = await env.DB.prepare(
+    `SELECT g.group_id AS groupId, g.name, g.description, g.icon_emoji AS iconEmoji,
+            g.visibility, g.owner_user_id AS ownerUserId, g.created_at AS createdAt,
+            g.updated_at AS updatedAt, m.role, m.share_usage AS shareUsage,
+            COUNT(all_members.user_id) AS memberCount
+     FROM social_groups g
+     JOIN social_group_members m ON m.group_id = g.group_id AND m.user_id = ?
+     LEFT JOIN social_group_members all_members ON all_members.group_id = g.group_id
+     WHERE g.group_id = ?
+     GROUP BY g.group_id`,
+  ).bind(userId, groupId).first<Record<string, unknown>>();
+  if (!group) throw new HttpError(404, "Group not found.");
+
+  const members = await env.DB.prepare(
+    `SELECT u.user_id AS userId, u.username, u.avatar_url AS avatarUrl,
+            m.role, m.share_usage AS shareUsage, m.joined_at AS joinedAt, m.updated_at AS updatedAt
+     FROM social_group_members m
+     JOIN users u ON u.user_id = m.user_id
+     WHERE m.group_id = ?
+     ORDER BY
+       CASE m.role WHEN 'leader' THEN 0 WHEN 'officer' THEN 1 ELSE 2 END,
+       m.joined_at ASC`,
+  ).bind(groupId).all<Record<string, unknown>>();
+
+  return {
+    ...socialGroupSummaryFromRow(group),
+    members: (members.results || []).map(socialGroupMemberFromRow),
+  };
+}
+
+async function requireSocialGroupMembership(groupId: string, userId: string, env: Env) {
+  const membership = await socialGroupMembership(groupId, userId, env);
+  if (!membership) throw new HttpError(404, "Group not found.");
+  return membership;
+}
+
+async function socialGroupMembership(groupId: string, userId: string, env: Env) {
+  const row = await env.DB.prepare(
+    `SELECT role, share_usage AS shareUsage, joined_at AS joinedAt, updated_at AS updatedAt
+     FROM social_group_members
+     WHERE group_id = ? AND user_id = ?`,
+  ).bind(groupId, userId).first<Record<string, unknown>>();
+  if (!row) return undefined;
+  return {
+    role: normalizeSocialGroupRole(row.role) ?? "member",
+    shareUsage: numberOrZero(row.shareUsage) > 0,
+    joinedAt: typeof row.joinedAt === "string" ? row.joinedAt : undefined,
+    updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : undefined,
+  };
+}
+
+function socialGroupSummaryFromRow(row: Record<string, unknown>) {
+  const group: SocialGroupRow = {
+    groupId: String(row.groupId),
+    name: String(row.name),
+    description: typeof row.description === "string" ? row.description : undefined,
+    iconEmoji: typeof row.iconEmoji === "string" ? row.iconEmoji : undefined,
+    visibility: normalizeSocialGroupVisibility(row.visibility) ?? "invite",
+    ownerUserId: String(row.ownerUserId),
+    createdAt: String(row.createdAt),
+    updatedAt: String(row.updatedAt),
+    memberCount: numberOrZero(row.memberCount),
+    role: normalizeSocialGroupRole(row.role),
+    shareUsage: numberOrZero(row.shareUsage),
+  };
+  return {
+    groupId: group.groupId,
+    name: group.name,
+    description: group.description,
+    iconEmoji: group.iconEmoji,
+    visibility: group.visibility,
+    ownerUserId: group.ownerUserId,
+    createdAt: group.createdAt,
+    updatedAt: group.updatedAt,
+    memberCount: group.memberCount ?? 0,
+    role: group.role,
+    shareUsage: (group.shareUsage ?? 0) > 0,
+  };
+}
+
+function socialGroupMemberFromRow(row: Record<string, unknown>) {
+  const member: SocialGroupMemberRow = {
+    userId: String(row.userId),
+    username: String(row.username),
+    avatarUrl: typeof row.avatarUrl === "string" ? row.avatarUrl : undefined,
+    role: normalizeSocialGroupRole(row.role) ?? "member",
+    shareUsage: numberOrZero(row.shareUsage),
+    joinedAt: String(row.joinedAt),
+    updatedAt: String(row.updatedAt),
+  };
+  return {
+    userId: member.userId,
+    username: member.username,
+    avatarUrl: member.avatarUrl,
+    role: member.role,
+    shareUsage: member.shareUsage > 0,
+    joinedAt: member.joinedAt,
+    updatedAt: member.updatedAt,
+  };
+}
+
+function normalizeSocialFriendStatus(value: unknown): SocialFriendStatus | undefined {
+  return value === "pending" || value === "accepted" ? value : undefined;
+}
+
+async function socialGroupLeaderboardDataForRange(
+  groupId: string,
+  range: LeaderboardRange,
+  requestUser: SessionUser,
+  env: Env,
+  updatedAt: string,
+) {
+  let result: D1Result<Record<string, unknown>>;
+  if (range === "all") {
+    // Group boards rank by contribution SINCE JOINING, not lifetime: the floor at
+    // date(m.joined_at) makes this a guild-war metric and keeps a member's pre-join
+    // history out of every group they join. daysActive is floored the same way.
+    result = await env.DB.prepare(
+      `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+              m.role, SUM(d.xp) AS tokens,
+              (SELECT COUNT(*) FROM daily_usage all_days
+               WHERE all_days.user_id = u.user_id AND all_days.xp > 0
+                 AND all_days.date >= date(m.joined_at)) AS daysActive
+       FROM social_group_members m
+       JOIN users u ON u.user_id = m.user_id
+       JOIN daily_usage d ON d.user_id = m.user_id AND d.date >= date(m.joined_at)
+       WHERE m.group_id = ? AND m.share_usage > 0
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(groupId).all<Record<string, unknown>>();
+  } else if (range === "24h") {
+    const hourWindow = rollingLeaderboardHourWindow(new Date());
+    const currentWindow = currentLocalDateWindow(new Date());
+    const legacyUpdatedAfter = addUtcHours(floorUtcHour(new Date()), -LEGACY_DAILY_FALLBACK_HOURS).toISOString();
+    result = await env.DB.prepare(
+      `WITH hourly_any AS (
+         SELECT DISTINCT user_id FROM hourly_usage
+       ),
+       hourly_totals AS (
+         SELECT h.user_id, SUM(h.tokens) AS tokens
+         FROM hourly_usage h
+         JOIN social_group_members m ON m.user_id = h.user_id
+         WHERE m.group_id = ? AND m.share_usage > 0
+           AND h.hour_start_utc >= ? AND h.hour_start_utc <= ?
+           AND h.hour_start_utc >= date(m.joined_at)
+         GROUP BY h.user_id
+       ),
+       legacy_current_date AS (
+         SELECT d.user_id, MAX(d.date) AS currentDate
+         FROM daily_usage d
+         JOIN social_group_members m ON m.user_id = d.user_id
+         LEFT JOIN hourly_any h ON h.user_id = d.user_id
+         WHERE m.group_id = ? AND m.share_usage > 0
+           AND h.user_id IS NULL
+           AND d.date >= ? AND d.date <= ?
+           AND d.date >= date(m.joined_at)
+           AND d.updated_at >= ?
+         GROUP BY d.user_id
+       ),
+       legacy_daily AS (
+         SELECT c.user_id, SUM(d.xp) AS tokens
+         FROM legacy_current_date c
+         JOIN daily_usage d ON d.user_id = c.user_id AND d.date = c.currentDate
+         GROUP BY c.user_id
+       ),
+       range_totals AS (
+         SELECT user_id, tokens FROM hourly_totals
+         UNION ALL
+         SELECT user_id, tokens FROM legacy_daily
+       )
+       SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+              m.role, SUM(r.tokens) AS tokens,
+              (SELECT COUNT(*) FROM daily_usage all_days
+               WHERE all_days.user_id = u.user_id AND all_days.xp > 0
+                 AND all_days.date >= date(m.joined_at)) AS daysActive
+       FROM range_totals r
+       JOIN social_group_members m ON m.user_id = r.user_id AND m.group_id = ?
+       JOIN users u ON u.user_id = r.user_id
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(
+      groupId,
+      hourWindow.earliest,
+      hourWindow.latest,
+      groupId,
+      currentWindow.earliest,
+      currentWindow.latest,
+      legacyUpdatedAfter,
+      groupId,
+    ).all<Record<string, unknown>>();
+  } else {
+    const currentWindow = currentLocalDateWindow(new Date());
+    result = await env.DB.prepare(
+      `WITH user_current_date AS (
+         SELECT d.user_id, MAX(d.date) AS currentDate
+         FROM daily_usage d
+         JOIN social_group_members m ON m.user_id = d.user_id
+         WHERE m.group_id = ? AND m.share_usage > 0
+           AND d.date >= ? AND d.date <= ?
+         GROUP BY d.user_id
+       )
+       SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
+              m.role, SUM(d.xp) AS tokens,
+              (SELECT COUNT(*) FROM daily_usage all_days
+               WHERE all_days.user_id = u.user_id AND all_days.xp > 0
+                 AND all_days.date >= date(m.joined_at)) AS daysActive
+       FROM user_current_date c
+       JOIN daily_usage d ON d.user_id = c.user_id
+       JOIN social_group_members m ON m.user_id = c.user_id AND m.group_id = ?
+       JOIN users u ON u.user_id = c.user_id
+       WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
+         AND d.date >= date(m.joined_at)
+       GROUP BY u.user_id
+       HAVING tokens > 0
+       ORDER BY tokens DESC
+       LIMIT 100`,
+    ).bind(groupId, currentWindow.earliest, currentWindow.latest, groupId, rangeDateModifier(range)).all<Record<string, unknown>>();
+  }
+
+  const entries = (result.results || []).map((row, index) => ({
+    rank: index + 1,
+    userId: String(row.userId),
+    username: String(row.username),
+    avatarUrl: typeof row.avatarUrl === "string" ? row.avatarUrl : undefined,
+    role: normalizeSocialGroupRole(row.role) ?? "member",
+    tokens: Math.max(0, Math.round(Number(row.tokens))),
+    xp: Math.max(0, Math.round(Number(row.tokens))),
+    daysActive: Math.max(0, Math.round(Number(row.daysActive))),
+  }));
+  return {
+    groupId,
+    range,
+    entries,
+    updatedAt,
+    me: entries.find((entry) => entry.userId === requestUser.userId),
+  };
 }
 
 function normalizeCloudTreeEvent(
@@ -1288,6 +2231,7 @@ function dailySyncWindow(usageStartDate: string | undefined) {
 async function getLeaderboard(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   const url = new URL(request.url);
   const rawRange = url.searchParams.get("range");
   const range = normalizeRange(url.searchParams.get("range"));
@@ -1299,6 +2243,7 @@ async function getLeaderboard(request: Request, env: Env) {
 async function getLeaderboards(request: Request, env: Env) {
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   const requestUser = await optionalAuth(request, env);
   const updatedAt = new Date().toISOString();
   const pairs = await Promise.all(
@@ -1355,6 +2300,8 @@ async function leaderboardDataForRange(
        FROM daily_usage d
        JOIN users u ON u.user_id = d.user_id
        LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       LEFT JOIN usage_visibility v ON v.user_id = u.user_id
+       WHERE COALESCE(v.public_global, 1) = 1
        GROUP BY u.user_id
        HAVING tokens > 0
        ORDER BY tokens DESC
@@ -1408,6 +2355,8 @@ async function leaderboardDataForRange(
        FROM range_totals r
        JOIN users u ON u.user_id = r.user_id
        LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       LEFT JOIN usage_visibility v ON v.user_id = u.user_id
+       WHERE COALESCE(v.public_global, 1) = 1
        GROUP BY u.user_id
        HAVING tokens > 0
        ORDER BY tokens DESC
@@ -1444,7 +2393,9 @@ async function leaderboardDataForRange(
        JOIN daily_usage d ON d.user_id = c.user_id
        JOIN users u ON u.user_id = d.user_id
        LEFT JOIN usage_preferences p ON p.user_id = u.user_id AND p.range = ?
+       LEFT JOIN usage_visibility v ON v.user_id = u.user_id
        WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
+         AND COALESCE(v.public_global, 1) = 1
        GROUP BY u.user_id
        HAVING tokens > 0
        ORDER BY tokens DESC
@@ -1630,6 +2581,12 @@ function randomToken() {
   return base64UrlEncode(bytes);
 }
 
+function randomInviteCode() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
 function base64UrlEncode(bytes: Uint8Array) {
   let binary = "";
   bytes.forEach((byte) => {
@@ -1688,8 +2645,50 @@ function normalizePreferencePeriod(value: unknown): UsagePreferencePeriod | unde
     : undefined;
 }
 
+function normalizeSocialGroupRole(value: unknown): SocialGroupRole | undefined {
+  return value === "leader" || value === "officer" || value === "member" ? value : undefined;
+}
+
+function normalizeSocialGroupVisibility(value: unknown): SocialGroupVisibility | undefined {
+  return value === "closed" ? "closed" : value === "invite" ? "invite" : undefined;
+}
+
 function cleanShortText(value: unknown, maxLength: number) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : undefined;
+}
+
+function normalizeGroupIcon(value: unknown) {
+  const icon = cleanShortText(value, 16);
+  if (!icon) return null;
+  return icon.replace(/\s+/g, "").slice(0, 16) || null;
+}
+
+function cleanInviteCode(value: unknown) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{12,64}$/.test(value) ? value : undefined;
+}
+
+function normalizeInviteMaxUses(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const count = Math.round(Number(value));
+  return Number.isFinite(count) ? Math.max(1, Math.min(500, count)) : undefined;
+}
+
+function inviteExpiresAt(value: unknown) {
+  const days = value === null || value === undefined || value === ""
+    ? 14
+    : Math.max(1, Math.min(90, Math.round(Number(value))));
+  if (!Number.isFinite(days)) return new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function positiveInteger(value: unknown) {
+  const count = Math.round(Number(value));
+  return Number.isFinite(count) && count > 0 ? count : undefined;
+}
+
+function optionalPositiveInteger(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  return positiveInteger(value);
 }
 
 function normalizeDevicePlatform(value: unknown) {

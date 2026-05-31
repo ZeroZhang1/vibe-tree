@@ -1,11 +1,12 @@
 # Vibe Tree Cloud Worker
 
-Cloudflare Worker + D1 backend for two opt-in cloud features:
+Cloudflare Worker + D1 backend for three opt-in cloud features:
 
 - Private shared tree sync, so one GitHub account can keep growing the same tree across devices.
 - Optional global leaderboard publishing.
+- Friends and groups, including group-specific contribution leaderboards.
 
-The desktop app never uploads prompts, replies, code files, local paths, session text, raw notes, or per-event model/provider labels. Shared tree sync sends token ledger events with safe source categories, device id, achievement unlock state, coarse device summaries, and daily aggregate model totals grouped by device/source/model. Leaderboard sync sends daily token totals, recent hourly token aggregates, and the local first-use date; if a user explicitly enables public usage preferences, it also sends range-scoped aggregate preferences only: top agent percentage, top model, preferred coding period, and peak token/min.
+The desktop app never uploads prompts, replies, code files, local paths, session text, raw notes, or per-event model/provider labels. Shared tree sync sends token ledger events with safe source categories, device id, achievement unlock state, coarse device summaries, and daily aggregate model totals grouped by device/source/model. Leaderboard and group sync send daily token totals, recent hourly token aggregates, and the local first-use date; if a user explicitly enables public usage preferences, it also sends range-scoped aggregate preferences only: top agent percentage, top model, preferred coding period, and peak token/min.
 
 The first release is community-oriented, not strict cheat-proof scoring. The backend keeps only broad safety rails:
 
@@ -48,6 +49,24 @@ Remote tree existence is true when the account has any tree events, achievements
 - `POST /api/usage/daily` upserts daily token aggregates, recent hourly token aggregates, and, when opted in, range-scoped aggregate usage preferences.
 - `GET /api/leaderboard?range=24h|7d|30d|all` returns the top 100 users plus public preference details when the user opted in. `range=today` is accepted as a legacy alias for `24h`.
 - `GET /api/leaderboards` returns all four leaderboard ranges in one response.
+
+### Social
+
+- `GET /api/social/friends` returns accepted friends plus incoming and outgoing requests.
+- `POST /api/social/friends` sends a friend request by GitHub username.
+- `POST /api/social/friends/:userId/accept` accepts an incoming friend request.
+- `DELETE /api/social/friends/:userId` removes a friend or pending request.
+- `GET /api/social/groups` returns the current user's groups.
+- `POST /api/social/groups` creates a group and makes the creator the owner.
+- `GET /api/social/groups/:groupId` returns group membership details.
+- `POST /api/social/groups/:groupId/invites` creates a shareable invite code for group owners.
+- `DELETE /api/social/groups/:groupId/members/me` leaves a group. Owners cannot leave until ownership transfer or deletion exists.
+- `POST /api/social/groups/:groupId/membership` updates the current member's per-group usage sharing flag.
+- `GET /api/social/groups/:groupId/leaderboard?range=24h|7d|30d|all` returns members ranked by contribution since their join date.
+- `POST /api/social/invites/:code/accept` joins a group by invite code.
+- `GET /api/social/users/:userId/profile` returns a relationship-gated profile card for the signed-in user, an accepted friend, or a co-member.
+
+Social leaderboards use the same aggregate daily/hourly token rows as the global leaderboard. Joining a group can sync those aggregates without making the user visible on the global leaderboard; prompts, sessions, files, paths, and source text are still never uploaded.
 
 ## Setup
 
@@ -92,10 +111,14 @@ Remote tree existence is true when the account has any tree events, achievements
    npm run db:migrate:devices
    npm run db:migrate:hourly
    npm run db:migrate:delta
+   npm run db:migrate:social
+   npm run db:migrate:social-friends
+   npm run db:migrate:usage-visibility
+   npm run db:migrate:social-invite-redemptions
    npm run deploy
    ```
 
-   For a fresh database, `db:migrate` creates all current tables. The extra migration scripts are safe to run for upgraded deployments that may already contain older cloud-tree tables, old source rows, missing hourly leaderboard rows, or missing `tree_device_stats` device contribution totals.
+   For a fresh database, `db:migrate` creates all current tables. The extra migration scripts are safe to run for upgraded deployments that may already contain older cloud-tree tables, old source rows, missing hourly leaderboard rows, missing `tree_device_stats` device contribution totals, missing social tables, missing global-visibility rows, or missing invite redemption tracking.
 
 5. Start the desktop app with the Worker URL, or set this as the production default in the Electron app.
 

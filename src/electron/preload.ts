@@ -4,12 +4,22 @@ import type {
   AchievementUnlock,
   AchievementUnlockResult,
   CloudSyncStatus,
+  CreateSocialFriendInput,
+  CreateSocialGroupInput,
+  CreateSocialGroupInviteInput,
   LedgerFile,
   LeaderboardCollection,
   LeaderboardData,
   LeaderboardRange,
   LeaderboardStatus,
   Settings,
+  SocialFriend,
+  SocialFriendList,
+  SocialGroup,
+  SocialGroupInvite,
+  SocialGroupLeaderboardData,
+  SocialGroupList,
+  SocialProfileResult,
   ToastPlacement,
   TreeToastItem,
   UpdateStatus,
@@ -42,6 +52,25 @@ const api = {
     ipcRenderer.invoke("leaderboard:sync", options) as Promise<LeaderboardStatus>,
   getLeaderboard: (range: LeaderboardRange) => ipcRenderer.invoke("leaderboard:get", range) as Promise<LeaderboardData>,
   getLeaderboards: () => ipcRenderer.invoke("leaderboard:get-all") as Promise<LeaderboardCollection>,
+  getSocialFriends: () => ipcRenderer.invoke("social:friends") as Promise<SocialFriendList>,
+  requestSocialFriend: (input: CreateSocialFriendInput) =>
+    ipcRenderer.invoke("social:request-friend", input) as Promise<SocialFriend>,
+  acceptSocialFriend: (userId: string) => ipcRenderer.invoke("social:accept-friend", userId) as Promise<SocialFriend>,
+  removeSocialFriend: (userId: string) =>
+    ipcRenderer.invoke("social:remove-friend", userId) as Promise<SocialFriendList>,
+  getSocialGroups: () => ipcRenderer.invoke("social:groups") as Promise<SocialGroupList>,
+  createSocialGroup: (input: CreateSocialGroupInput) =>
+    ipcRenderer.invoke("social:create-group", input) as Promise<SocialGroup>,
+  createSocialGroupInvite: (groupId: string, input?: CreateSocialGroupInviteInput) =>
+    ipcRenderer.invoke("social:create-invite", groupId, input) as Promise<SocialGroupInvite>,
+  acceptSocialGroupInvite: (code: string) => ipcRenderer.invoke("social:accept-invite", code) as Promise<SocialGroup>,
+  leaveSocialGroup: (groupId: string) => ipcRenderer.invoke("social:leave-group", groupId) as Promise<void>,
+  setSocialGroupShareUsage: (groupId: string, shareUsage: boolean) =>
+    ipcRenderer.invoke("social:set-group-share-usage", groupId, shareUsage) as Promise<SocialGroup>,
+  getSocialProfile: (userId: string) =>
+    ipcRenderer.invoke("social:get-profile", userId) as Promise<SocialProfileResult>,
+  getSocialGroupLeaderboard: (groupId: string, range: LeaderboardRange) =>
+    ipcRenderer.invoke("social:group-leaderboard", groupId, range) as Promise<SocialGroupLeaderboardData>,
   getCloudSyncStatus: () => ipcRenderer.invoke("cloud-sync:get-status") as Promise<CloudSyncStatus>,
   startNewTree: () => ipcRenderer.invoke("cloud-sync:start-new") as Promise<CloudSyncStatus>,
   enableCloudSync: () => ipcRenderer.invoke("cloud-sync:enable") as Promise<CloudSyncStatus>,

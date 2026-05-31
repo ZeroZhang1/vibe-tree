@@ -8,7 +8,7 @@ export type HistoryFilter = "all" | HistorySourceId;
 export type SourceScope = "today" | "total";
 export type BadgeMetric = "level" | "total" | "rate";
 export type TotalDisplayUnit = "raw" | "k" | "m" | "wan" | "yi";
-export type DashboardTab = "home" | "achievements" | "leaderboard";
+export type DashboardTab = "home" | "achievements" | "leaderboard" | "social";
 export type AchievementCategoryFilter = AchievementCategory;
 export type AchievementStatusFilter = "all" | "unlocked" | "locked" | "hidden";
 

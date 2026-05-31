@@ -211,6 +211,27 @@ function getStageProgress(level: number, balance: GameBalance) {
   return clamp((level - current.minLevel) / (next.minLevel - current.minLevel), 0, 1);
 }
 
+/**
+ * Derive level + stage from a raw lifetime XP total using the same balance
+ * formula the dashboard uses. Pure and dependency-free so the social profile
+ * card can mirror a user's own level/stage vocabulary without recomputing
+ * full Stats. Returns the localizable stage label straight from the balance.
+ */
+export function summarizeXpProgression(totalXp: number, balance: GameBalance) {
+  const safeXp = Number.isFinite(totalXp) && totalXp > 0 ? totalXp : 0;
+  const levelState = getLevelState(safeXp, balance);
+  const stage = getStageForLevel(levelState.level, balance);
+  return {
+    level: levelState.level,
+    levelXp: levelState.levelXp,
+    nextLevelXp: levelState.nextLevelXp,
+    progress: levelState.progress,
+    stageId: stage.id,
+    stageLabel: stage.label,
+    stageProgress: getStageProgress(levelState.level, balance),
+  };
+}
+
 function getWeather(tokensPerMinute: number, balance: GameBalance): WeatherState {
   const state = balance.weather.thresholds.reduce((current, candidate) => {
     return tokensPerMinute >= candidate.minXpPerMinute ? candidate : current;

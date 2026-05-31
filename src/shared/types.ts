@@ -117,6 +117,127 @@ export interface LeaderboardCollection {
   updatedAt?: string;
 }
 
+export type SocialGroupRole = "leader" | "officer" | "member";
+export type SocialGroupVisibility = "invite" | "closed";
+export type SocialFriendStatus = "pending" | "accepted";
+
+export interface SocialFriend {
+  userId: string;
+  username: string;
+  avatarUrl?: string;
+  status: SocialFriendStatus;
+  direction?: "incoming" | "outgoing";
+  requestedByMe: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SocialFriendList {
+  friends: SocialFriend[];
+  updatedAt?: string;
+  error?: string;
+}
+
+export interface CreateSocialFriendInput {
+  username?: string;
+  userId?: string;
+}
+
+export interface SocialGroupMember {
+  userId: string;
+  username: string;
+  avatarUrl?: string;
+  role: SocialGroupRole;
+  shareUsage: boolean;
+  joinedAt?: string;
+  updatedAt?: string;
+}
+
+export interface SocialGroup {
+  groupId: string;
+  name: string;
+  description?: string;
+  iconEmoji?: string;
+  visibility: SocialGroupVisibility;
+  ownerUserId: string;
+  createdAt?: string;
+  updatedAt?: string;
+  memberCount: number;
+  role?: SocialGroupRole;
+  shareUsage?: boolean;
+  members?: SocialGroupMember[];
+}
+
+export interface SocialGroupList {
+  groups: SocialGroup[];
+  updatedAt?: string;
+  error?: string;
+}
+
+export interface SocialProfileAchievement {
+  id: string;
+  unlockedAt?: string;
+}
+
+export interface SocialProfile {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+  joinedAt?: string;
+  isSelf: boolean;
+  isFriend: boolean;
+  mutualGroupCount: number;
+  friendCount: number;
+  groupCount: number;
+  // When false, the viewer has no consent signal to see usage figures and the
+  // fields below are omitted (identity-only card).
+  usageVisible: boolean;
+  totalTokens?: number;
+  daysActive?: number;
+  achievements?: SocialProfileAchievement[];
+}
+
+export interface SocialProfileResult {
+  profile?: SocialProfile;
+  error?: string;
+}
+
+export interface CreateSocialGroupInput {
+  name: string;
+  description?: string;
+  iconEmoji?: string;
+  visibility?: SocialGroupVisibility;
+}
+
+export interface CreateSocialGroupInviteInput {
+  role?: Exclude<SocialGroupRole, "leader">;
+  maxUses?: number;
+  expiresInDays?: number;
+}
+
+export interface SocialGroupInvite {
+  code: string;
+  groupId: string;
+  role: Exclude<SocialGroupRole, "leader">;
+  maxUses?: number;
+  uses: number;
+  expiresAt?: string;
+  createdAt?: string;
+}
+
+export interface SocialGroupLeaderboardEntry extends LeaderboardEntry {
+  role?: SocialGroupRole;
+}
+
+export interface SocialGroupLeaderboardData {
+  groupId: string;
+  range: LeaderboardRange;
+  entries: SocialGroupLeaderboardEntry[];
+  updatedAt?: string;
+  me?: SocialGroupLeaderboardEntry;
+  error?: string;
+}
+
 export interface Settings {
   locked: boolean;
   alwaysOnTop: boolean;
@@ -134,6 +255,7 @@ export interface Settings {
   leaderboardLastSyncedAt?: string;
   leaderboardAutoSyncEnabled: boolean;
   leaderboardPreferencesPublic: boolean;
+  socialGroupCount: number;
   cloudSyncEnabled: boolean;
   cloudSyncDeviceId?: string;
   cloudSyncLastSyncedAt?: string;
