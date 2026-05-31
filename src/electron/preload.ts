@@ -42,6 +42,7 @@ const api = {
     ipcRenderer.invoke("leaderboard:sync", options) as Promise<LeaderboardStatus>,
   getLeaderboard: (range: LeaderboardRange) => ipcRenderer.invoke("leaderboard:get", range) as Promise<LeaderboardData>,
   getLeaderboards: () => ipcRenderer.invoke("leaderboard:get-all") as Promise<LeaderboardCollection>,
+  publishLeaderboards: (collection: LeaderboardCollection) => ipcRenderer.send("leaderboard:publish", collection),
   getCloudSyncStatus: () => ipcRenderer.invoke("cloud-sync:get-status") as Promise<CloudSyncStatus>,
   startNewTree: () => ipcRenderer.invoke("cloud-sync:start-new") as Promise<CloudSyncStatus>,
   enableCloudSync: () => ipcRenderer.invoke("cloud-sync:enable") as Promise<CloudSyncStatus>,
@@ -107,6 +108,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: LeaderboardStatus) => callback(status);
     ipcRenderer.on("bonsai:leaderboard-status", listener);
     return () => ipcRenderer.removeListener("bonsai:leaderboard-status", listener);
+  },
+  onLeaderboardData: (callback: (collection: LeaderboardCollection) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, collection: LeaderboardCollection) => callback(collection);
+    ipcRenderer.on("bonsai:leaderboard-data", listener);
+    return () => ipcRenderer.removeListener("bonsai:leaderboard-data", listener);
   },
   onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => {
     const listener = (

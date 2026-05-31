@@ -5,6 +5,7 @@ import type {
   CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
+  LeaderboardCollection,
   LeaderboardData,
   LeaderboardEntry,
   LeaderboardRange,
@@ -663,9 +664,9 @@ function bindMenubarEvents() {
   // Rhythm bars: hovering/focusing a bar reads out that hour's total + dominant source in the meta slot.
   if (menubarRhythmBars) {
     const readHour = (target: EventTarget | null) => {
-      const bar = (target as HTMLElement | null)?.closest<HTMLElement>(".menubar-rhythm-bar");
-      if (!bar) return;
-      const hour = Number(bar.dataset.hour);
+      const col = (target as HTMLElement | null)?.closest<HTMLElement>(".menubar-rhythm-col");
+      if (!col) return;
+      const hour = Number(col.dataset.hour);
       if (Number.isInteger(hour)) showMenubarRhythmHour(hour);
     };
     menubarRhythmBars.addEventListener("pointermove", (event) => readHour(event.target));
@@ -915,6 +916,15 @@ async function boot() {
       scheduleMenubarRender();
     } else {
       renderLeaderboardSettings();
+      renderLeaderboard();
+    }
+  });
+  // Another window fetched fresh standings and shared them — adopt without refetching.
+  window.bonsai.onLeaderboardData((collection) => {
+    applyLeaderboardCollection(collection);
+    if (viewMode === "menubar") {
+      scheduleMenubarRender();
+    } else {
       renderLeaderboard();
     }
   });
@@ -1521,7 +1531,12 @@ async function refreshLeaderboard(options: { syncFirst?: boolean; forceSync?: bo
       if (!data.error) hasFreshResult = true;
       if (!data.error || !leaderboardDataCache.has(data.range)) leaderboardDataCache.set(data.range, data);
     });
-    if (hasFreshResult) persistLeaderboardCache();
+    if (hasFreshResult) {
+      persistLeaderboardCache();
+      // Share the fresh data with the other window (menu bar popover ↔ dashboard)
+      // so its standings update without triggering its own network fetch.
+      window.bonsai.publishLeaderboards(collection);
+    }
     const cached = leaderboardDataCache.get(leaderboardRange);
     leaderboardData = cached ?? { range: leaderboardRange, entries: [], error: t("leaderboardLoadFailed") };
     leaderboardLoadedRange = cached ? leaderboardRange : null;
@@ -1537,6 +1552,26 @@ async function refreshLeaderboard(options: { syncFirst?: boolean; forceSync?: bo
     leaderboardLoading = false;
     renderLeaderboardSettings();
     renderLeaderboard();
+  }
+}
+
+// Fold a leaderboard collection (e.g. one another window just fetched and
+// broadcast) into local cache + current range, without any network fetch.
+function applyLeaderboardCollection(collection: LeaderboardCollection) {
+  if (!collection?.ranges) return;
+  let hasFreshResult = false;
+  LEADERBOARD_RANGES.forEach((range) => {
+    const data = collection.ranges[range];
+    if (!data) return;
+    if (!data.error) hasFreshResult = true;
+    if (!data.error || !leaderboardDataCache.has(range)) leaderboardDataCache.set(range, data);
+  });
+  if (!hasFreshResult) return;
+  persistLeaderboardCache();
+  const cached = leaderboardDataCache.get(leaderboardRange);
+  if (cached) {
+    leaderboardData = cached;
+    leaderboardLoadedRange = leaderboardRange;
   }
 }
 
@@ -2861,6 +2896,8 @@ function renderMenubarRhythm() {
   rows.forEach((row, hour) => {
     if (row.total > rows[peakHour].total) peakHour = hour;
   });
+  // Each hour is a full-height column so the whole column (not just the short/empty bar)
+  // is the hover/focus/click target. The bar inside is purely the visual fill.
   menubarRhythmBars.innerHTML = rows
     .map((row, hour) => {
       const heightPct = row.total <= 0 ? 0 : Math.max(6, Math.round((row.total / max) * 100));
@@ -2870,7 +2907,7 @@ function renderMenubarRhythm() {
       // Tint each bar by its dominant source, reusing the dashboard chart's colour classes.
       const tone = row.dominant && row.total > 0 ? ` src-${row.dominant}` : "";
       const label = row.total > 0 ? `${hour}:00 · +${formatCompact(row.total)}` : `${hour}:00`;
-      return `<span class="menubar-rhythm-bar${lit}${now}${quiet}${tone}" style="--bar-height:${heightPct}%" data-hour="${hour}" data-total="${row.total}" data-source="${row.dominant ?? ""}" title="${label}"></span>`;
+      return `<button type="button" class="menubar-rhythm-col${now}" data-hour="${hour}" data-total="${row.total}" data-source="${row.dominant ?? ""}" title="${label}" aria-label="${label}"><span class="menubar-rhythm-bar${lit}${now}${quiet}${tone}" style="--bar-height:${heightPct}%"></span></button>`;
     })
     .join("");
   setMenubarRhythmMeta(peakHour, rows);

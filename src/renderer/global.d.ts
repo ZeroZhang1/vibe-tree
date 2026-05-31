@@ -39,6 +39,7 @@ declare global {
       syncLeaderboard: (options?: { force?: boolean }) => Promise<LeaderboardStatus>;
       getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
       getLeaderboards: () => Promise<LeaderboardCollection>;
+      publishLeaderboards: (collection: LeaderboardCollection) => void;
       getCloudSyncStatus: () => Promise<CloudSyncStatus>;
       startNewTree: () => Promise<CloudSyncStatus>;
       enableCloudSync: () => Promise<CloudSyncStatus>;
@@ -68,6 +69,7 @@ declare global {
       onUsageStatus: (callback: (status: UsageStatus) => void) => () => void;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       onLeaderboardStatus: (callback: (status: LeaderboardStatus) => void) => () => void;
+      onLeaderboardData: (callback: (collection: LeaderboardCollection) => void) => () => void;
       onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => () => void;
       onPreviewAchievementToast: (callback: (id: string) => void) => () => void;
       onAchievementToast: (callback: (payload: { ids?: string[]; items?: TreeToastItem[]; placement: ToastPlacement }) => void) => () => void;

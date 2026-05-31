@@ -20,6 +20,7 @@ const api = {
   syncLeaderboard: (options) => ipcRenderer.invoke("leaderboard:sync", options),
   getLeaderboard: (range) => ipcRenderer.invoke("leaderboard:get", range),
   getLeaderboards: () => ipcRenderer.invoke("leaderboard:get-all"),
+  publishLeaderboards: (collection) => ipcRenderer.send("leaderboard:publish", collection),
   getCloudSyncStatus: () => ipcRenderer.invoke("cloud-sync:get-status"),
   startNewTree: () => ipcRenderer.invoke("cloud-sync:start-new"),
   enableCloudSync: () => ipcRenderer.invoke("cloud-sync:enable"),
@@ -80,6 +81,11 @@ const api = {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on("bonsai:leaderboard-status", listener);
     return () => ipcRenderer.removeListener("bonsai:leaderboard-status", listener);
+  },
+  onLeaderboardData: (callback) => {
+    const listener = (_event, collection) => callback(collection);
+    ipcRenderer.on("bonsai:leaderboard-data", listener);
+    return () => ipcRenderer.removeListener("bonsai:leaderboard-data", listener);
   },
   onAchievements: (callback) => {
     const listener = (_event, state, unlocked) => callback(state, unlocked);

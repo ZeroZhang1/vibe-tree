@@ -634,9 +634,25 @@ button {
   padding: 8px 0 0;
 }
 
-.menubar-rhythm-bar {
+/* Full-height column = the hover/focus/click target. Reset button chrome. */
+.menubar-rhythm-col {
   position: relative;
   flex: 1;
+  display: flex;
+  align-items: flex-end;
+  align-self: stretch;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.menubar-rhythm-bar {
+  position: relative;
+  width: 100%;
   min-height: 2px;
   height: var(--bar-height);
   border-radius: 3px 3px 1px 1px;
@@ -661,12 +677,13 @@ button {
   box-shadow: 0 0 9px color-mix(in srgb, var(--soil) 42%, transparent);
 }
 
-.menubar-rhythm-bar.now::after {
+/* "current hour" cap sits at the top of the whole column, not the short bar. */
+.menubar-rhythm-col.now::after {
   content: "";
   position: absolute;
   right: 1px;
   left: 1px;
-  top: -5px;
+  top: 0;
   height: 3px;
   border-radius: 999px;
   background: var(--soil);
@@ -689,14 +706,25 @@ button {
   box-shadow: 0 0 10px color-mix(in srgb, var(--leaf) 22%, transparent);
 }
 
-.menubar-rhythm-bar:hover,
-.menubar-rhythm-bar:focus-visible {
+/* Hovering/focusing anywhere in the column lights its bar. */
+.menubar-rhythm-col:hover .menubar-rhythm-bar,
+.menubar-rhythm-col:focus-visible .menubar-rhythm-bar {
   filter: saturate(1.3) brightness(1.18);
+}
+
+.menubar-rhythm-col {
   outline: none;
 }
 
-.menubar-rhythm-bar:focus-visible {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--leaf) 60%, transparent);
+.menubar-rhythm-col:focus-visible {
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--leaf) 60%, transparent);
+}
+
+/* A faint wash on the whole column so even a zero-height (quiet) hour shows it is hovered. */
+.menubar-rhythm-col:hover {
+  background: color-mix(in srgb, var(--leaf) 9%, transparent);
+  border-radius: 4px;
 }
 
 .menubar-viz-meta.is-hover {

@@ -14,6 +14,7 @@ import type {
   CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
+  LeaderboardCollection,
   LeaderboardProfile,
   Settings,
   ToastPlacement,
@@ -2940,6 +2941,16 @@ ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
 );
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("leaderboard:get-all", () => leaderboardService.getLeaderboards());
+// A renderer that just fetched fresh leaderboard data publishes it so the
+// other window (menu bar popover ↔ dashboard) updates without its own fetch.
+ipcMain.on("leaderboard:publish", (event, collection: LeaderboardCollection) => {
+  if (!collection || typeof collection !== "object" || !collection.ranges) return;
+  for (const window of [petWindow, managerWindow, menuBarWindow]) {
+    if (!window || window.isDestroyed()) continue;
+    if (window.webContents === event.sender) continue;
+    window.webContents.send("bonsai:leaderboard-data", collection);
+  }
+});
 ipcMain.handle("cloud-sync:get-status", (): CloudSyncStatus => leaderboardService.cloudStatus());
 ipcMain.handle("cloud-sync:start-new", () => {
   setTreeStartMode("new");
