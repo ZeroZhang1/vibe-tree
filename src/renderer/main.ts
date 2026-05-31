@@ -11,6 +11,12 @@ import type {
   LeaderboardRange,
   LeaderboardStatus,
   SessionMonitorStatus,
+  SocialFriend,
+  SocialGroup,
+  SocialGroupInvite,
+  SocialGroupLeaderboardData,
+  SocialGroupRole,
+  SocialProfile,
   TreeAsset,
   UiTheme,
   UpdateStatus,
@@ -57,7 +63,7 @@ import {
   sourceVisibility as buildSourceVisibility,
   xpForEntry,
 } from "./sources";
-import { StatsCache } from "./stats";
+import { StatsCache, summarizeXpProgression } from "./stats";
 import { DEFAULT_GAME_BALANCE, DEFAULT_PURE_SVG_MANIFEST, buildTreeAsset } from "./treeAssets";
 import type {
   AchievementCategoryFilter,
@@ -178,6 +184,27 @@ const LEADERBOARD_RANGES: LeaderboardRange[] = ["24h", "7d", "30d", "all"];
 const leaderboardDataCache = new Map<LeaderboardRange, LeaderboardData>();
 let leaderboardDataCacheSavedAt: number | null = null;
 let leaderboardLoading = false;
+let socialPanel: "friends" | "groups" = "friends";
+let socialFriends: SocialFriend[] = [];
+let socialFriendsUpdatedAt: string | undefined;
+let socialGroups: SocialGroup[] = [];
+let socialGroupsUpdatedAt: string | undefined;
+let socialSelectedGroupId: string | null = null;
+let socialLoading = false;
+let socialError = "";
+let socialNotice = "";
+let socialInvite: SocialGroupInvite | null = null;
+let socialInviteCopiedAt = 0;
+let socialGroupRange: LeaderboardRange = "24h";
+let socialGroupLeaderboard: SocialGroupLeaderboardData | null = null;
+let socialGroupLeaderboardLoading = false;
+const socialGroupLeaderboardCache = new Map<string, SocialGroupLeaderboardData>();
+let socialRenderKey = "";
+let socialProfileOpen = false;
+let socialProfileLoading = false;
+let socialProfileUserId: string | null = null;
+let socialProfile: SocialProfile | null = null;
+let socialProfileError = "";
 let achievementState: AchievementState = { unlocked: [] };
 let lastWeatherId: WeatherId | null = null;
 let lastRenderedLevel: number | null = null;
@@ -373,6 +400,35 @@ const leaderboardPageSyncButton = document.querySelector<HTMLButtonElement>("#le
 const leaderboardRangeTabs = document.querySelector<HTMLElement>("#leaderboardRangeTabs");
 const leaderboardSummary = document.querySelector<HTMLElement>("#leaderboardSummary");
 const leaderboardRows = document.querySelector<HTMLElement>("#leaderboardRows");
+const socialRefreshButton = document.querySelector<HTMLButtonElement>("#socialRefreshButton");
+const socialModeTabs = document.querySelector<HTMLElement>("#socialModeTabs");
+const socialFriendsPanel = document.querySelector<HTMLElement>("#socialFriendsPanel");
+const socialGroupsPanel = document.querySelector<HTMLElement>("#socialGroupsPanel");
+const socialGroupManageButton = document.querySelector<HTMLButtonElement>("#socialGroupManageButton");
+const socialGroupActionsModal = document.querySelector<HTMLElement>("#socialGroupActionsModal");
+const socialGroupActionsBackdrop = document.querySelector<HTMLElement>("#socialGroupActionsBackdrop");
+const socialGroupActionsCloseButton = document.querySelector<HTMLButtonElement>("#socialGroupActionsCloseButton");
+const socialGroupDetailPanel = document.querySelector<HTMLElement>("#socialGroupDetailPanel");
+const socialAddFriendForm = document.querySelector<HTMLFormElement>("#socialAddFriendForm");
+const socialFriendUsernameInput = document.querySelector<HTMLInputElement>("#socialFriendUsernameInput");
+const socialFriendList = document.querySelector<HTMLElement>("#socialFriendList");
+const socialCreateGroupForm = document.querySelector<HTMLFormElement>("#socialCreateGroupForm");
+const socialGroupNameInput = document.querySelector<HTMLInputElement>("#socialGroupNameInput");
+const socialJoinInviteForm = document.querySelector<HTMLFormElement>("#socialJoinInviteForm");
+const socialInviteCodeInput = document.querySelector<HTMLInputElement>("#socialInviteCodeInput");
+const socialSummary = document.querySelector<HTMLElement>("#socialSummary");
+const socialGroupList = document.querySelector<HTMLElement>("#socialGroupList");
+const socialGroupDetail = document.querySelector<HTMLElement>("#socialGroupDetail");
+const socialGroupRangeTabs = document.querySelector<HTMLElement>("#socialGroupRangeTabs");
+const socialInviteManager = document.querySelector<HTMLElement>("#socialInviteManager");
+const socialInviteGroupSummary = document.querySelector<HTMLElement>("#socialInviteGroupSummary");
+const socialCreateInviteButton = document.querySelector<HTMLButtonElement>("#socialCreateInviteButton");
+const socialInviteOutput = document.querySelector<HTMLElement>("#socialInviteOutput");
+const socialGroupLeaderboardRows = document.querySelector<HTMLElement>("#socialGroupLeaderboardRows");
+const socialProfileModal = document.querySelector<HTMLElement>("#socialProfileModal");
+const socialProfileBackdrop = document.querySelector<HTMLElement>("#socialProfileBackdrop");
+const socialProfileCloseButton = document.querySelector<HTMLButtonElement>("#socialProfileCloseButton");
+const socialProfileBody = document.querySelector<HTMLElement>("#socialProfileBody");
 const shareExportButton = document.querySelector<HTMLButtonElement>("#shareExportButton");
 const treeStartModal = document.querySelector<HTMLElement>("#treeStartModal");
 const treeStartNewButton = document.querySelector<HTMLButtonElement>("#treeStartNewButton");
@@ -1091,6 +1147,18 @@ function bindEvents() {
     setSettingsOpen(false);
   });
 
+  socialGroupManageButton?.addEventListener("click", () => {
+    setSocialGroupActionsOpen(true);
+  });
+
+  socialGroupActionsCloseButton?.addEventListener("click", () => {
+    setSocialGroupActionsOpen(false);
+  });
+
+  socialGroupActionsBackdrop?.addEventListener("click", () => {
+    setSocialGroupActionsOpen(false);
+  });
+
   settingsNav?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-settings-category-button]");
     const category = button?.dataset.settingsCategoryButton;
@@ -1108,7 +1176,14 @@ function bindEvents() {
   });
 
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") setSettingsOpen(false);
+    if (event.key === "Escape") {
+      if (socialProfileOpen) {
+        closeSocialProfile();
+        return;
+      }
+      setSettingsOpen(false);
+      setSocialGroupActionsOpen(false);
+    }
   });
 
   scaleSelect?.addEventListener("change", async () => {
@@ -1395,12 +1470,18 @@ function bindEvents() {
     const nextTab = button.dataset.dashboardTab as DashboardTab | undefined;
     if (!nextTab || nextTab === dashboardTab) return;
     dashboardTab = nextTab;
+    if (dashboardTab !== "social") setSocialGroupActionsOpen(false);
     renderDashboardTabs();
     if (dashboardTab === "leaderboard") {
       ensureLeaderboardLoaded();
       return;
     }
+    if (dashboardTab === "social") {
+      ensureSocialLoaded();
+      return;
+    }
     renderLeaderboard();
+    renderSocial();
   });
 
   leaderboardRangeTabs?.addEventListener("click", (event) => {
@@ -1416,6 +1497,120 @@ function bindEvents() {
     }
     renderLeaderboard();
     if (!isLeaderboardCacheFresh()) void refreshLeaderboard({ forceFetch: true });
+  });
+
+  socialRefreshButton?.addEventListener("click", () => {
+    void refreshSocial({ syncFirst: true });
+  });
+
+  socialModeTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-panel]");
+    if (!button) return;
+    const nextPanel = button.dataset.socialPanel === "groups" ? "groups" : "friends";
+    if (nextPanel === socialPanel) return;
+    socialPanel = nextPanel;
+    socialNotice = "";
+    if (socialPanel !== "groups") setSocialGroupActionsOpen(false);
+    socialRenderKey = "";
+    renderSocial();
+    if (socialPanel === "groups" && socialSelectedGroupId && !socialGroupLeaderboard) {
+      socialGroupLeaderboard = cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange);
+      socialRenderKey = "";
+      renderSocial();
+      if (!socialGroupLeaderboard) void refreshSocialGroupLeaderboard();
+    }
+  });
+
+  socialAddFriendForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void requestSocialFriendFromInput();
+  });
+
+  socialFriendList?.addEventListener("click", (event) => {
+    const profileTrigger = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-profile-id]");
+    if (profileTrigger) {
+      const profileUserId = profileTrigger.dataset.socialProfileId;
+      if (profileUserId) void openSocialProfile(profileUserId);
+      return;
+    }
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-friend-action]");
+    if (!button) return;
+    const userId = button.dataset.socialFriendId;
+    if (!userId) return;
+    const action = button.dataset.socialFriendAction;
+    if (action === "accept") {
+      void acceptSocialFriendRequest(userId);
+    } else if (action === "remove") {
+      void removeSocialFriendRelationship(userId);
+    }
+  });
+
+  socialCreateGroupForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createSocialGroupFromInput();
+  });
+
+  socialJoinInviteForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void acceptSocialInviteFromInput();
+  });
+
+  socialGroupList?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-group-id]");
+    if (!button) return;
+    const nextGroupId = button.dataset.socialGroupId;
+    if (!nextGroupId || nextGroupId === socialSelectedGroupId) return;
+    socialSelectedGroupId = nextGroupId;
+    clearSocialInvite();
+    socialGroupLeaderboard = cachedSocialGroupLeaderboard(nextGroupId, socialGroupRange);
+    socialRenderKey = "";
+    renderSocial();
+    if (!socialGroupLeaderboard) void refreshSocialGroupLeaderboard();
+  });
+
+  socialGroupDetail?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-group-action]");
+    if (!button) return;
+    const groupId = button.dataset.groupId;
+    if (!groupId) return;
+    if (button.dataset.socialGroupAction === "leave") {
+      void leaveSocialGroupRelationship(groupId);
+    } else if (button.dataset.socialGroupAction === "toggle-share") {
+      void toggleSocialGroupShareUsage(groupId);
+    }
+  });
+
+  socialGroupLeaderboardRows?.addEventListener("click", (event) => {
+    const trigger = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-profile-id]");
+    if (!trigger) return;
+    const profileUserId = trigger.dataset.socialProfileId;
+    if (profileUserId) void openSocialProfile(profileUserId);
+  });
+
+  socialProfileCloseButton?.addEventListener("click", () => {
+    closeSocialProfile();
+  });
+
+  socialProfileBackdrop?.addEventListener("click", () => {
+    closeSocialProfile();
+  });
+
+  socialGroupRangeTabs?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-social-group-range]");
+    if (!button) return;
+    const nextRange = normalizeLeaderboardRange(button.dataset.socialGroupRange);
+    if (nextRange === socialGroupRange) return;
+    socialGroupRange = nextRange;
+    socialGroupLeaderboard = socialSelectedGroupId
+      ? cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange)
+      : null;
+    socialRenderKey = "";
+    renderSocial();
+    if (!socialGroupLeaderboard) void refreshSocialGroupLeaderboard();
+  });
+
+  socialCreateInviteButton?.addEventListener("click", () => {
+    void createOrCopySocialInviteForSelectedGroup();
   });
 
   achievementCategoryTabs?.addEventListener("click", (event) => {
@@ -1616,6 +1811,399 @@ function ensureLeaderboardLoaded() {
   void refreshLeaderboard({ forceFetch: true });
 }
 
+function ensureSocialLoaded() {
+  renderSocial();
+  if (socialFriends.length || socialGroups.length || socialLoading || socialGroupLeaderboardLoading || socialError) return;
+  void refreshSocial();
+}
+
+async function refreshSocial(options: { syncFirst?: boolean } = {}) {
+  if (socialLoading) return;
+  socialLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    leaderboardStatus = await window.bonsai.getLeaderboardStatus();
+    if (!leaderboardStatus.configured || !leaderboardStatus.authenticated) {
+      socialFriends = [];
+      socialGroups = [];
+      socialFriendsUpdatedAt = undefined;
+      socialGroupsUpdatedAt = undefined;
+      socialSelectedGroupId = null;
+      socialGroupLeaderboard = null;
+      socialError = "";
+      return;
+    }
+    if (options.syncFirst && leaderboardStatus.joined) {
+      await runLeaderboardSync({ force: true });
+    }
+    const [friendList, groupList] = await Promise.all([
+      window.bonsai.getSocialFriends(),
+      window.bonsai.getSocialGroups(),
+    ]);
+    socialFriends = friendList.friends;
+    socialFriendsUpdatedAt = friendList.updatedAt;
+    socialGroups = groupList.groups;
+    socialGroupsUpdatedAt = groupList.updatedAt;
+    socialError = friendList.error ?? groupList.error ?? "";
+    if (!socialSelectedGroupId || !socialGroups.some((group) => group.groupId === socialSelectedGroupId)) {
+      socialSelectedGroupId = socialGroups[0]?.groupId ?? null;
+    }
+    if (!socialSelectedGroupId) {
+      socialGroupLeaderboard = null;
+    } else if (socialGroupLeaderboard?.groupId !== socialSelectedGroupId) {
+      socialGroupLeaderboard = cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange);
+    }
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialGroupsLoadFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderLeaderboardSettings();
+    renderSocial();
+  }
+  if (socialSelectedGroupId && (options.syncFirst || !cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange))) {
+    await refreshSocialGroupLeaderboard({ force: options.syncFirst });
+  }
+}
+
+async function refreshSocialGroupLeaderboard(options: { force?: boolean } = {}) {
+  const groupId = socialSelectedGroupId;
+  if (!groupId || socialLoading || socialGroupLeaderboardLoading) {
+    renderSocial();
+    return;
+  }
+  const cached = cachedSocialGroupLeaderboard(groupId, socialGroupRange);
+  if (cached && !options.force) {
+    socialGroupLeaderboard = cached;
+    socialError = cached.error ?? "";
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  socialGroupLeaderboardLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    socialGroupLeaderboard = await window.bonsai.getSocialGroupLeaderboard(groupId, socialGroupRange);
+    cacheSocialGroupLeaderboard(socialGroupLeaderboard);
+    socialError = socialGroupLeaderboard.error ?? "";
+  } catch (error) {
+    socialGroupLeaderboard = {
+      groupId,
+      range: socialGroupRange,
+      entries: [],
+      error: error instanceof Error ? error.message : t("socialGroupLeaderboardLoadFailed"),
+    };
+    cacheSocialGroupLeaderboard(socialGroupLeaderboard);
+    socialError = socialGroupLeaderboard.error ?? "";
+  } finally {
+    socialGroupLeaderboardLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+}
+
+function socialGroupLeaderboardCacheKey(groupId: string, range: LeaderboardRange) {
+  return `${groupId}:${range}`;
+}
+
+function cachedSocialGroupLeaderboard(groupId: string, range: LeaderboardRange) {
+  return socialGroupLeaderboardCache.get(socialGroupLeaderboardCacheKey(groupId, range)) ?? null;
+}
+
+function cacheSocialGroupLeaderboard(board: SocialGroupLeaderboardData) {
+  socialGroupLeaderboardCache.set(socialGroupLeaderboardCacheKey(board.groupId, board.range), board);
+}
+
+async function requestSocialFriendFromInput() {
+  const username = socialFriendUsernameInput?.value.trim() ?? "";
+  if (!username) {
+    socialError = t("socialFriendTargetRequired");
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  socialLoading = true;
+  socialError = "";
+  socialNotice = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    const friend = await window.bonsai.requestSocialFriend({ username });
+    socialFriendUsernameInput!.value = "";
+    upsertSocialFriend(friend);
+    // GitHub usernames can be renamed/reclaimed, so confirm the resolved identity.
+    socialNotice = t("socialFriendRequestSent").replace("{name}", friend.username);
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialFriendRequestFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+}
+
+async function acceptSocialFriendRequest(userId: string) {
+  socialLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    const friend = await window.bonsai.acceptSocialFriend(userId);
+    upsertSocialFriend(friend);
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialFriendAcceptFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+}
+
+async function removeSocialFriendRelationship(userId: string) {
+  socialLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    const list = await window.bonsai.removeSocialFriend(userId);
+    socialFriends = list.friends;
+    socialFriendsUpdatedAt = list.updatedAt;
+    socialError = list.error ?? "";
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialFriendRemoveFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+}
+
+async function createSocialGroupFromInput() {
+  const name = socialGroupNameInput?.value.trim() ?? "";
+  if (!name) {
+    socialError = t("socialGroupNameRequired");
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  socialLoading = true;
+  socialError = "";
+  clearSocialInvite();
+  socialRenderKey = "";
+  renderSocial();
+  let created = false;
+  try {
+    const group = await window.bonsai.createSocialGroup({ name, visibility: "invite" });
+    socialGroupNameInput!.value = "";
+    upsertSocialGroup(group);
+    socialSelectedGroupId = group.groupId;
+    socialGroupLeaderboard = null;
+    created = true;
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialGroupCreateFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+  if (created) setSocialGroupActionsOpen(false);
+  if (socialSelectedGroupId) await refreshSocialGroupLeaderboard();
+}
+
+async function acceptSocialInviteFromInput() {
+  const code = socialInviteCodeInput?.value.trim() ?? "";
+  if (!code) {
+    socialError = t("socialInviteRequired");
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  socialLoading = true;
+  socialError = "";
+  clearSocialInvite();
+  socialRenderKey = "";
+  renderSocial();
+  let joined = false;
+  try {
+    const group = await window.bonsai.acceptSocialGroupInvite(code);
+    socialInviteCodeInput!.value = "";
+    upsertSocialGroup(group);
+    socialSelectedGroupId = group.groupId;
+    socialGroupLeaderboard = null;
+    joined = true;
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialInviteAcceptFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+  if (joined) setSocialGroupActionsOpen(false);
+  if (socialSelectedGroupId) await refreshSocialGroupLeaderboard();
+}
+
+async function leaveSocialGroupRelationship(groupId: string) {
+  const group = socialGroups.find((item) => item.groupId === groupId);
+  const confirmed = await showAppConfirm({
+    title: t("socialGroupLeaveConfirmTitle"),
+    body: group ? `${group.name}\n\n${t("socialGroupLeaveConfirmBody")}` : t("socialGroupLeaveConfirmBody"),
+    confirmText: t("socialGroupLeaveConfirmAction"),
+    tone: "danger",
+  });
+  if (!confirmed.confirmed) return;
+  socialLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    await window.bonsai.leaveSocialGroup(groupId);
+    socialGroups = socialGroups.filter((item) => item.groupId !== groupId);
+    socialGroupLeaderboardCache.delete(socialGroupLeaderboardCacheKey(groupId, socialGroupRange));
+    if (socialSelectedGroupId === groupId) {
+      socialSelectedGroupId = socialGroups[0]?.groupId ?? null;
+      socialGroupLeaderboard = socialSelectedGroupId
+        ? cachedSocialGroupLeaderboard(socialSelectedGroupId, socialGroupRange)
+        : null;
+      clearSocialInvite();
+    }
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialGroupLeaveFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+  if (socialSelectedGroupId && !socialGroupLeaderboard) await refreshSocialGroupLeaderboard();
+}
+
+async function toggleSocialGroupShareUsage(groupId: string) {
+  const group = socialGroups.find((item) => item.groupId === groupId);
+  if (!group) return;
+  socialLoading = true;
+  socialError = "";
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    const updated = await window.bonsai.setSocialGroupShareUsage(groupId, group.shareUsage === false);
+    upsertSocialGroup(updated);
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialGroupShareToggleFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+  await refreshSocialGroupLeaderboard({ force: true });
+}
+
+async function createSocialInviteForSelectedGroup() {
+  const group = selectedSocialGroup();
+  if (!group) {
+    socialError = t("socialNoGroupSelected");
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  socialLoading = true;
+  socialError = "";
+  clearSocialInvite();
+  socialRenderKey = "";
+  renderSocial();
+  try {
+    socialInvite = await window.bonsai.createSocialGroupInvite(group.groupId, {
+      role: "member",
+      maxUses: 20,
+      expiresInDays: 7,
+    });
+    socialInviteCopiedAt = 0;
+  } catch (error) {
+    socialError = error instanceof Error ? error.message : t("socialInviteCreateFailed");
+  } finally {
+    socialLoading = false;
+    socialRenderKey = "";
+    renderSocial();
+  }
+}
+
+async function createOrCopySocialInviteForSelectedGroup() {
+  const group = selectedSocialGroup();
+  if (!group) {
+    socialError = t("socialNoGroupSelected");
+    socialRenderKey = "";
+    renderSocial();
+    return;
+  }
+  if (socialInvite?.groupId === group.groupId) {
+    try {
+      await copyTextToClipboard(socialInvite.code);
+      socialInviteCopiedAt = Date.now();
+      const copiedAt = socialInviteCopiedAt;
+      window.setTimeout(() => {
+        if (socialInviteCopiedAt !== copiedAt) return;
+        socialRenderKey = "";
+        renderSocial();
+      }, 3_000);
+      socialError = "";
+    } catch {
+      socialError = t("socialInviteCopyFailed");
+    } finally {
+      socialRenderKey = "";
+      renderSocial();
+    }
+    return;
+  }
+  await createSocialInviteForSelectedGroup();
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("copy failed");
+}
+
+function clearSocialInvite() {
+  socialInvite = null;
+  socialInviteCopiedAt = 0;
+}
+
+function upsertSocialFriend(friend: SocialFriend) {
+  const index = socialFriends.findIndex((item) => item.userId === friend.userId);
+  if (index >= 0) {
+    socialFriends = socialFriends.map((item) => (item.userId === friend.userId ? friend : item));
+  } else {
+    socialFriends = [friend, ...socialFriends];
+  }
+  socialFriendsUpdatedAt = new Date().toISOString();
+}
+
+function upsertSocialGroup(group: SocialGroup) {
+  const index = socialGroups.findIndex((item) => item.groupId === group.groupId);
+  if (index >= 0) {
+    socialGroups = socialGroups.map((item) => (item.groupId === group.groupId ? group : item));
+  } else {
+    socialGroups = [group, ...socialGroups];
+  }
+}
+
+function selectedSocialGroup() {
+  return socialGroups.find((group) => group.groupId === socialSelectedGroupId) ?? null;
+}
+
 async function toggleLeaderboardMembership() {
   if (leaderboardStatus.joined) {
     await leaveLeaderboard();
@@ -1755,6 +2343,148 @@ function setSettingsOpen(open: boolean) {
   }
   settingsModal.classList.toggle("open", open);
   settingsModal.setAttribute("aria-hidden", String(!open));
+}
+
+function setSocialGroupActionsOpen(open: boolean) {
+  if (!socialGroupActionsModal) return;
+  socialGroupActionsModal.hidden = !open;
+  socialGroupActionsModal.classList.toggle("open", open);
+  socialGroupActionsModal.setAttribute("aria-hidden", String(!open));
+  if (open) {
+    window.setTimeout(() => {
+      (socialGroups.length ? socialInviteCodeInput : socialGroupNameInput)?.focus();
+    }, 0);
+  }
+}
+
+async function openSocialProfile(userId: string) {
+  const targetUserId = userId.trim();
+  if (!targetUserId) return;
+  socialProfileOpen = true;
+  socialProfileUserId = targetUserId;
+  socialProfileLoading = true;
+  socialProfile = null;
+  socialProfileError = "";
+  setSocialProfileModalOpen(true);
+  renderSocialProfile();
+
+  const result = await window.bonsai.getSocialProfile(targetUserId);
+  // A newer click may have superseded this fetch (or the modal was closed).
+  if (!socialProfileOpen || socialProfileUserId !== targetUserId) return;
+  socialProfileLoading = false;
+  if (result.profile) {
+    socialProfile = result.profile;
+    socialProfileError = "";
+  } else {
+    socialProfile = null;
+    socialProfileError = result.error || t("socialProfileLoadFailed");
+  }
+  renderSocialProfile();
+}
+
+function closeSocialProfile() {
+  if (!socialProfileOpen) return;
+  socialProfileOpen = false;
+  socialProfileUserId = null;
+  socialProfile = null;
+  socialProfileError = "";
+  socialProfileLoading = false;
+  setSocialProfileModalOpen(false);
+}
+
+function setSocialProfileModalOpen(open: boolean) {
+  if (!socialProfileModal) return;
+  socialProfileModal.hidden = !open;
+  socialProfileModal.classList.toggle("open", open);
+  socialProfileModal.setAttribute("aria-hidden", String(!open));
+  if (open) {
+    window.setTimeout(() => socialProfileCloseButton?.focus(), 0);
+  }
+}
+
+function renderSocialProfile() {
+  if (!socialProfileBody) return;
+  if (socialProfileLoading) {
+    socialProfileBody.innerHTML = `<div class="social-profile-status">${escapeHtml(t("socialProfileLoading"))}</div>`;
+    return;
+  }
+  if (socialProfileError) {
+    socialProfileBody.innerHTML = `<div class="social-profile-status">${escapeHtml(socialProfileError)}</div>`;
+    return;
+  }
+  const profile = socialProfile;
+  if (!profile) {
+    socialProfileBody.innerHTML = `<div class="social-profile-status">${escapeHtml(t("socialProfileLoadFailed"))}</div>`;
+    return;
+  }
+
+  const relationLabel = profile.isSelf
+    ? t("socialProfileRelationSelf")
+    : profile.isFriend
+      ? t("socialProfileRelationFriend")
+      : profile.mutualGroupCount > 0
+        ? t("socialProfileRelationGroup")
+        : "";
+  const joined = profile.joinedAt
+    ? `${t("socialProfileJoined")} ${new Date(profile.joinedAt).toLocaleDateString(languageLocale(), { year: "numeric", month: "long" })}`
+    : "";
+
+  const headerHtml = `
+    <div class="social-profile-identity">
+      ${leaderboardAvatar(profile.avatarUrl, profile.username)}
+      <div class="social-profile-identity-copy">
+        <strong>${escapeHtml(profile.username)}</strong>
+        ${relationLabel ? `<span class="social-profile-relation">${escapeHtml(relationLabel)}</span>` : ""}
+        ${joined ? `<span class="social-profile-joined">${escapeHtml(joined)}</span>` : ""}
+      </div>
+    </div>
+    <div class="social-profile-relations">
+      <article><strong>${formatNumber(profile.friendCount)}</strong><span>${escapeHtml(t("socialProfileFriends"))}</span></article>
+      <article><strong>${formatNumber(profile.groupCount)}</strong><span>${escapeHtml(t("socialProfileGroups"))}</span></article>
+    </div>
+  `;
+
+  let bodyHtml = "";
+  if (profile.usageVisible) {
+    const balance = gameBalance ?? DEFAULT_GAME_BALANCE;
+    const progression = summarizeXpProgression(profile.totalTokens ?? 0, balance);
+    const progressPercent = Math.round(progression.progress * 100);
+    bodyHtml = `
+      <div class="social-profile-level">
+        <div class="social-profile-level-head">
+          <strong>Lv.${progression.level}</strong>
+          <span>${escapeHtml(progression.stageLabel)}</span>
+        </div>
+        <div class="progress-track xp-track"><span style="width:${progressPercent}%"></span></div>
+      </div>
+      <div class="social-profile-metrics">
+        <article><strong>${formatNumber(profile.totalTokens ?? 0)}</strong><span>${escapeHtml(t("metricTotalTokens"))}</span></article>
+        <article><strong>${formatNumber(profile.daysActive ?? 0)}</strong><span>${escapeHtml(t("leaderboardDaysActive"))}</span></article>
+      </div>
+      ${renderSocialProfileAchievements(profile.achievements ?? [])}
+    `;
+  } else {
+    bodyHtml = `<div class="social-profile-private">${escapeHtml(t("socialProfileUsageHidden"))}</div>`;
+  }
+
+  socialProfileBody.innerHTML = headerHtml + bodyHtml;
+}
+
+function renderSocialProfileAchievements(achievements: SocialProfile["achievements"]) {
+  const unlocked = achievements ?? [];
+  const heading = `<div class="social-profile-section-title"><strong>${escapeHtml(t("memorialAchievements"))}</strong><span>${unlocked.length}</span></div>`;
+  if (!unlocked.length) {
+    return `<section class="social-profile-achievements">${heading}<div class="social-profile-empty">${escapeHtml(t("socialProfileNoAchievements"))}</div></section>`;
+  }
+  const byId = new Map(unlocked.map((entry) => [entry.id, entry]));
+  const defs = ACHIEVEMENTS.filter((def) => byId.has(def.id)).sort((a, b) => rarityOrder(a.rarity) - rarityOrder(b.rarity));
+  const badges = defs
+    .map((def) => {
+      const copy = achievementText(def);
+      return `<span class="social-profile-badge rarity-${def.rarity}" title="${escapeHtml(copy.description)}">${escapeHtml(copy.name)}</span>`;
+    })
+    .join("");
+  return `<section class="social-profile-achievements">${heading}<div class="social-profile-badges">${badges}</div></section>`;
 }
 
 function isSettingsCategory(value: string | undefined): value is SettingsCategory {
@@ -2854,6 +3584,7 @@ function render() {
     });
     renderAchievements(stats, achievementContext);
     renderDashboardTabs();
+    renderSocial();
     if (achievementContext) syncAchievementsIfNeeded(stats, achievementContext);
   } else if (viewMode === "menubar") {
     renderMenubarPopover(stats, visibility);
@@ -4745,6 +5476,232 @@ function renderLeaderboard() {
     .join("");
 }
 
+function renderSocial() {
+  if (
+    !socialSummary ||
+    !socialFriendsPanel ||
+    !socialGroupsPanel ||
+    !socialGroupDetailPanel ||
+    !socialFriendList ||
+    !socialGroupList ||
+    !socialGroupDetail ||
+    !socialGroupLeaderboardRows ||
+    !socialInviteOutput
+  ) {
+    return;
+  }
+  const renderKey = socialRenderSignature();
+  if (renderKey === socialRenderKey) return;
+  socialRenderKey = renderKey;
+
+  const group = selectedSocialGroup();
+  const canManageGroup = group?.role === "leader" || group?.role === "officer";
+  const groupsEmpty = socialPanel === "groups" && !socialGroups.length;
+  const hasActiveInvite = Boolean(group && socialInvite?.groupId === group.groupId);
+
+  socialRefreshButton && (socialRefreshButton.disabled = socialLoading || socialGroupLeaderboardLoading);
+  socialModeTabs?.querySelectorAll<HTMLButtonElement>("[data-social-panel]").forEach((button) => {
+    const active = button.dataset.socialPanel === socialPanel;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  socialFriendsPanel.hidden = socialPanel !== "friends";
+  socialGroupsPanel.hidden = socialPanel !== "groups";
+  socialGroupsPanel.classList.toggle("is-empty", groupsEmpty);
+  socialGroupDetailPanel.hidden = groupsEmpty;
+  if (socialGroupManageButton) {
+    socialGroupManageButton.disabled = socialLoading;
+    socialGroupManageButton.textContent = groupsEmpty ? t("socialGroupActions") : t("socialGroupManage");
+  }
+  socialAddFriendForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
+    element.disabled = socialLoading;
+  });
+  socialCreateGroupForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
+    element.disabled = socialLoading;
+  });
+  socialJoinInviteForm?.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button,input").forEach((element) => {
+    element.disabled = socialLoading;
+  });
+  if (socialInviteManager) {
+    socialInviteManager.hidden = !group;
+  }
+  if (socialInviteGroupSummary) {
+    socialInviteGroupSummary.innerHTML = group
+      ? `
+        <strong>${escapeHtml(group.name)}</strong>
+        <span>${formatNumber(group.memberCount)} ${t("socialMembers")} · ${socialRoleLabel(group.role)}</span>
+      `
+      : `<span>${t("socialNoGroupSelected")}</span>`;
+  }
+  if (socialCreateInviteButton) {
+    socialCreateInviteButton.disabled = socialLoading || !canManageGroup;
+    socialCreateInviteButton.textContent = hasActiveInvite ? t("socialCopyInvite") : t("socialCreateInvite");
+    socialCreateInviteButton.title = canManageGroup
+      ? hasActiveInvite
+        ? t("socialCopyInvite")
+        : t("socialCreateInvite")
+      : t("socialInviteOfficerOnly");
+  }
+
+  socialGroupRangeTabs?.querySelectorAll<HTMLButtonElement>("[data-social-group-range]").forEach((button) => {
+    const active = button.dataset.socialGroupRange === socialGroupRange;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+
+  let summaryHtml = "";
+  if (!leaderboardStatus.configured) {
+    summaryHtml = `<strong>${t("leaderboardServiceNotConfigured")}</strong><span>${t("socialNoService")}</span>`;
+  } else if (socialLoading) {
+    summaryHtml = `<strong>${t("socialLoading")}</strong><span>${socialPanel === "groups" ? leaderboardRangeLabel(socialGroupRange) : t("socialPanelFriends")}</span>`;
+  } else if (socialError) {
+    summaryHtml = `<strong>${escapeHtml(socialError)}</strong><span>${t("socialRefresh")}</span>`;
+  } else if (socialPanel === "friends" && socialNotice) {
+    summaryHtml = `<strong>${escapeHtml(socialNotice)}</strong><span>${t("socialFriendRequestSentHint")}</span>`;
+  } else if (socialPanel === "friends" && socialFriends.length) {
+    const updatedAt = socialFriendsUpdatedAt;
+    const updated = updatedAt ? `${t("socialUpdated")} ${formatRelativeTime(updatedAt)}` : "";
+    summaryHtml = `<strong>${socialFriends.length} ${t("socialFriendsCount")}</strong><span>${escapeHtml(updated)}</span>`;
+  } else if (socialPanel === "groups" && socialGroups.length) {
+    const updated = socialGroupsUpdatedAt ? `${t("socialUpdated")} ${formatRelativeTime(socialGroupsUpdatedAt)}` : "";
+    summaryHtml = `<strong>${socialGroups.length} ${t("socialGroupsCount")}</strong><span>${escapeHtml(updated)}</span>`;
+  } else if (!leaderboardStatus.authenticated) {
+    summaryHtml = `<strong>${t("socialLoginRequired")}</strong><span>${t("socialLoginHint")}</span>`;
+  }
+  socialSummary.hidden = !summaryHtml;
+  socialSummary.innerHTML = summaryHtml;
+
+  socialFriendList.innerHTML = socialFriends.length
+    ? socialFriends
+        .map((friend) => {
+          const pending = friend.status === "pending";
+          const canAccept = pending && friend.direction === "incoming";
+          const removeLabel = pending && friend.direction === "outgoing" ? t("socialFriendCancel") : t("socialFriendRemove");
+          return `
+            <article class="social-friend-item${pending ? " pending" : ""}">
+              <button class="social-profile-trigger" type="button" data-social-profile-id="${escapeHtml(friend.userId)}" title="${escapeHtml(t("socialProfileOpenHint"))}">
+                ${socialFriendAvatar(friend)}
+                <span class="social-friend-copy">
+                  <strong>${escapeHtml(friend.username)}</strong>
+                  <span>${socialFriendStatusLabel(friend)}</span>
+                </span>
+              </button>
+              <span class="social-friend-actions">
+                ${
+                  canAccept
+                    ? `<button class="secondary-button" type="button" data-social-friend-action="accept" data-social-friend-id="${escapeHtml(friend.userId)}">${t("socialFriendAccept")}</button>`
+                    : ""
+                }
+                <button class="secondary-button" type="button" data-social-friend-action="remove" data-social-friend-id="${escapeHtml(friend.userId)}">${removeLabel}</button>
+              </span>
+            </article>
+          `;
+        })
+        .join("")
+    : `<div class="leaderboard-empty social-empty">${t("socialFriendsEmpty")}</div>`;
+
+  socialGroupList.innerHTML = socialGroups.length
+    ? socialGroups
+        .map((item) => {
+          const active = item.groupId === socialSelectedGroupId;
+          return `
+            <button class="social-group-item${active ? " active" : ""}" type="button" data-social-group-id="${escapeHtml(item.groupId)}">
+              <span class="social-group-icon" aria-hidden="true">${escapeHtml(item.iconEmoji || "VT")}</span>
+              <span class="social-group-copy">
+                <strong>${escapeHtml(item.name)}</strong>
+                <span>${formatNumber(item.memberCount)} ${t("socialMembers")} · ${socialRoleLabel(item.role)}</span>
+              </span>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="leaderboard-empty social-empty">${t("socialGroupsEmpty")}</div>`;
+
+  if (!group) {
+    socialGroupDetail.innerHTML = `
+      <strong>${t("socialNoGroupSelected")}</strong>
+      <span>${t("socialCreateOrJoin")}</span>
+    `;
+    socialInviteOutput.innerHTML = "";
+    socialGroupLeaderboardRows.innerHTML = groupsEmpty ? "" : `<div class="leaderboard-empty">${t("socialNoGroupSelected")}</div>`;
+    return;
+  }
+
+  const isOwner = group.ownerUserId === leaderboardStatus.profile?.id;
+  const sharing = group.shareUsage !== false;
+  socialGroupDetail.innerHTML = `
+    <div class="social-group-title">
+      <span class="social-group-icon large" aria-hidden="true">${escapeHtml(group.iconEmoji || "VT")}</span>
+      <div>
+        <strong>${escapeHtml(group.name)}</strong>
+        <span>${formatNumber(group.memberCount)} ${t("socialMembers")} · ${socialRoleLabel(group.role)}</span>
+      </div>
+    </div>
+    ${group.description ? `<p>${escapeHtml(group.description)}</p>` : ""}
+    <div class="social-group-detail-actions">
+      <button class="secondary-button" type="button" data-social-group-action="toggle-share" data-group-id="${escapeHtml(group.groupId)}" aria-pressed="${sharing ? "true" : "false"}">
+        ${sharing ? t("socialGroupShareOn") : t("socialGroupShareOff")}
+      </button>
+      ${
+        isOwner
+          ? ""
+          : `<button class="secondary-button danger-button" type="button" data-social-group-action="leave" data-group-id="${escapeHtml(group.groupId)}">${t("socialGroupLeave")}</button>`
+      }
+    </div>
+  `;
+
+  socialInviteOutput.innerHTML = socialInvite
+    ? `
+      <strong>${t("socialInviteReady")}</strong>
+      <code>${escapeHtml(socialInvite.code)}</code>
+      <span>${Date.now() - socialInviteCopiedAt < 3_000 ? t("socialInviteCopied") : t("socialInviteHint")}</span>
+    `
+    : "";
+
+  const board = socialGroupLeaderboard;
+  if (socialGroupLeaderboardLoading && (!board || board.groupId !== group.groupId || board.range !== socialGroupRange)) {
+    socialGroupLeaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("socialLeaderboardLoading")}</div>`;
+    return;
+  }
+
+  if (!board || board.groupId !== group.groupId || board.range !== socialGroupRange) {
+    socialGroupLeaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("leaderboardClickRefresh")}</div>`;
+    return;
+  }
+
+  if (board.error) {
+    socialGroupLeaderboardRows.innerHTML = `<div class="leaderboard-empty">${escapeHtml(board.error)}</div>`;
+    return;
+  }
+
+  if (!board.entries.length) {
+    socialGroupLeaderboardRows.innerHTML = `<div class="leaderboard-empty">${t("socialLeaderboardEmpty")}</div>`;
+    return;
+  }
+
+  const myUserId = leaderboardStatus.profile?.id;
+  socialGroupLeaderboardRows.innerHTML = board.entries
+    .map((entry) => {
+      const isMe = myUserId === entry.userId;
+      const days = entry.daysActive ? `<span>${entry.daysActive} ${t("leaderboardDaysActive")}</span>` : "";
+      return `
+        <article class="leaderboard-row social-leaderboard-row${isMe ? " is-me" : ""}">
+          <strong class="leaderboard-rank">#${entry.rank}</strong>
+          <button class="social-profile-trigger leaderboard-person-trigger" type="button" data-social-profile-id="${escapeHtml(entry.userId)}" title="${escapeHtml(t("socialProfileOpenHint"))}">
+            ${leaderboardAvatar(entry.avatarUrl, entry.username)}
+            <div class="leaderboard-person">
+              <strong>${escapeHtml(entry.username || t("unknownUser"))}${isMe ? ` <em>${t("leaderboardMe")}</em>` : ""}</strong>
+              <span>${socialRoleLabel(entry.role)}</span>
+              ${days}
+            </div>
+          </button>
+          <strong class="leaderboard-tokens">${formatNumber(entry.tokens)} token</strong>
+        </article>
+      `;
+    })
+    .join("");
+}
+
 function leaderboardStatusCopy() {
   if (!leaderboardStatus.configured) {
     return {
@@ -4842,6 +5799,24 @@ function leaderboardRangeLabel(range: LeaderboardRange) {
     all: t("leaderboardAllTime"),
   };
   return labels[range];
+}
+
+function socialRoleLabel(role: SocialGroupRole | undefined) {
+  if (role === "leader") return t("socialRoleLeader");
+  if (role === "officer") return t("socialRoleOfficer");
+  return t("socialRoleMember");
+}
+
+function socialFriendStatusLabel(friend: SocialFriend) {
+  if (friend.status === "accepted") return t("socialFriendAccepted");
+  if (friend.direction === "incoming") return t("socialFriendIncoming");
+  return t("socialFriendOutgoing");
+}
+
+function socialFriendAvatar(friend: SocialFriend) {
+  const initial = (friend.username || "?").trim().slice(0, 2).toUpperCase();
+  if (!friend.avatarUrl) return `<span class="social-friend-avatar" aria-hidden="true">${escapeHtml(initial)}</span>`;
+  return `<span class="social-friend-avatar" aria-hidden="true"><img src="${escapeHtml(friend.avatarUrl)}" alt="" loading="lazy" /></span>`;
 }
 
 function leaderboardAvatar(avatarUrl: string | undefined, username: string) {
@@ -5377,6 +6352,72 @@ function leaderboardRenderSignature() {
         entry.usagePreference?.peakTokensPerMinute ?? 0,
       ]),
     },
+  });
+}
+
+function socialRenderSignature() {
+  return JSON.stringify({
+    language: currentLanguage(),
+    bucket: relativeRenderBucket(30_000),
+    panel: socialPanel,
+    loading: socialLoading,
+    boardLoading: socialGroupLeaderboardLoading,
+    error: socialError,
+    notice: socialNotice,
+    selectedGroupId: socialSelectedGroupId,
+    range: socialGroupRange,
+    friendsUpdatedAt: socialFriendsUpdatedAt,
+    updatedAt: socialGroupsUpdatedAt,
+    status: {
+      configured: leaderboardStatus.configured,
+      authenticated: leaderboardStatus.authenticated,
+      profileId: leaderboardStatus.profile?.id,
+    },
+    invite: socialInvite
+      ? {
+          code: socialInvite.code,
+          groupId: socialInvite.groupId,
+          role: socialInvite.role,
+          maxUses: socialInvite.maxUses,
+          expiresAt: socialInvite.expiresAt,
+          copiedAt: socialInviteCopiedAt,
+        }
+      : null,
+    friends: socialFriends.map((friend) => [
+      friend.userId,
+      friend.username,
+      friend.status,
+      friend.direction ?? "",
+      friend.updatedAt ?? "",
+    ]),
+    groups: socialGroups.map((group) => [
+      group.groupId,
+      group.name,
+      group.description ?? "",
+      group.iconEmoji ?? "",
+      group.memberCount,
+      group.role ?? "",
+      group.updatedAt ?? "",
+      group.members?.length ?? 0,
+      group.shareUsage === false ? 0 : 1,
+    ]),
+    board: socialGroupLeaderboard
+      ? {
+          groupId: socialGroupLeaderboard.groupId,
+          range: socialGroupLeaderboard.range,
+          updatedAt: socialGroupLeaderboard.updatedAt,
+          error: socialGroupLeaderboard.error,
+          me: socialGroupLeaderboard.me?.rank,
+          entries: socialGroupLeaderboard.entries.map((entry) => [
+            entry.rank,
+            entry.userId,
+            entry.username,
+            entry.tokens,
+            entry.role ?? "",
+            entry.daysActive ?? 0,
+          ]),
+        }
+      : null,
   });
 }
 

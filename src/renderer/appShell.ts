@@ -142,6 +142,7 @@ export function appShellHtml(viewMode: ViewMode) {
           <button type="button" data-dashboard-tab="home" data-i18n="home">主页</button>
           <button type="button" data-dashboard-tab="achievements" data-i18n="achievements">成就</button>
           <button type="button" data-dashboard-tab="leaderboard" data-i18n="leaderboard">排行榜</button>
+          <button type="button" data-dashboard-tab="social" data-i18n="social">社交</button>
         </nav>
 
       </aside>
@@ -288,6 +289,102 @@ export function appShellHtml(viewMode: ViewMode) {
           </div>
           <div class="leaderboard-summary" id="leaderboardSummary"></div>
           <div class="leaderboard-rows" id="leaderboardRows"></div>
+        </section>
+
+        <section class="social-card" aria-label="好友与群组" data-i18n-aria="socialAria">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow" data-i18n="socialEyebrow">Guild hall</p>
+              <h3 data-i18n="socialTitle">好友 / 群组</h3>
+            </div>
+            <button class="secondary-button social-refresh-button" id="socialRefreshButton" type="button" data-i18n="socialRefresh">刷新</button>
+          </div>
+          <div class="social-mode-tabs" id="socialModeTabs" role="tablist" aria-label="社交分类" data-i18n-aria="socialModeAria">
+            <button type="button" data-social-panel="friends" data-i18n="socialPanelFriends">好友</button>
+            <button type="button" data-social-panel="groups" data-i18n="socialPanelGroups">群组</button>
+          </div>
+          <div class="leaderboard-summary social-summary" id="socialSummary"></div>
+          <div class="social-panel social-friends-panel" id="socialFriendsPanel">
+            <form class="social-mini-form" id="socialAddFriendForm">
+              <label for="socialFriendUsernameInput" data-i18n="socialAddFriend">添加好友</label>
+              <div class="social-input-row">
+                <input id="socialFriendUsernameInput" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="GitHub 用户名" data-i18n-placeholder="socialFriendUsernamePlaceholder" />
+                <button class="secondary-button" id="socialAddFriendButton" type="submit" data-i18n="socialAddFriendAction">添加</button>
+              </div>
+            </form>
+            <div class="social-friend-list" id="socialFriendList"></div>
+          </div>
+          <div class="social-panel social-groups-panel" id="socialGroupsPanel" hidden>
+            <div class="social-groups-shell" id="socialGroupsShell">
+              <div class="social-groups-sidebar">
+                <div class="social-empty-copy" id="socialGroupIntro">
+                  <strong data-i18n="socialGroupsEmpty">还没有群组</strong>
+                  <span data-i18n="socialCreateOrJoin">创建一个群组，或用邀请码加入朋友的群组。</span>
+                </div>
+                <button class="secondary-button social-group-manage-button" id="socialGroupManageButton" type="button" data-i18n="socialGroupManage">管理群组</button>
+                <div class="social-group-list" id="socialGroupList"></div>
+              </div>
+              <div class="social-detail-panel" id="socialGroupDetailPanel">
+                <div class="social-detail-header" id="socialGroupDetail"></div>
+                <div class="social-toolbar">
+                  <div class="leaderboard-range-tabs social-range-tabs" id="socialGroupRangeTabs" role="tablist" aria-label="群组排行榜范围" data-i18n-aria="socialGroupLeaderboardAria">
+                    <button type="button" data-social-group-range="24h" data-i18n="leaderboard24h">24h</button>
+                    <button type="button" data-social-group-range="7d" data-i18n="leaderboard7d">7 天</button>
+                    <button type="button" data-social-group-range="30d" data-i18n="leaderboard30d">30 天</button>
+                    <button type="button" data-social-group-range="all" data-i18n="leaderboardAllTime">全部</button>
+                  </div>
+                </div>
+                <p class="social-board-note" data-i18n="socialGroupContributionNote">群组榜按加入日期统计贡献，加入日期之前的历史不计入。</p>
+                <div class="leaderboard-rows social-leaderboard-rows" id="socialGroupLeaderboardRows"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="social-group-actions-modal" id="socialGroupActionsModal" aria-hidden="true" hidden>
+          <div class="social-group-actions-backdrop" id="socialGroupActionsBackdrop"></div>
+          <div class="social-group-actions-panel" role="dialog" aria-modal="true" aria-labelledby="socialGroupActionsTitle">
+            <header>
+              <p class="eyebrow" data-i18n="socialEyebrow">Guild hall</p>
+              <h3 id="socialGroupActionsTitle" data-i18n="socialGroupActions">创建或加入群组</h3>
+              <button class="icon-button" id="socialGroupActionsCloseButton" type="button" aria-label="关闭设置" data-i18n-aria="closeSettings">×</button>
+            </header>
+            <div class="social-action-stack">
+              <p class="social-visibility-note" data-i18n="socialGroupVisibilityNote">加入群组后，群成员可以看到你的 Token 总用量（不含提示词、会话或文件）。可在群组详情里随时停止共享。</p>
+              <form class="social-mini-form" id="socialCreateGroupForm">
+                <label for="socialGroupNameInput" data-i18n="socialCreateGroup">创建群组</label>
+                <div class="social-input-row">
+                  <input id="socialGroupNameInput" type="text" maxlength="48" autocomplete="off" placeholder="群组名" data-i18n-placeholder="socialGroupNamePlaceholder" />
+                  <button class="secondary-button" id="socialCreateGroupButton" type="submit" data-i18n="socialCreateGroupAction">创建</button>
+                </div>
+              </form>
+              <form class="social-mini-form" id="socialJoinInviteForm">
+                <label for="socialInviteCodeInput" data-i18n="socialJoinInvite">邀请码加入</label>
+                <div class="social-input-row">
+                  <input id="socialInviteCodeInput" type="text" autocomplete="off" spellcheck="false" placeholder="邀请码" data-i18n-placeholder="socialInvitePlaceholder" />
+                  <button class="secondary-button" id="socialJoinInviteButton" type="submit" data-i18n="socialJoinInviteAction">加入</button>
+                </div>
+              </form>
+              <section class="social-mini-form social-invite-manager" id="socialInviteManager" hidden>
+                <div class="social-mini-form-label" data-i18n="socialInviteManager">当前群组邀请</div>
+                <div class="social-invite-manager-summary" id="socialInviteGroupSummary"></div>
+                <button class="secondary-button social-invite-button" id="socialCreateInviteButton" type="button" data-i18n="socialCreateInvite">生成邀请</button>
+                <div class="social-invite-output" id="socialInviteOutput"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="social-profile-modal" id="socialProfileModal" aria-hidden="true" hidden>
+          <div class="social-profile-backdrop" id="socialProfileBackdrop"></div>
+          <div class="social-profile-panel" role="dialog" aria-modal="true" aria-labelledby="socialProfileTitle">
+            <header>
+              <p class="eyebrow" data-i18n="socialProfileEyebrow">Adventurer</p>
+              <h3 id="socialProfileTitle" data-i18n="socialProfileTitle">资料卡</h3>
+              <button class="icon-button" id="socialProfileCloseButton" type="button" aria-label="关闭" data-i18n-aria="close">×</button>
+            </header>
+            <div class="social-profile-body" id="socialProfileBody"></div>
+          </div>
         </section>
 
         <section class="source-card" aria-label="Token 来源" data-i18n-aria="sourceAria">

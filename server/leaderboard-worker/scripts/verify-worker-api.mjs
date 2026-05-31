@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,9 +11,13 @@ const workerDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const persistDir = mkdtempSync(join(tmpdir(), "vibe-tree-worker-api-"));
 const token = "verify-worker-token";
 const tokenHash = createHash("sha256").update(token).digest("hex");
+const friendToken = "verify-friend-token";
+const friendTokenHash = createHash("sha256").update(friendToken).digest("hex");
+const strangerToken = "verify-stranger-token";
+const strangerTokenHash = createHash("sha256").update(strangerToken).digest("hex");
 const now = "2026-05-27T00:00:00.000Z";
 const expiresAt = "2099-01-01T00:00:00.000Z";
-const port = 17_000 + Math.floor(Math.random() * 1_000);
+const port = await getFreePort();
 const baseUrl = `http://127.0.0.1:${port}`;
 const utcToday = dateKey(new Date());
 const eastOfUtcToday = addDays(utcToday, 1);
@@ -23,11 +28,21 @@ try {
 INSERT OR REPLACE INTO users (user_id, username, avatar_url, profile_url, created_at, updated_at)
 VALUES ('user-verify', 'verify-user', NULL, NULL, '${now}', '${now}');
 
+INSERT OR REPLACE INTO users (user_id, username, avatar_url, profile_url, created_at, updated_at)
+VALUES ('user-friend', 'friend-user', NULL, NULL, '${now}', '${now}');
+
+INSERT OR REPLACE INTO users (user_id, username, avatar_url, profile_url, created_at, updated_at)
+VALUES ('user-stranger', 'stranger-user', NULL, NULL, '${now}', '${now}');
+
 INSERT OR REPLACE INTO sessions (token_hash, user_id, created_at, expires_at)
 VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
-`;
 
-  await prepareD1Database(seedSql);
+INSERT OR REPLACE INTO sessions (token_hash, user_id, created_at, expires_at)
+VALUES ('${friendTokenHash}', 'user-friend', '${now}', '${expiresAt}');
+
+INSERT OR REPLACE INTO sessions (token_hash, user_id, created_at, expires_at)
+VALUES ('${strangerTokenHash}', 'user-stranger', '${now}', '${expiresAt}');
+`;
 
   devProcess = spawnWrangler([
     "dev",
@@ -51,6 +66,7 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   ]);
 
   await waitForWorker();
+  await prepareD1Database(seedSql);
 
   let cloudTree = await requestJson("/api/tree");
   assert(cloudTree.summary?.hasRemoteTree === false, "empty cloud tree summary should not report an existing tree");
@@ -285,6 +301,187 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assert(leaderboardCollection.ranges?.["24h"]?.entries?.[0]?.tokens === 3333, "leaderboard collection should expose 24h");
   assert(leaderboardCollection.ranges?.today?.entries?.[0]?.tokens === 3333, "leaderboard collection should keep a legacy today alias");
 
+  let friendList = await requestJson("/api/social/friends");
+  assert(Array.isArray(friendList.friends) && friendList.friends.length === 0, "fresh user should start without friends");
+  const friendRequest = await requestJson("/api/social/friends", {
+    method: "POST",
+    body: { username: "friend-user" },
+  });
+  assert(friendRequest.friend?.status === "pending", "friend request should start pending");
+  assert(friendRequest.friend?.direction === "outgoing", "requester should see outgoing friend request");
+  const incomingRequest = await requestJson("/api/social/friends", { token: friendToken });
+  assert(incomingRequest.friends?.[0]?.direction === "incoming", "target should see incoming friend request");
+  const acceptedFriend = await requestJson("/api/social/friends/user-verify/accept", {
+    method: "POST",
+    token: friendToken,
+  });
+  assert(acceptedFriend.friend?.status === "accepted", "incoming friend request should be accepted");
+  friendList = await requestJson("/api/social/friends");
+  assert(friendList.friends?.[0]?.status === "accepted", "requester should see accepted friend");
+  const removedFriendList = await requestJson("/api/social/friends/user-friend", { method: "DELETE" });
+  assert(removedFriendList.friends?.length === 0, "removing a friend should clear the relationship");
+
+  const groupCreate = await requestJson("/api/social/groups", {
+    method: "POST",
+    body: {
+      name: "Vibe Guild",
+      description: "A playful coding guild",
+      iconEmoji: "🌱",
+    },
+  });
+  const groupId = groupCreate.group?.groupId;
+  assert(groupId && groupCreate.group?.role === "leader", "social group creator should become leader");
+  assert(groupCreate.group?.memberCount === 1, "new social group should start with one member");
+
+  const invite = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/invites`, {
+    method: "POST",
+    body: { maxUses: 2 },
+  });
+  assert(typeof invite.invite?.code === "string", "group invite should return a one-time visible invite code");
+
+  const joined = await requestJson(`/api/social/invites/${encodeURIComponent(invite.invite.code)}/accept`, {
+    method: "POST",
+    token: friendToken,
+  });
+  assert(joined.group?.memberCount === 2, "group invite should add the second member");
+  assert(joined.group?.members?.some((member) => member.userId === "user-friend"), "joined group should list the new member");
+
+  const friendGroups = await requestJson("/api/social/groups", { token: friendToken });
+  assert(friendGroups.groups?.[0]?.groupId === groupId, "joined member should see the group in their group list");
+
+  await requestJson("/api/usage/daily", {
+    method: "POST",
+    token: friendToken,
+    body: {
+      appVersion: "0.5.5-test",
+      forceSync: true,
+      usageStartDate: utcToday,
+      days: [{ date: eastOfUtcToday, tokens: 777 }],
+      hours: [{ hourStartUtc: currentHour, tokens: 777 }],
+    },
+  });
+  const groupLeaderboard = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(groupLeaderboard.entries?.length === 2, "group leaderboard should include both sharing members");
+  assert(groupLeaderboard.entries?.[0]?.tokens === 3333, "group leaderboard should rank the highest member first");
+  assert(groupLeaderboard.entries?.[1]?.tokens === 777, "group leaderboard should include the invited member contribution");
+
+  // (g) group boards count contribution SINCE JOINING: a member's pre-join usage history
+  // stays out of the group board but still counts toward their own global all-time total.
+  // user-friend joined today; backdate a 9999-token day before the join.
+  const beforeJoinDate = addDays(utcToday, -5);
+  await requestJson("/api/usage/daily", {
+    method: "POST",
+    token: friendToken,
+    body: {
+      appVersion: "0.5.5-test",
+      forceSync: true,
+      days: [
+        { date: beforeJoinDate, tokens: 9999 },
+        { date: eastOfUtcToday, tokens: 777 },
+      ],
+    },
+  });
+  const groupAllBoard = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=all`);
+  const friendGroupAll = groupAllBoard.entries?.find((entry) => entry.userId === "user-friend");
+  assert(
+    friendGroupAll?.tokens === 777,
+    "group all-time board should exclude a member's pre-join usage (since-joined contribution only)",
+  );
+  const globalAllBoard = await requestJson("/api/leaderboard?range=all");
+  const friendGlobalAll = globalAllBoard.entries?.find((entry) => entry.userId === "user-friend");
+  assert(
+    friendGlobalAll?.tokens === 10776,
+    "global all-time total should still include the member's pre-join usage (777 + 9999)",
+  );
+
+  // (d) share_usage=false hides a member from the group board; restoring it shows them again.
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/membership`, {
+    method: "POST",
+    token: friendToken,
+    body: { shareUsage: false },
+  });
+  const groupBoardNoShare = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    !groupBoardNoShare.entries?.some((entry) => entry.userId === "user-friend"),
+    "share_usage=false should hide the member from the group board",
+  );
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/membership`, {
+    method: "POST",
+    token: friendToken,
+    body: { shareUsage: true },
+  });
+  const groupBoardShare = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    groupBoardShare.entries?.some((entry) => entry.userId === "user-friend"),
+    "restoring share_usage should show the member on the group board again",
+  );
+
+  // (a) a non-public member is hidden from the GLOBAL board but stays on the GROUP board.
+  await requestJson("/api/usage/daily", {
+    method: "POST",
+    token: friendToken,
+    body: {
+      appVersion: "0.5.5-test",
+      forceSync: true,
+      usagePublic: false,
+      usageStartDate: utcToday,
+      days: [{ date: eastOfUtcToday, tokens: 777 }],
+      hours: [{ hourStartUtc: currentHour, tokens: 777 }],
+    },
+  });
+  const globalAfterPrivate = await requestJson("/api/leaderboard?range=24h", { token: friendToken });
+  assert(
+    !globalAfterPrivate.entries?.some((entry) => entry.userId === "user-friend"),
+    "non-public member should not appear on the global board",
+  );
+  assert(
+    globalAfterPrivate.entries?.some((entry) => entry.userId === "user-verify"),
+    "public member should still appear on the global board",
+  );
+  const groupAfterPrivate = await requestJson(
+    `/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`,
+    { token: friendToken },
+  );
+  assert(
+    groupAfterPrivate.entries?.some((entry) => entry.userId === "user-friend"),
+    "non-public member should still appear on the group board",
+  );
+
+  // (e) profile cards: relationship-gated access + usage-consent honoring.
+  // user-verify and user-friend are co-members (not friends); user-verify is public-global,
+  // user-friend is private-global but shares usage in the group; user-stranger has no relationship.
+  const selfProfile = await requestJson("/api/social/users/user-verify/profile");
+  assert(selfProfile.profile?.isSelf === true, "own profile should be flagged as self");
+  assert(selfProfile.profile?.usageVisible === true, "own profile should always expose usage");
+  assert(typeof selfProfile.profile?.totalTokens === "number", "own profile should include token total");
+  assert(
+    Array.isArray(selfProfile.profile?.achievements) && selfProfile.profile.achievements.length === 2,
+    "own profile should include unlocked achievements",
+  );
+  assert(typeof selfProfile.profile?.joinedAt === "string", "profile should include the join date");
+
+  // Co-member viewing a public-global member: usage visible because they're on the global board.
+  const coMemberView = await requestJson("/api/social/users/user-verify/profile", { token: friendToken });
+  assert(coMemberView.profile?.isSelf === false, "co-member view should not be flagged as self");
+  assert(coMemberView.profile?.mutualGroupCount >= 1, "co-members should report a shared group");
+  assert(
+    coMemberView.profile?.usageVisible === true,
+    "a global-board member's usage should be visible to a co-member",
+  );
+
+  // Owner viewing the private-global member: usage still visible because they share usage in the group.
+  const sharingMemberView = await requestJson("/api/social/users/user-friend/profile");
+  assert(
+    sharingMemberView.profile?.usageVisible === true,
+    "a member sharing usage in a shared group should expose usage to a co-member",
+  );
+
+  // A stranger with no friendship and no shared group cannot even open the card (404, existence hidden).
+  await assertRejects(
+    () => requestJson("/api/social/users/user-verify/profile", { token: strangerToken }),
+    "a user with no relationship should not be able to view a profile",
+  );
+
   await assertRejects(
     () =>
       requestJson("/api/usage/daily", {
@@ -304,7 +501,69 @@ VALUES ('${tokenHash}', 'user-verify', '${now}', '${expiresAt}');
   assert(cloudTree.summary?.entryCount === 2, "leaving leaderboard must not delete cloud tree events");
   assert(cloudTree.summary?.achievementCount === 2, "leaving leaderboard must not delete cloud tree achievements");
 
-  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, legacy fallback, and leaderboard leave safety passed.");
+  // (b) leaving the global board keeps group data: user-verify (in a group) drops off the
+  // global board but stays on the group board with the same contribution.
+  const globalAfterLeave = await requestJson("/api/leaderboard?range=24h");
+  assert(
+    !globalAfterLeave.entries?.some((entry) => entry.userId === "user-verify"),
+    "leaving the global board should hide the user from it",
+  );
+  const groupAfterLeave = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    groupAfterLeave.entries?.some((entry) => entry.userId === "user-verify"),
+    "leaving the global board must keep the user's group contribution",
+  );
+
+  // (c) leaving a group removes the member; the owner cannot leave their own group.
+  await assertRejects(
+    () => requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/members/me`, { method: "DELETE" }),
+    "group owner should not be able to leave their own group",
+  );
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/members/me`, {
+    method: "DELETE",
+    token: friendToken,
+  });
+  const friendGroupsAfterLeave = await requestJson("/api/social/groups", { token: friendToken });
+  assert(
+    !friendGroupsAfterLeave.groups?.some((group) => group.groupId === groupId),
+    "leaving a group should remove it from the member's group list",
+  );
+  const groupAfterMemberLeave = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=24h`);
+  assert(
+    !groupAfterMemberLeave.entries?.some((entry) => entry.userId === "user-friend"),
+    "leaving a group should remove the member from the group board",
+  );
+
+  // (f) invite maxUses is consumed atomically: a single-use invite can't be re-spent
+  // after the use is claimed, even if the joiner later leaves (uses must not reset).
+  const singleUseInvite = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/invites`, {
+    method: "POST",
+    body: { maxUses: 1 },
+  });
+  const singleUseCode = singleUseInvite.invite?.code;
+  assert(typeof singleUseCode === "string", "single-use invite should return a code");
+  const strangerJoin = await requestJson(`/api/social/invites/${encodeURIComponent(singleUseCode)}/accept`, {
+    method: "POST",
+    token: strangerToken,
+  });
+  assert(
+    strangerJoin.group?.members?.some((member) => member.userId === "user-stranger"),
+    "single-use invite should admit the first accepter",
+  );
+  await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/members/me`, {
+    method: "DELETE",
+    token: strangerToken,
+  });
+  await assertRejects(
+    () =>
+      requestJson(`/api/social/invites/${encodeURIComponent(singleUseCode)}/accept`, {
+        method: "POST",
+        token: strangerToken,
+      }),
+    "an exhausted single-use invite must not be reusable after the use is claimed",
+  );
+
+  console.log("Worker API verified: device-only cloud trees, tree sync privacy, delta cloud tree sync, achievement privacy, 24h leaderboard buckets, social friends, social groups/invites/group leaderboard, group/global decoupling (private members, leave-keeps-group-data, leave-group, share toggle), relationship-gated profile cards (self/co-member/sharing/stranger), atomic invite maxUses, legacy fallback, and leaderboard leave safety passed.");
 } finally {
   if (devProcess) await terminate(devProcess);
   rmSync(persistDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
@@ -342,36 +601,52 @@ function spawnWrangler(args) {
   return child;
 }
 
-function runWrangler(args) {
-  const child = spawnWrangler(args);
+function getFreePort() {
   return new Promise((resolvePromise, reject) => {
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      reject(new Error(`wrangler ${args.join(" ")} failed (${code ?? signal ?? "unknown"})\n${child.output.trim()}`));
+    const server = createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const portNumber = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!portNumber) {
+          reject(new Error("Could not allocate a local port for wrangler dev"));
+          return;
+        }
+        resolvePromise(portNumber);
+      });
     });
   });
 }
 
 async function prepareD1Database(seedSql) {
-  await runWrangler([
-    "d1",
-    "execute",
-    "vibe-tree-leaderboard",
-    "--yes",
-    "--local",
-    "--persist-to",
-    persistDir,
-    "--command",
-    "SELECT(1)",
-  ]);
-
+  await ensureLocalD1DatabaseCreated();
   const databasePath = findLocalD1DatabasePath();
   await runSqliteScript(databasePath, readFileSync(join(workerDir, "schema.sql"), "utf8"));
   await runSqliteScript(databasePath, seedSql);
+}
+
+async function ensureLocalD1DatabaseCreated() {
+  try {
+    await fetch(`${baseUrl}/api/leaderboard?range=24h`);
+  } catch {
+    // The first D1-backed request may fail before schema is loaded; it still creates the local SQLite file.
+  }
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 10_000) {
+    try {
+      findLocalD1DatabasePath();
+      return;
+    } catch {
+      await delay(100);
+    }
+  }
+  findLocalD1DatabasePath();
 }
 
 function findLocalD1DatabasePath() {
@@ -411,12 +686,12 @@ function runSqliteScript(databasePath, sql) {
 
 async function waitForWorker() {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 20_000) {
+  while (Date.now() - startedAt < 45_000) {
     if (devProcess.exitCode !== null) {
       throw new Error(`wrangler dev exited early (${devProcess.exitCode})\n${devProcess.output.trim()}`);
     }
     try {
-      const response = await fetch(`${baseUrl}/health`);
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(1_000) });
       if (response.ok) return;
     } catch {
       // Retry until wrangler dev finishes booting.
@@ -430,7 +705,7 @@ async function requestJson(path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method ?? "GET",
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${options.token ?? token}`,
       "Content-Type": "application/json",
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
