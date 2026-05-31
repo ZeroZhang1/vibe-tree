@@ -1622,6 +1622,16 @@ async function refreshSocial(options: { syncFirst?: boolean } = {}) {
   renderSocial();
   try {
     leaderboardStatus = await window.bonsai.getLeaderboardStatus();
+    if (!leaderboardStatus.configured || !leaderboardStatus.authenticated) {
+      socialFriends = [];
+      socialGroups = [];
+      socialFriendsUpdatedAt = undefined;
+      socialGroupsUpdatedAt = undefined;
+      socialSelectedGroupId = null;
+      socialGroupLeaderboard = null;
+      socialError = "";
+      return;
+    }
     if (options.syncFirst && leaderboardStatus.joined) {
       await runLeaderboardSync({ force: true });
     }
@@ -4667,7 +4677,7 @@ function renderSocial() {
     const updated = socialGroupsUpdatedAt ? `${t("socialUpdated")} ${formatRelativeTime(socialGroupsUpdatedAt)}` : "";
     summaryHtml = `<strong>${socialGroups.length} ${t("socialGroupsCount")}</strong><span>${escapeHtml(updated)}</span>`;
   } else if (!leaderboardStatus.authenticated) {
-    summaryHtml = `<strong>${t("leaderboardLoginRequired")}</strong><span>${t("socialLoginHint")}</span>`;
+    summaryHtml = `<strong>${t("socialLoginRequired")}</strong><span>${t("socialLoginHint")}</span>`;
   }
   socialSummary.hidden = !summaryHtml;
   socialSummary.innerHTML = summaryHtml;
