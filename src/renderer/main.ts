@@ -606,8 +606,6 @@ function bindMenubarEvents() {
   menubarSlot?.addEventListener("pointerdown", (event) => {
     const target = event.target as HTMLElement;
     if (target.closest("button")) return;
-    // Inside a scrollable list, leave the gesture to native vertical scroll.
-    if (target.closest(MENUBAR_SCROLLABLE_SELECTOR)) return;
     menubarDragState = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -1835,9 +1833,7 @@ function toggleMenubarComponent(id: MenubarVizId, on: boolean) {
   const current = menubarVisibleIds();
   if (on) {
     if (current.includes(id)) return;
-    // Add back in canonical position relative to other visible items.
-    const next = MENUBAR_VIZ_IDS.filter((vizId) => vizId === id || current.includes(vizId));
-    void updateMenubarVizIds([...next]);
+    void updateMenubarVizIds([...current, id]);
   } else {
     if (current.length <= 1) return;
     void updateMenubarVizIds(current.filter((vizId) => vizId !== id));
