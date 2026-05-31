@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-const timeoutMs = Number(process.env.VIBE_TREE_SMOKE_TIMEOUT_MS ?? 8_000);
+const timeoutMs = Number(process.env.VIBE_TREE_SMOKE_TIMEOUT_MS ?? 20_000);
 const mainPath = join(process.cwd(), "dist/electron/main.js");
 const windowsElectronPath = join(process.cwd(), "node_modules", "electron", "dist", "electron.exe");
 

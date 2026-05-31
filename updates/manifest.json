@@ -2,51 +2,61 @@
   "schemaVersion": 1,
   "versions": [
     {
-      "version": "0.6.0",
-      "publishedAt": "2026-05-29",
-      "fullReleaseUrl": "https://github.com/Olorinm/vibe-tree/releases/tag/v0.6.0",
+      "version": "0.7.0",
+      "publishedAt": "2026-06-01",
+      "fullReleaseUrl": "https://github.com/Olorinm/vibe-tree/releases/tag/v0.7.0",
       "title": {
-        "zh-CN": "Vibe Tree v0.6.0",
-        "en-US": "Vibe Tree v0.6.0"
+        "zh-CN": "Vibe Tree v0.7.0",
+        "en-US": "Vibe Tree v0.7.0"
       },
       "summary": {
-        "zh-CN": "本次更新新增可选的多设备同养功能。升级后，原来的本机小树会继续保留；不登录 GitHub 也可以继续只在本机使用。",
-        "en-US": "This update adds optional shared-tree sync across devices. Your existing local tree stays local after upgrading, and you can keep using Vibe Tree without signing in."
+        "zh-CN": "本次更新加入好友与群组社交页、macOS 菜单栏小窗，并继续打磨多设备同养和排行榜体验。升级后，原来的本机小树会继续保留；不登录 GitHub 也可以继续只在本机使用。",
+        "en-US": "This update adds friends and groups, a macOS menu bar popover, and more polish for shared-tree sync and leaderboards. Your existing local tree stays local after upgrading, and you can keep using Vibe Tree without signing in."
       },
       "highlights": {
         "zh-CN": [
-          "登录同一个 GitHub 账号后，可以在多台设备共同养同一棵树。",
-          "开启同步后，会同步等级、累计 Token、成就和设备贡献。",
-          "其他设备的数据会按 Codex、OpenClaw、Claude Code 等真实来源合并展示。",
-          "排行榜新增滚动 24h 视角，更适合查看最近活跃度，也减少时区带来的“今日”口径差异。",
-          "可选开启每小时自动同步小树和排行榜。"
+          "新增社交页，可以添加好友、创建或加入群组，一起查看成长和排行。",
+          "macOS 新增菜单栏小树入口，可以从状态栏快速查看成长、来源、排行榜和同步状态。",
+          "菜单栏浮窗支持在设置中选择显示哪些组件，并调整顺序。",
+          "登录同一个 GitHub 账号后，可以在多台设备共同养一棵树；其他设备的数据会按真实来源合并展示。",
+          "排行榜提供 24h、7 天、30 天和全部视角，并支持可选每小时自动同步。"
         ],
         "en-US": [
-          "Sign in with the same GitHub account to grow one tree across multiple devices.",
-          "After sync is enabled, levels, total Tokens, achievements, and device contribution can be shared.",
-          "Remote device data is merged back into real sources such as Codex, OpenClaw, and Claude Code.",
-          "The leaderboard adds a rolling 24h view for recent activity and less timezone ambiguity around Today.",
-          "Optionally sync the shared tree and leaderboard every hour."
+          "The new Social page lets you add friends, create or join groups, and compare growth together.",
+          "On macOS, a new menu bar tree gives quick access to growth, sources, leaderboards, and sync status.",
+          "Menu bar popover components can be chosen and reordered from Settings.",
+          "Sign in with the same GitHub account to grow one tree across devices; remote data is merged back into its real sources.",
+          "Leaderboards now include 24h, 7d, 30d, and all-time views, with optional hourly auto-sync."
         ]
       },
       "fixes": {
         "zh-CN": [
-          "设置页重新整理，同步、更新、路径等选项更容易找到。",
-          "加入排行榜确认、同步入口和升级提示等交互做了打磨。"
+          "设置页继续整理，同步、更新、路径和浮窗组件等选项更容易找到。",
+          "加入排行榜确认、同步入口、设备贡献和升级提示等交互做了打磨。"
         ],
         "en-US": [
-          "Settings are reorganized so sync, updates, and source paths are easier to find.",
-          "Leaderboard confirmation, sync entry points, and level-up notices have been polished."
+          "Settings are further organized so sync, updates, source paths, and menu bar components are easier to find.",
+          "Leaderboard confirmation, sync entry points, device contribution, and level-up notices have been polished."
         ]
       },
       "privacy": {
         "zh-CN": [
-          "同养小树是可选功能。",
+          "社交、排行榜和同养小树都是可选功能。",
           "Vibe Tree 不会上传提示词、回复内容、代码文件、本地路径或会话正文。"
         ],
         "en-US": [
-          "Shared tree sync is optional.",
+          "Social features, leaderboards, and shared-tree sync are optional.",
           "Vibe Tree does not upload prompts, replies, code files, local paths, or session text."
+        ]
+      },
+      "upgradeNotes": {
+        "zh-CN": [
+          "升级不会清空本机数据。",
+          "如果 macOS 菜单栏图标暂时看不到，可能是系统菜单栏空间不足，可以先收起不常用的状态栏图标。"
+        ],
+        "en-US": [
+          "Upgrading does not clear local data.",
+          "If the macOS menu bar icon is not visible at first, the system menu bar may be out of space; hide less-used status items and try again."
         ]
       }
     }

@@ -1,16 +1,26 @@
-# Vibe Tree 正式版发布清单草案
+# Vibe Tree v0.7.0 正式版发布清单
 
-目标版本：待确认，建议作为 `v0.6.0` 级别发布。
+目标版本：`v0.7.0`。
 
-当前候选分支：`codex/multi-device-tree-sync`
+当前候选分支：`codex/release-v0.7.0`
 
-长期发布规则见 `docs/RELEASE_PROCESS.md`；本文件只记录本次 `v0.6.0` 候选版本的具体核对项。
+长期发布规则见 `docs/RELEASE_PROCESS.md`；本文件只记录本次 `v0.7.0` 候选版本的具体核对项。
+
+当前状态：
+
+- Mac 本机发布准备已更新到 `0.7.0`。
+- `package.json`、`package-lock.json`、`updates/manifest.json` 已对齐到 `0.7.0` / `v0.7.0`。
+- 本轮 Mac 验证已通过：`typecheck`、`build`、`smoke:electron`、`verify:cloud-sync`、`verify:worker-api`、`git diff --check`。
+- 本地设置页已显示当前版本 `v0.7.0`。
+- App 内短公告仍需发布前由用户最终确认；GitHub Release 和 tag 尚未创建。
 
 ## 发布定位
 
 这次版本的用户价值是：
 
 - 多台设备可以用同一个 GitHub 账号共同养同一棵树。
+- 好友、群组和群组排行榜进入正式版。
+- macOS 菜单栏小树和功能浮窗进入正式版。
 - 排行榜改成更符合直觉的 `24h / 7 天 / 30 天 / 全部`。
 - 设置页、同步按钮、首次启动、升级弹窗和统计展示更清楚。
 - 隐私边界保持清晰：不上传提示词、回复、代码文件、本地路径或会话正文。
@@ -23,13 +33,13 @@
 
 ## 代码冻结前
 
-- [ ] 确认目标版本号，例如 `0.6.0`。
-- [ ] 确认 `package.json` 版本号已更新。
-- [ ] 确认 GitHub release/tag 命名，例如 `v0.6.0`。
-- [ ] 确认当前分支已经合并或 rebase 到最新 `main`。
+- [x] 确认目标版本号，例如 `0.7.0`。
+- [x] 确认 `package.json` 版本号已更新。
+- [x] 确认 GitHub release/tag 命名，例如 `v0.7.0`。
+- [x] 确认当前分支已经合并或 rebase 到最新 `main`。
 - [ ] 确认工作区干净：`git status --short`。
 - [ ] 确认没有临时调试日志、测试入口、硬编码本地路径或本地账号信息。
-- [ ] 确认更新公告使用用户可读内容，而不是完整开发 changelog。
+- [x] 确认更新公告使用用户可读内容，而不是完整开发 changelog。
 
 ## 必跑命令
 
@@ -45,6 +55,8 @@ git diff --check
 ```
 
 如果 Windows 没有完全相同 shell 环境，至少要保证等价命令通过，并记录跳过项原因。
+
+Mac 本轮结果：全部通过。
 
 ## 服务端发布
 
@@ -143,10 +155,10 @@ git diff --check
 
 ## 更新与打包
 
-- [ ] 确认最终版本号和 tag。
-- [ ] 确认 `updates/manifest.json` 里的版本号、`fullReleaseUrl` 和目标 release tag 一致。
+- [x] 确认最终版本号和 tag。
+- [x] 确认 `updates/manifest.json` 里的版本号、`fullReleaseUrl` 和目标 release tag 一致。
 - [ ] 确认 App 内「查看当前版本内容」展示的是 `updates/manifest.json` 里的短公告。
-- [ ] 确认 GitHub release body 使用正常 Release Notes，不把 App 内短公告当作完整 release。
+- [x] 确认 GitHub release body 使用正常 Release Notes，不把 App 内短公告当作完整 release。
 - [ ] 打包后在 Mac 上安装覆盖旧版验证。
 - [ ] 打包后在 Windows 上安装覆盖旧版验证。
 - [ ] 确认「打开发布页」能打开正确 GitHub Releases 页面。
