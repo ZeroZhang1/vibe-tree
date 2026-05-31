@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,7 +17,7 @@ const strangerToken = "verify-stranger-token";
 const strangerTokenHash = createHash("sha256").update(strangerToken).digest("hex");
 const now = "2026-05-27T00:00:00.000Z";
 const expiresAt = "2099-01-01T00:00:00.000Z";
-const port = 17_000 + Math.floor(Math.random() * 1_000);
+const port = await getFreePort();
 const baseUrl = `http://127.0.0.1:${port}`;
 const utcToday = dateKey(new Date());
 const eastOfUtcToday = addDays(utcToday, 1);
@@ -374,7 +375,10 @@ VALUES ('${strangerTokenHash}', 'user-stranger', '${now}', '${expiresAt}');
     body: {
       appVersion: "0.5.5-test",
       forceSync: true,
-      days: [{ date: beforeJoinDate, tokens: 9999 }],
+      days: [
+        { date: beforeJoinDate, tokens: 9999 },
+        { date: eastOfUtcToday, tokens: 777 },
+      ],
     },
   });
   const groupAllBoard = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=all`);
@@ -597,6 +601,29 @@ function spawnWrangler(args) {
   return child;
 }
 
+function getFreePort() {
+  return new Promise((resolvePromise, reject) => {
+    const server = createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const portNumber = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!portNumber) {
+          reject(new Error("Could not allocate a local port for wrangler dev"));
+          return;
+        }
+        resolvePromise(portNumber);
+      });
+    });
+  });
+}
+
 async function prepareD1Database(seedSql) {
   await ensureLocalD1DatabaseCreated();
   const databasePath = findLocalD1DatabasePath();
@@ -659,12 +686,12 @@ function runSqliteScript(databasePath, sql) {
 
 async function waitForWorker() {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 20_000) {
+  while (Date.now() - startedAt < 45_000) {
     if (devProcess.exitCode !== null) {
       throw new Error(`wrangler dev exited early (${devProcess.exitCode})\n${devProcess.output.trim()}`);
     }
     try {
-      const response = await fetch(`${baseUrl}/health`);
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(1_000) });
       if (response.ok) return;
     } catch {
       // Retry until wrangler dev finishes booting.

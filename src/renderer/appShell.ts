@@ -241,7 +241,7 @@ export function appShellHtml(viewMode: ViewMode) {
                     <button type="button" data-social-group-range="all" data-i18n="leaderboardAllTime">全部</button>
                   </div>
                 </div>
-                <p class="social-board-note" data-i18n="socialGroupContributionNote">群组榜只统计你加入本群之后的贡献，入群前的历史不计入。</p>
+                <p class="social-board-note" data-i18n="socialGroupContributionNote">群组榜按加入日期统计贡献，加入日期之前的历史不计入。</p>
                 <div class="leaderboard-rows social-leaderboard-rows" id="socialGroupLeaderboardRows"></div>
               </div>
             </div>

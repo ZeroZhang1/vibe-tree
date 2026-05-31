@@ -2,7 +2,7 @@
 
 > 承接 [`2026-05-29_SOCIAL_FRIENDS_GROUPS_PLAN.md`](./2026-05-29_SOCIAL_FRIENDS_GROUPS_PLAN.md)。
 > 分支:`JJJyuhao-social-friends-groups`,基线 main / v0.6.0(commit 448f0f4)。
-> 本文档为**设计稿**,记录 review 结论、已定稿的解耦架构、分期路线图。撰写时尚未写实现代码。
+> 本文档记录 review 结论、已落地的解耦架构、验证状态与后续路线图。
 
 ---
 
@@ -33,7 +33,7 @@
 
 - **A1. 退出全球榜静默清零群组贡献。** [`leaveLeaderboard`](../server/leaderboard-worker/src/index.ts) `index.ts:486` 删除 `daily_usage` + `hourly_usage`,用户不会知道这同时让自己在所有群组榜归零。两个本该独立的关系被耦合在同一张表上。→ 第 3 节 Step 3 修复。
 - **A2. username 改名 / 抢注可能加错人。** [`resolveSocialFriendTarget`](../server/leaderboard-worker/src/index.ts) `index.ts:1376` 用 `lower(username) = lower(?)` + `ORDER BY updated_at DESC LIMIT 1`。GitHub 用户名虽唯一但可改名:A 改名后 B 占用旧名并登录,按旧名加好友会命中"最近登录的那个"(= B)。**修法(轻):** 加好友成功后 UI 明确展示头像 + 用户名,让用户确认是不是本人。
-- **A3. 邀请 `maxUses` 并发竞态。** 用量检查与 `uses + 1` 不在同一事务([`acceptSocialGroupInvite`](../server/leaderboard-worker/src/index.ts) `index.ts:720-738`),临界点可超发。MVP 可接受,记账。
+- **A3. 邀请 `maxUses` 并发竞态。** 用量检查与 `uses + 1` 不在同一事务([`acceptSocialGroupInvite`](../server/leaderboard-worker/src/index.ts) `index.ts:720-738`),临界点可超发;同一用户并发接受也可能重复消耗 uses。→ 已用条件化 claim + redemption 表收口。
 
 ### B. 半成品 / 接线断裂
 
@@ -113,7 +113,7 @@ WHERE COALESCE(v.public_global, 1) = 1
 - **移除** `DELETE FROM daily_usage` / `DELETE FROM hourly_usage`(`:491-492`)。
 - 改为 upsert `usage_visibility` 设 `public_global = 0`(保留数据,仅隐藏全球榜)。
 - 保留删 `usage_preferences`(全球榜展示用的额外信息,重新加入时会再上传)、`sync_limits`、`leaderboardCache.clear()`。
-- **优化:** 先查 `social_group_members` 计数,若用户在 **0 个群组**才连带删 usage(避免孤儿数据);在任意群则保留。`deleteMe`(`index.ts:447`)全级联不变。
+- `deleteMe`(`index.ts:447`)仍是唯一会删除该用户排行榜聚合 usage 的路径,并显式清 `usage_visibility`。
 
 ### Step 4 — 服务端:退群 + share_usage 开关 API(接 B1)
 
@@ -184,7 +184,7 @@ WHERE COALESCE(v.public_global, 1) = 1
 - 群组成就 / 等级 / 赛季榜。
 
 ### 技术债
-- ✅ 原子化邀请计数(修 A3):`uses = uses + 1` 改为带 `AND (max_uses IS NULL OR uses < max_uses)` 条件的单条 UPDATE,按 `meta.changes` 判定是否成功,SQLite 写串行化保证不超发。见第 6 节。
+- ✅ 原子化邀请计数(修 A3):`uses = uses + 1` 改为带 `AND (max_uses IS NULL OR uses < max_uses)` 条件的单条 UPDATE,并加 `social_group_invite_redemptions` 防止同一用户并发重复消耗同一邀请码。见第 6 节。
 - 限流 key 加 actorId(缓解公司 NAT 互挤)。
 - 清理冗余 migration(`20260529_social_friendships_indexes.sql`)——评估后暂留:仅重建已有索引,无害,且删除会让既有 runbook 失效,价值极低。
 - 建组 / 好友数量上限。
@@ -193,10 +193,10 @@ WHERE COALESCE(v.public_global, 1) = 1
 
 ## 5. 实现状态(2026-05-31)
 
-第 3 节 Step 1-8 的**解耦方案已实现**(commit 待提交)。改动文件:
+第 3 节 Step 1-8 的**解耦方案已实现**,并已补上资料卡、邀请原子化与入群后贡献口径。改动文件:
 
-- **Worker** [`index.ts`](../server/leaderboard-worker/src/index.ts):`ensureUsageVisibilityTable`、全球榜 3 个 range 分支加 `LEFT JOIN usage_visibility v ... COALESCE(v.public_global,1)=1`、`syncDailyUsage` 接受 `usagePublic` 并 upsert、`leaveLeaderboard` 改为设 `public_global=0`(0 群才删数据)、新增 `leaveSocialGroup`(群主 409)+ `setSocialGroupShareUsage` 并接入 `handleSocialRoute`。
-- **Schema/迁移**:[`schema.sql`](../server/leaderboard-worker/schema.sql) 加 `usage_visibility`、新建 [`migrations/20260531_usage_visibility.sql`](../server/leaderboard-worker/migrations/20260531_usage_visibility.sql)、`package.json` 加 `db:migrate:usage-visibility[:local]`。
+- **Worker** [`index.ts`](../server/leaderboard-worker/src/index.ts):`ensureUsageVisibilityTable`、全球榜 3 个 range 分支加 `LEFT JOIN usage_visibility v ... COALESCE(v.public_global,1)=1`、`syncDailyUsage` 接受 `usagePublic` 并 upsert、`leaveLeaderboard` 改为只设 `public_global=0` 并保留 usage、`deleteMe` 显式清 visibility/redemptions、新增 `leaveSocialGroup`(群主 409)+ `setSocialGroupShareUsage` 并接入 `handleSocialRoute`。
+- **Schema/迁移**:[`schema.sql`](../server/leaderboard-worker/schema.sql) 加 `usage_visibility` 与 `social_group_invite_redemptions`,新建 [`migrations/20260531_usage_visibility.sql`](../server/leaderboard-worker/migrations/20260531_usage_visibility.sql) 和 [`migrations/20260531_social_group_invite_redemptions.sql`](../server/leaderboard-worker/migrations/20260531_social_group_invite_redemptions.sql),`package.json` 加对应 `db:migrate:*` 脚本。
 - **客户端** [`leaderboard.ts`](../src/electron/leaderboard.ts):`shouldSyncUsage`(leaderboardEnabled || socialGroupCount>0)、`syncUsage` 发 `usagePublic` 并去掉 `leaderboardEnabled:true` 副作用、`socialGroupCount` 维护、`leaveSocialGroup`/`setSocialGroupShareUsage` 方法。
 - **类型/IPC/preload**:`shared/types.ts` 加 `Settings.socialGroupCount`;`main.ts` 加 2 个 IPC + DEFAULT_SETTINGS/normalizeSettings/startSync 变更检测;`preload.ts`+`preload.cjs`+`global.d.ts` 补签名。
 - **Renderer** [`main.ts`](../src/renderer/main.ts):群组详情区退群按钮(群主隐藏)+ per-group 共享开关 + 点击委托 + 处理函数 + `socialRenderSignature` 纳入 shareUsage;`styles.css` 加 `.social-group-detail-actions`;`i18n.ts` 中英双补。
@@ -205,7 +205,9 @@ WHERE COALESCE(v.public_global, 1) = 1
 **验证状态:**
 - ✅ `npm run typecheck` 通过。
 - ✅ `npm run build` 通过。
-- ⚠️ `verify-worker-api.mjs` **未在本环境运行**:沙箱禁止访问 npm registry,无法安装 `wrangler` / `@cloudflare/workers-types`,`wrangler dev` 起不来。断言代码已写好,需在有网络的环境跑一次确认。worker `index.ts` 单独 tsc 仅报缺 D1 类型定义的既有错误(非本次改动引入)。
+- ✅ `npm run smoke:electron` 通过。
+- ✅ `cd server/leaderboard-worker && npm run verify:api` 通过,覆盖好友、群组、邀请、群组/全球榜解耦、退全球榜保留群组数据、资料卡关系门、原子化邀请、加入后贡献口径。
+- ✅ `git diff --check` 通过。
 
 **部署提醒:** 先 apply migration + 部署 Worker,再发客户端(老 Worker 会 404 新路由)。
 
@@ -229,17 +231,17 @@ WHERE COALESCE(v.public_global, 1) = 1
 - **Renderer** [`main.ts`](../src/renderer/main.ts):新增资料卡 modal(`appShell.ts`)、`openSocialProfile`/`closeSocialProfile`/`renderSocialProfile`、好友行与群组榜行包成 `.social-profile-trigger` 点击触发;`stats.ts` 导出 `summarizeXpProgression`;`styles.css` 加资料卡样式(复用 `--rarity-*` 徽章色);`i18n.ts` 中英双补 `socialProfile*` 文案。
 - **verify** [`verify-worker-api.mjs`](../server/leaderboard-worker/scripts/verify-worker-api.mjs):加 `user-stranger` fixture + 断言 (e):本人卡含成就 / 总量 / 入会;同群查看公开成员用量可见;查看共享群成员用量可见;无关系陌生人 404。
 
-**验证:** ✅ typecheck + build 通过;⚠️ verify 断言同样待联网环境跑(沙箱禁 npm registry)。
+**验证:** ✅ typecheck + build + smoke:electron + worker verify:api 通过。
 
 ### A3 修复:原子化邀请 maxUses(随手清技术债)
 
-原 [`acceptSocialGroupInvite`](../server/leaderboard-worker/src/index.ts) 先 `SELECT uses` 判断 `uses >= maxUses`,再在独立 batch 里 `uses = uses + 1`——两步之间存在 TOCTOU 竞态,并发接受可超发。改为**条件化单条 UPDATE**:`SET uses = uses + 1 WHERE invite_code_hash = ? AND revoked_at IS NULL AND (expires_at ...) AND (max_uses IS NULL OR uses < max_uses)`,以 `result.meta.changes` 判定是否抢到名额;抢不到(`changes === 0`)直接 410。SQLite 写串行化 ⇒ 恰好 maxUses 次 UPDATE 成功。抢到后再 `INSERT OR IGNORE` 成员(PK `group_id+user_id` 幂等)。保留原有 revoked/expired/used-up 预检以提供常态下的友好报错。verify 加断言 (f):单次邀请被消费后,即便加入者退群,`uses` 不回退、邀请码不可复用。
+原 [`acceptSocialGroupInvite`](../server/leaderboard-worker/src/index.ts) 先 `SELECT uses` 判断 `uses >= maxUses`,再在独立 batch 里 `uses = uses + 1`——两步之间存在 TOCTOU 竞态,并发接受可超发。改为两层防护:先写 `social_group_invite_redemptions(invite_code_hash,user_id)` 防止同一用户并发重复消耗同一邀请码,再做**条件化单条 UPDATE**:`SET uses = uses + 1 WHERE invite_code_hash = ? AND revoked_at IS NULL AND (expires_at ...) AND (max_uses IS NULL OR uses < max_uses)`,以 `result.meta.changes` 判定是否抢到名额;抢不到(`changes === 0`)直接 410 并释放 redemption。SQLite 写串行化 ⇒ 恰好 maxUses 次 UPDATE 成功。抢到后再 `INSERT OR IGNORE` 成员(PK `group_id+user_id` 幂等);若成员已由其它路径并发加入,回退本次 uses。保留原有 revoked/expired/used-up 预检以提供常态下的友好报错。verify 加断言 (f):单次邀请被消费后,即便加入者退群,`uses` 不回退、邀请码不可复用。
 
 ---
 
 ## 7. 群内"加入后贡献"指标(2026-05-31,P2 首项)
 
-群组榜从展示**历史总量**改为**加入本群之后的贡献**。一举两得:更像公会战(入群从 0 开始攒),且把成员入群前的历史彻底挡在群外——强化"群组 ≠ 全球后台"的隐私语义。
+群组榜从展示**历史总量**改为**按加入日期之后的贡献**。一举两得:更像公会战(入群从 0 开始攒),且把成员加入日期之前的历史挡在群外——强化"群组 ≠ 全球后台"的隐私语义。当前聚合数据只有天/小时桶,所以这是按日期地板而不是精确到入群秒级的结算。
 
 ### 机制
 
@@ -255,8 +257,8 @@ WHERE COALESCE(v.public_global, 1) = 1
 
 - [`appShell.ts`](../src/renderer/appShell.ts):群组榜上方加 `.social-board-note` 文案,明示"只统计入群后贡献"。`i18n.ts` 中英双补 `socialGroupContributionNote`、`styles.css` 加样式。
 
-### ⚠️ 必须联网验证(本次改动风险最高项)
+### 验证说明(本次改动风险最高项)
 
-这是本会话**唯一改写了排行榜排序数学**的改动,横跨三个形态不同的 SQL 分支,而沙箱禁网 `verify:api` **跑不起来**。`date(m.joined_at)` 对 ISO-8601(`...T..:..:...000Z`)的解析、按日地板的边界、三分支聚合一致性,都只在本机做了逻辑推演,**未经运行验证**。verify 已加断言 (g):成员入群前的回填用量在群组 all 榜被排除(仍只算入群后的 777),但同一笔仍计入其个人全球 all 榜(777 + 9999 = 10776)。**合并前必须在联网环境跑一次 `cd server/leaderboard-worker && npm install && npm run verify:api` 确认 (g) 及既有断言全过。**
+这是本会话**唯一改写了排行榜排序数学**的改动,横跨三个形态不同的 SQL 分支。`date(m.joined_at)` 对 ISO-8601(`...T..:..:...000Z`)的解析、按日地板的边界、三分支聚合一致性都已由 `verify:api` 覆盖。verify 断言 (g):成员加入日期前的回填用量在群组 all 榜被排除(仍只算加入日期后的 777),但同一笔仍计入其个人全球 all 榜(777 + 9999 = 10776)。
 
-**验证:** ✅ typecheck + build 通过;⚠️ verify 断言(含 (g))待联网环境跑。
+**验证:** ✅ typecheck + build + smoke:electron + worker verify:api 通过。

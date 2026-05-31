@@ -25,7 +25,9 @@
     "db:migrate:social-friends": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260529_social_friendships_indexes.sql",
     "db:migrate:social-friends:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260529_social_friendships_indexes.sql",
     "db:migrate:usage-visibility": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260531_usage_visibility.sql",
-    "db:migrate:usage-visibility:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260531_usage_visibility.sql"
+    "db:migrate:usage-visibility:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260531_usage_visibility.sql",
+    "db:migrate:social-invite-redemptions": "wrangler d1 execute vibe-tree-leaderboard --remote --file=./migrations/20260531_social_group_invite_redemptions.sql",
+    "db:migrate:social-invite-redemptions:local": "wrangler d1 execute vibe-tree-leaderboard --local --file=./migrations/20260531_social_group_invite_redemptions.sql"
   },
   "devDependencies": {
     "wrangler": "^3.114.0"

@@ -205,6 +205,17 @@ CREATE TABLE IF NOT EXISTS social_group_invites (
   FOREIGN KEY (created_by_user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS social_group_invite_redemptions (
+  invite_code_hash TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (invite_code_hash, user_id),
+  FOREIGN KEY (invite_code_hash) REFERENCES social_group_invites(invite_code_hash) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (group_id) REFERENCES social_groups(group_id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date);
 CREATE INDEX IF NOT EXISTS idx_daily_usage_user ON daily_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_hourly_usage_hour ON hourly_usage(hour_start_utc);
@@ -236,3 +247,4 @@ CREATE INDEX IF NOT EXISTS idx_social_group_members_group_role ON social_group_m
 CREATE INDEX IF NOT EXISTS idx_social_group_invites_group ON social_group_invites(group_id);
 CREATE INDEX IF NOT EXISTS idx_social_group_invites_creator ON social_group_invites(created_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_social_group_invites_expires ON social_group_invites(expires_at);
+CREATE INDEX IF NOT EXISTS idx_social_group_invite_redemptions_user ON social_group_invite_redemptions(user_id);

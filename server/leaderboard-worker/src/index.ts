@@ -448,9 +448,15 @@ async function deleteMe(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
   await ensureHourlyUsageTable(env);
+  await ensureUsageVisibilityTable(env);
   await ensureCloudTreeTables(env);
   await ensureSocialTables(env);
   await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM social_group_invite_redemptions
+       WHERE user_id = ?
+          OR group_id IN (SELECT group_id FROM social_groups WHERE owner_user_id = ?)`,
+    ).bind(user.userId, user.userId),
     env.DB.prepare(
       `DELETE FROM social_group_invites
        WHERE created_by_user_id = ?
@@ -473,6 +479,7 @@ async function deleteMe(request: Request, env: Env) {
     env.DB.prepare("DELETE FROM tree_device_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM tree_model_stats WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
+    env.DB.prepare("DELETE FROM usage_visibility WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM auth_codes WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.userId),
@@ -486,26 +493,12 @@ async function deleteMe(request: Request, env: Env) {
 async function leaveLeaderboard(request: Request, env: Env) {
   const user = await requireAuth(request, env);
   await ensureUsagePreferencesTable(env);
-  await ensureHourlyUsageTable(env);
   await ensureUsageVisibilityTable(env);
-  await ensureSocialTables(env);
   const now = new Date().toISOString();
 
-  // Leaving the global board hides the user from it but keeps their usage data
-  // so group leaderboards still work. Only prune the usage tables when the user
-  // is not in any group, to avoid retaining orphaned data.
-  const groupCount = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM social_group_members WHERE user_id = ?",
-  ).bind(user.userId).first<{ count?: number }>();
-  const inAnyGroup = (groupCount?.count ?? 0) > 0;
-
+  // Leaving the global board only hides the user from public global queries.
+  // Usage rows stay intact so rejoining and group leaderboards keep continuity.
   await env.DB.batch([
-    ...(inAnyGroup
-      ? []
-      : [
-          env.DB.prepare("DELETE FROM daily_usage WHERE user_id = ?").bind(user.userId),
-          env.DB.prepare("DELETE FROM hourly_usage WHERE user_id = ?").bind(user.userId),
-        ]),
     env.DB.prepare("DELETE FROM usage_preferences WHERE user_id = ?").bind(user.userId),
     env.DB.prepare("DELETE FROM sync_limits WHERE user_id = ?").bind(user.userId),
     env.DB.prepare(
@@ -888,10 +881,24 @@ async function acceptSocialGroupInvite(request: Request, env: Env, code: string)
   const groupId = String(invite.groupId);
   const existing = await socialGroupMembership(groupId, user.userId, env);
   if (!existing) {
+    const redemption = await env.DB.prepare(
+      `INSERT OR IGNORE INTO social_group_invite_redemptions
+         (invite_code_hash, user_id, group_id, created_at)
+       VALUES (?, ?, ?, ?)`,
+    ).bind(codeHash, user.userId, groupId, now).run();
+    if (!redemption.meta.changes) {
+      const member = await socialGroupMembership(groupId, user.userId, env);
+      if (!member) throw new HttpError(409, "Invite acceptance is already in progress.");
+      return json({
+        group: await requireSocialGroupPayload(groupId, user.userId, env),
+        alreadyMember: true,
+      }, env);
+    }
+
     // Atomically claim a use: the WHERE re-checks max_uses inside the write so two
     // concurrent accepts can't both pass the read above and over-issue the invite.
-    // SQLite serializes writes, so exactly maxUses updates win. We consume the use
-    // first, then INSERT OR IGNORE the membership (PK group_id+user_id keeps it idempotent).
+    // SQLite serializes writes, so exactly maxUses updates win. The redemption row
+    // above prevents one user from double-consuming the same invite in parallel.
     const claim = await env.DB.prepare(
       `UPDATE social_group_invites
        SET uses = uses + 1, updated_at = ?
@@ -900,12 +907,29 @@ async function acceptSocialGroupInvite(request: Request, env: Env, code: string)
          AND (expires_at IS NULL OR expires_at > ?)
          AND (max_uses IS NULL OR uses < max_uses)`,
     ).bind(now, codeHash, now).run();
-    if (!claim.meta.changes) throw new HttpError(410, "Invite has been used up.");
-    await env.DB.prepare(
+    if (!claim.meta.changes) {
+      await env.DB.prepare(
+        "DELETE FROM social_group_invite_redemptions WHERE invite_code_hash = ? AND user_id = ?",
+      ).bind(codeHash, user.userId).run();
+      throw new HttpError(410, "Invite has been used up.");
+    }
+    const inserted = await env.DB.prepare(
       `INSERT OR IGNORE INTO social_group_members
          (group_id, user_id, role, share_usage, joined_at, updated_at)
        VALUES (?, ?, ?, 1, ?, ?)`,
     ).bind(groupId, user.userId, normalizeSocialGroupRole(invite.role) ?? "member", now, now).run();
+    if (!inserted.meta.changes) {
+      await env.DB.batch([
+        env.DB.prepare(
+          "DELETE FROM social_group_invite_redemptions WHERE invite_code_hash = ? AND user_id = ?",
+        ).bind(codeHash, user.userId),
+        env.DB.prepare(
+          `UPDATE social_group_invites
+           SET uses = CASE WHEN uses > 0 THEN uses - 1 ELSE 0 END, updated_at = ?
+           WHERE invite_code_hash = ?`,
+        ).bind(now, codeHash),
+      ]);
+    }
   }
 
   return json({
@@ -1482,6 +1506,18 @@ async function ensureSocialTables(env: Env) {
         FOREIGN KEY (created_by_user_id) REFERENCES users(user_id) ON DELETE CASCADE
       )`,
     ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS social_group_invite_redemptions (
+        invite_code_hash TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (invite_code_hash, user_id),
+        FOREIGN KEY (invite_code_hash) REFERENCES social_group_invites(invite_code_hash) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+        FOREIGN KEY (group_id) REFERENCES social_groups(group_id) ON DELETE CASCADE
+      )`,
+    ),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_friendships_requester ON social_friendships(requester_user_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_friendships_status ON social_friendships(status)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_friendships_user_high ON social_friendships(user_high)"),
@@ -1491,6 +1527,7 @@ async function ensureSocialTables(env: Env) {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invites_group ON social_group_invites(group_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invites_creator ON social_group_invites(created_by_user_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invites_expires ON social_group_invites(expires_at)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_social_group_invite_redemptions_user ON social_group_invite_redemptions(user_id)"),
   ]);
 }
 
