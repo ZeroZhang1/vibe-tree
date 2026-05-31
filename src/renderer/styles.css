@@ -2980,6 +2980,14 @@ label,
   opacity: 0.85;
 }
 
+.social-board-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
 .social-mini-form {
   min-width: 0;
   display: grid;

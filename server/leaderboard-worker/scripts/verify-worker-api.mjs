@@ -364,6 +364,32 @@ VALUES ('${strangerTokenHash}', 'user-stranger', '${now}', '${expiresAt}');
   assert(groupLeaderboard.entries?.[0]?.tokens === 3333, "group leaderboard should rank the highest member first");
   assert(groupLeaderboard.entries?.[1]?.tokens === 777, "group leaderboard should include the invited member contribution");
 
+  // (g) group boards count contribution SINCE JOINING: a member's pre-join usage history
+  // stays out of the group board but still counts toward their own global all-time total.
+  // user-friend joined today; backdate a 9999-token day before the join.
+  const beforeJoinDate = addDays(utcToday, -5);
+  await requestJson("/api/usage/daily", {
+    method: "POST",
+    token: friendToken,
+    body: {
+      appVersion: "0.5.5-test",
+      forceSync: true,
+      days: [{ date: beforeJoinDate, tokens: 9999 }],
+    },
+  });
+  const groupAllBoard = await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/leaderboard?range=all`);
+  const friendGroupAll = groupAllBoard.entries?.find((entry) => entry.userId === "user-friend");
+  assert(
+    friendGroupAll?.tokens === 777,
+    "group all-time board should exclude a member's pre-join usage (since-joined contribution only)",
+  );
+  const globalAllBoard = await requestJson("/api/leaderboard?range=all");
+  const friendGlobalAll = globalAllBoard.entries?.find((entry) => entry.userId === "user-friend");
+  assert(
+    friendGlobalAll?.tokens === 10776,
+    "global all-time total should still include the member's pre-join usage (777 + 9999)",
+  );
+
   // (d) share_usage=false hides a member from the group board; restoring it shows them again.
   await requestJson(`/api/social/groups/${encodeURIComponent(groupId)}/membership`, {
     method: "POST",

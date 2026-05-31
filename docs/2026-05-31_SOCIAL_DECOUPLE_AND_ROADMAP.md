@@ -179,7 +179,7 @@ WHERE COALESCE(v.public_global, 1) = 1
 - 角色管理:踢人、任命 officer、转让群主、删群。
 
 ### P2(可玩性)
-- **加入后贡献指标**(群内增量,而非历史总量)—— 更像公会战,顺带强化隐私语义。
+- ✅ **加入后贡献指标**(群内增量,而非历史总量)—— 更像公会战,顺带强化隐私语义。见第 7 节。
 - 好友 / 群组未读 badge(有 incoming pending 时社交 tab 红点)—— 解决"对方不刷新看不到请求",比 WebSocket 性价比高。
 - 群组成就 / 等级 / 赛季榜。
 
@@ -234,3 +234,29 @@ WHERE COALESCE(v.public_global, 1) = 1
 ### A3 修复:原子化邀请 maxUses(随手清技术债)
 
 原 [`acceptSocialGroupInvite`](../server/leaderboard-worker/src/index.ts) 先 `SELECT uses` 判断 `uses >= maxUses`,再在独立 batch 里 `uses = uses + 1`——两步之间存在 TOCTOU 竞态,并发接受可超发。改为**条件化单条 UPDATE**:`SET uses = uses + 1 WHERE invite_code_hash = ? AND revoked_at IS NULL AND (expires_at ...) AND (max_uses IS NULL OR uses < max_uses)`,以 `result.meta.changes` 判定是否抢到名额;抢不到(`changes === 0`)直接 410。SQLite 写串行化 ⇒ 恰好 maxUses 次 UPDATE 成功。抢到后再 `INSERT OR IGNORE` 成员(PK `group_id+user_id` 幂等)。保留原有 revoked/expired/used-up 预检以提供常态下的友好报错。verify 加断言 (f):单次邀请被消费后,即便加入者退群,`uses` 不回退、邀请码不可复用。
+
+---
+
+## 7. 群内"加入后贡献"指标(2026-05-31,P2 首项)
+
+群组榜从展示**历史总量**改为**加入本群之后的贡献**。一举两得:更像公会战(入群从 0 开始攒),且把成员入群前的历史彻底挡在群外——强化"群组 ≠ 全球后台"的隐私语义。
+
+### 机制
+
+[`socialGroupLeaderboardDataForRange`](../server/leaderboard-worker/src/index.ts) 三个 range 分支统一在读 `daily_usage` / `hourly_usage` 时按成员 `m.joined_at` 设地板:
+
+- daily:`d.date >= date(m.joined_at)`(`daily_usage.date` 是 `YYYY-MM-DD`,`date()` 把 ISO `joined_at` 截到日)。
+- hourly(24h 分支):`h.hour_start_utc >= date(m.joined_at)`——**按日**而非按时刻设限。否则刚入群者在本小时桶(`T14:00`)早于其入群时刻(`T14:23`)时会被算成 0,直到下一个整点;按日则入群当天整天计入,符合"按天"的贡献语义,也避免破坏既有 24h 断言。
+- `daysActive` 相关子查询同样加 `AND all_days.date >= date(m.joined_at)`——否则活跃天数仍泄露入群前历史,与隐私目标矛盾。
+
+全球榜不受影响(仍 `SUM(d.xp)` 全量)。同一个人在全球榜是生涯总量、在每个群是各自入群后的增量。
+
+### 客户端
+
+- [`appShell.ts`](../src/renderer/appShell.ts):群组榜上方加 `.social-board-note` 文案,明示"只统计入群后贡献"。`i18n.ts` 中英双补 `socialGroupContributionNote`、`styles.css` 加样式。
+
+### ⚠️ 必须联网验证(本次改动风险最高项)
+
+这是本会话**唯一改写了排行榜排序数学**的改动,横跨三个形态不同的 SQL 分支,而沙箱禁网 `verify:api` **跑不起来**。`date(m.joined_at)` 对 ISO-8601(`...T..:..:...000Z`)的解析、按日地板的边界、三分支聚合一致性,都只在本机做了逻辑推演,**未经运行验证**。verify 已加断言 (g):成员入群前的回填用量在群组 all 榜被排除(仍只算入群后的 777),但同一笔仍计入其个人全球 all 榜(777 + 9999 = 10776)。**合并前必须在联网环境跑一次 `cd server/leaderboard-worker && npm install && npm run verify:api` 确认 (g) 及既有断言全过。**
+
+**验证:** ✅ typecheck + build 通过;⚠️ verify 断言(含 (g))待联网环境跑。

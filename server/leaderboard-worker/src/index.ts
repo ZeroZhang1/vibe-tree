@@ -1706,13 +1706,18 @@ async function socialGroupLeaderboardDataForRange(
 ) {
   let result: D1Result<Record<string, unknown>>;
   if (range === "all") {
+    // Group boards rank by contribution SINCE JOINING, not lifetime: the floor at
+    // date(m.joined_at) makes this a guild-war metric and keeps a member's pre-join
+    // history out of every group they join. daysActive is floored the same way.
     result = await env.DB.prepare(
       `SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
               m.role, SUM(d.xp) AS tokens,
-              (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive
+              (SELECT COUNT(*) FROM daily_usage all_days
+               WHERE all_days.user_id = u.user_id AND all_days.xp > 0
+                 AND all_days.date >= date(m.joined_at)) AS daysActive
        FROM social_group_members m
        JOIN users u ON u.user_id = m.user_id
-       JOIN daily_usage d ON d.user_id = m.user_id
+       JOIN daily_usage d ON d.user_id = m.user_id AND d.date >= date(m.joined_at)
        WHERE m.group_id = ? AND m.share_usage > 0
        GROUP BY u.user_id
        HAVING tokens > 0
@@ -1733,6 +1738,7 @@ async function socialGroupLeaderboardDataForRange(
          JOIN social_group_members m ON m.user_id = h.user_id
          WHERE m.group_id = ? AND m.share_usage > 0
            AND h.hour_start_utc >= ? AND h.hour_start_utc <= ?
+           AND h.hour_start_utc >= date(m.joined_at)
          GROUP BY h.user_id
        ),
        legacy_current_date AS (
@@ -1743,6 +1749,7 @@ async function socialGroupLeaderboardDataForRange(
          WHERE m.group_id = ? AND m.share_usage > 0
            AND h.user_id IS NULL
            AND d.date >= ? AND d.date <= ?
+           AND d.date >= date(m.joined_at)
            AND d.updated_at >= ?
          GROUP BY d.user_id
        ),
@@ -1759,7 +1766,9 @@ async function socialGroupLeaderboardDataForRange(
        )
        SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
               m.role, SUM(r.tokens) AS tokens,
-              (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive
+              (SELECT COUNT(*) FROM daily_usage all_days
+               WHERE all_days.user_id = u.user_id AND all_days.xp > 0
+                 AND all_days.date >= date(m.joined_at)) AS daysActive
        FROM range_totals r
        JOIN social_group_members m ON m.user_id = r.user_id AND m.group_id = ?
        JOIN users u ON u.user_id = r.user_id
@@ -1790,12 +1799,15 @@ async function socialGroupLeaderboardDataForRange(
        )
        SELECT u.user_id AS userId, u.username AS username, u.avatar_url AS avatarUrl,
               m.role, SUM(d.xp) AS tokens,
-              (SELECT COUNT(*) FROM daily_usage all_days WHERE all_days.user_id = u.user_id AND all_days.xp > 0) AS daysActive
+              (SELECT COUNT(*) FROM daily_usage all_days
+               WHERE all_days.user_id = u.user_id AND all_days.xp > 0
+                 AND all_days.date >= date(m.joined_at)) AS daysActive
        FROM user_current_date c
        JOIN daily_usage d ON d.user_id = c.user_id
        JOIN social_group_members m ON m.user_id = c.user_id AND m.group_id = ?
        JOIN users u ON u.user_id = c.user_id
        WHERE d.date >= date(c.currentDate, ?) AND d.date <= c.currentDate
+         AND d.date >= date(m.joined_at)
        GROUP BY u.user_id
        HAVING tokens > 0
        ORDER BY tokens DESC
