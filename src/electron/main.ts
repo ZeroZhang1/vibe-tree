@@ -14,6 +14,7 @@ import type {
   CloudSyncStatus,
   LedgerEntry,
   LedgerFile,
+  LeaderboardCollection,
   LeaderboardProfile,
   Settings,
   ToastPlacement,
@@ -66,7 +67,7 @@ const LEADERBOARD_SYNC_INTERVAL_MS = HOURLY_SYNC_INTERVAL_MS;
 const CLOUD_SYNC_INTERVAL_MS = HOURLY_SYNC_INTERVAL_MS;
 const LEADERBOARD_AUTH_TIMEOUT_MS = 2 * 60 * 1000;
 const LEADERBOARD_CALLBACK_PATH = "/leaderboard/auth/callback";
-const MAC_TRAY_ICON_SIZE = 18;
+const MENU_BAR_POPOVER_SIZE = { width: 390, height: 500 };
 const MANAGER_SIZE = { width: 1120, height: 760 };
 const MANAGER_MIN_SIZE = { width: 860, height: 620 };
 const APP_NAME = "Vibe Tree";
@@ -76,11 +77,18 @@ const USER_DATA_DIR_OVERRIDE = process.env.VIBE_TREE_USER_DATA_DIR?.trim();
 if (USER_DATA_DIR_OVERRIDE) app.setPath("userData", USER_DATA_DIR_OVERRIDE);
 const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes", "cloud"] as const;
 const LOCAL_STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
+// Menu bar popover components, in their canonical default order. Must mirror
+// MENUBAR_VIZ_IDS in the renderer.
+const MENUBAR_VIZ_IDS = ["rhythm", "sync", "activity", "rank", "sources", "speed"] as const;
 const APP_ICON_PATHS = [
   join(__dirname, "../renderer/assets/app-icon.png"),
   join(__dirname, "../renderer/assets/app-icon.ico"),
   join(__dirname, "../../public/assets/app-icon.png"),
   join(__dirname, "../../public/assets/app-icon.ico"),
+];
+const MAC_MENU_BAR_ICON_PATHS = [
+  join(__dirname, "../renderer/assets/menu-bar-sprout.png"),
+  join(__dirname, "../../public/assets/menu-bar-sprout.png"),
 ];
 
 const DEFAULT_SETTINGS: Settings = {
@@ -110,6 +118,7 @@ const DEFAULT_SETTINGS: Settings = {
   silentStartup: false,
   proxyUrl: undefined,
   enabledSourceIds: [...STAT_SOURCE_IDS],
+  menubarVizIds: [...MENUBAR_VIZ_IDS],
   windowPosition: undefined,
 };
 
@@ -131,6 +140,9 @@ let petWindow: BrowserWindow | null = null;
 let managerWindow: BrowserWindow | null = null;
 let managerRendererReady = false;
 let pendingOpenSettings = false;
+let pendingSettingsCategory: string | null = null;
+let pendingDashboardTab: "home" | "achievements" | "leaderboard" | null = null;
+let menuBarWindow: BrowserWindow | null = null;
 let achievementToastWindow: BrowserWindow | null = null;
 let achievementToastHideTimer: ReturnType<typeof setTimeout> | null = null;
 let achievementToastFallbackHideAt = 0;
@@ -147,6 +159,7 @@ let updateStatus: UpdateStatus = {
   currentVersion: currentAppVersion(),
 };
 let tray: Tray | null = null;
+let trayContextMenu: ReturnType<typeof Menu.buildFromTemplate> | null = null;
 let trayMenuReopenTimer: ReturnType<typeof setTimeout> | null = null;
 let ledger: LedgerFile = { entries: [], settings: DEFAULT_SETTINGS, installedAt: startOfLocalDayIso(new Date()) };
 let achievementState: AchievementState = { unlocked: [] };
@@ -451,7 +464,13 @@ function readDeviceSettings(legacySettings: Partial<Settings> | undefined, hasLo
     settings = normalizeSettings({ ...settings, treeStartMode: "new" });
     migratedTreeStartMode = true;
   }
-  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined || migratedTreeStartMode) {
+  if (
+    !stored ||
+    stored.language === undefined ||
+    stored.enabledSourceIds === undefined ||
+    stored.menubarVizIds === undefined ||
+    migratedTreeStartMode
+  ) {
     writeDeviceSettings(settings);
   }
   return settings;
@@ -589,6 +608,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     silentStartup: Boolean(settings.silentStartup),
     proxyUrl: cleanProxyUrl(settings.proxyUrl),
     enabledSourceIds: normalizeEnabledSourceIds(settings.enabledSourceIds),
+    menubarVizIds: normalizeMenubarVizIds(settings.menubarVizIds),
     scale,
     badgeFrontMetric: normalizeBadgeMetric(settings.badgeFrontMetric, "level"),
     badgeBackMetric: normalizeBadgeMetric(settings.badgeBackMetric, "total"),
@@ -657,6 +677,16 @@ function normalizeEnabledSourceIds(value: unknown): string[] {
   if (hadAllLegacySources && !normalized.includes("pi")) normalized.splice(2, 0, "pi");
   if (!normalized.includes("cloud")) normalized.push("cloud");
   return normalized;
+}
+
+// Visible menu bar components, in order. Drops unknown ids, de-dupes, and
+// falls back to the full default set when the result would be empty so the
+// popover is never blank.
+function normalizeMenubarVizIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...MENUBAR_VIZ_IDS];
+  const allowed = new Set<string>(MENUBAR_VIZ_IDS);
+  const normalized = [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))];
+  return normalized.length > 0 ? normalized : [...MENUBAR_VIZ_IDS];
 }
 
 function cleanProxyUrl(value: unknown) {
@@ -814,7 +844,7 @@ function setPetBounds(position: { x: number; y: number }) {
   syncAchievementToastPosition();
 }
 
-async function loadRenderer(window: BrowserWindow, view: "pet" | "manager" | "toast") {
+async function loadRenderer(window: BrowserWindow, view: "pet" | "manager" | "toast" | "menubar") {
   const query = { view, uiTheme: view === "toast" ? "night" : ledger.settings.uiTheme };
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     await window.loadURL(`${process.env.VITE_DEV_SERVER_URL}?${new URLSearchParams(query).toString()}`);
@@ -914,6 +944,42 @@ function createManagerWindow() {
   void managerWindow.webContents.setVisualZoomLevelLimits(1, 1);
   void loadRenderer(managerWindow, "manager");
   return managerWindow;
+}
+
+function createMenuBarWindow() {
+  if (menuBarWindow && !menuBarWindow.isDestroyed()) return menuBarWindow;
+  menuBarWindow = new BrowserWindow({
+    width: MENU_BAR_POPOVER_SIZE.width,
+    height: MENU_BAR_POPOVER_SIZE.height,
+    title: `${APP_NAME} Menu`,
+    icon: createAppIcon(),
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    show: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: preloadFile,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  menuBarWindow.webContents.setZoomFactor(1);
+  menuBarWindow.webContents.on("zoom-changed", (event) => event.preventDefault());
+  void menuBarWindow.webContents.setVisualZoomLevelLimits(1, 1);
+  menuBarWindow.on("blur", () => {
+    if (!menuBarWindow || menuBarWindow.isDestroyed()) return;
+    menuBarWindow.hide();
+  });
+  menuBarWindow.on("closed", () => {
+    menuBarWindow = null;
+  });
+  void loadRenderer(menuBarWindow, "menubar");
+  return menuBarWindow;
 }
 
 function createAchievementToastWindow() {
@@ -1103,20 +1169,34 @@ function showManager() {
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
+  if (process.platform === "darwin") app.dock?.show();
   refreshTrayMenu();
 }
 
-function openManagerSettings() {
+function openManagerSettings(category?: string) {
   pendingOpenSettings = true;
+  pendingSettingsCategory = category ?? null;
+  showManager();
+  flushManagerCommands();
+}
+
+function openManagerTab(tab: "home" | "achievements" | "leaderboard") {
+  pendingDashboardTab = tab;
   showManager();
   flushManagerCommands();
 }
 
 function flushManagerCommands() {
   if (!managerWindow || managerWindow.isDestroyed() || !managerRendererReady) return;
-  if (!pendingOpenSettings) return;
-  managerWindow.webContents.send("bonsai:open-settings");
-  pendingOpenSettings = false;
+  if (pendingDashboardTab) {
+    managerWindow.webContents.send("bonsai:open-dashboard-tab", pendingDashboardTab);
+    pendingDashboardTab = null;
+  }
+  if (pendingOpenSettings) {
+    managerWindow.webContents.send("bonsai:open-settings", pendingSettingsCategory);
+    pendingOpenSettings = false;
+    pendingSettingsCategory = null;
+  }
 }
 
 function persistPetPosition() {
@@ -1155,7 +1235,11 @@ function recoverPetWindow() {
 function createTray() {
   tray = new Tray(createTrayIcon());
   tray.setToolTip(APP_NAME);
-  tray.on("click", showManager);
+  tray.on("click", toggleMenuBarPopover);
+  tray.on("right-click", () => {
+    refreshTrayMenu();
+    if (trayContextMenu) tray?.popUpContextMenu(trayContextMenu);
+  });
   refreshTrayMenu();
 }
 
@@ -1165,19 +1249,60 @@ function createTrayIcon() {
 }
 
 function createMacTrayIcon() {
-  for (const iconPath of APP_ICON_PATHS) {
+  for (const iconPath of MAC_MENU_BAR_ICON_PATHS) {
     try {
       if (!existsSync(iconPath)) continue;
-      const icon = nativeImage.createFromPath(iconPath);
+      const icon = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 });
       if (icon.isEmpty()) continue;
-      const resized = icon.resize({ width: MAC_TRAY_ICON_SIZE, height: MAC_TRAY_ICON_SIZE });
-      resized.setTemplateImage(false);
-      return resized.isEmpty() ? icon : resized;
+      icon.setTemplateImage(true);
+      return icon;
     } catch {
-      // Fall back to the embedded icon below.
+      // Fall back to the bundled app icon if the menu bar asset is missing or unreadable.
     }
   }
-  return createAppIcon().resize({ width: MAC_TRAY_ICON_SIZE, height: MAC_TRAY_ICON_SIZE });
+  const fallback = createAppIcon().resize({ width: 16, height: 16 });
+  fallback.setTemplateImage(true);
+  return fallback;
+}
+
+function toggleMenuBarPopover() {
+  if (process.platform !== "darwin") {
+    showManager();
+    return;
+  }
+  const window = createMenuBarWindow();
+  if (window.isVisible()) {
+    window.hide();
+    return;
+  }
+  positionMenuBarWindow(window);
+  window.show();
+  window.focus();
+}
+
+function hideMenuBarPopover() {
+  if (!menuBarWindow || menuBarWindow.isDestroyed()) return;
+  menuBarWindow.hide();
+}
+
+function positionMenuBarWindow(window: BrowserWindow) {
+  const anchorBounds = tray?.getBounds();
+  if (!anchorBounds) return;
+  const display = screen.getDisplayMatching(anchorBounds);
+  const workArea = display.workArea;
+  const x = Math.round(
+    Math.min(
+      Math.max(anchorBounds.x + anchorBounds.width / 2 - MENU_BAR_POPOVER_SIZE.width / 2, workArea.x + 8),
+      workArea.x + workArea.width - MENU_BAR_POPOVER_SIZE.width - 8,
+    ),
+  );
+  const y = Math.round(
+    Math.min(
+      anchorBounds.y + anchorBounds.height + 8,
+      workArea.y + workArea.height - MENU_BAR_POPOVER_SIZE.height - 8,
+    ),
+  );
+  window.setBounds({ x, y, ...MENU_BAR_POPOVER_SIZE }, false);
 }
 
 function createAppIcon() {
@@ -1217,7 +1342,7 @@ function showPetContextMenu() {
   const menu = Menu.buildFromTemplate([
     {
       label: mainText("openSettings"),
-      click: openManagerSettings,
+      click: () => openManagerSettings(),
     },
     {
       label: ledger.settings.locked ? mainText("unlockPet") : mainText("lockPet"),
@@ -1296,7 +1421,7 @@ function totalUnitMenuItems(): MenuItemConstructorOptions[] {
 function refreshTrayMenu() {
   if (!tray) return;
   const trayStats = getTrayStats();
-  const template = Menu.buildFromTemplate([
+  trayContextMenu = Menu.buildFromTemplate([
     {
       label: `${APP_NAME} · Lv.${trayStats.level} · ${trayStats.weatherLabel}`,
       enabled: false,
@@ -1310,7 +1435,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     {
       label: mainText("openSettings"),
-      click: openManagerSettings,
+      click: () => openManagerSettings(),
     },
     {
       label: mainText("recoverPet"),
@@ -1416,7 +1541,7 @@ function refreshTrayMenu() {
       click: () => app.quit(),
     },
   ]);
-  tray.setContextMenu(template);
+  tray.setContextMenu(process.platform === "darwin" ? null : trayContextMenu);
   tray.setToolTip(`${APP_NAME} · Lv.${trayStats.level} · ${trayStats.weatherLabel}`);
 }
 
@@ -1435,7 +1560,7 @@ function reopenTrayMenuSoon(delayMs = 120) {
     trayMenuReopenTimer = null;
     if (!tray) return;
     refreshTrayMenu();
-    tray.popUpContextMenu();
+    if (trayContextMenu) tray.popUpContextMenu(trayContextMenu);
   }, delayMs);
 }
 
@@ -2004,7 +2129,7 @@ function mergeRemoteAchievements(unlocked: AchievementUnlock[]) {
 }
 
 function broadcast(channel: string, ...args: unknown[]) {
-  for (const window of [petWindow, managerWindow, achievementToastWindow]) {
+  for (const window of [petWindow, managerWindow, menuBarWindow, achievementToastWindow]) {
     if (!window || window.isDestroyed()) continue;
     window.webContents.send(channel, ...args);
   }
@@ -2785,6 +2910,12 @@ function loginItemArgs() {
 app.whenReady().then(async () => {
   app.setName(APP_NAME);
   app.setAppUserModelId(APP_ID);
+  if (process.platform === "darwin") {
+    app.setActivationPolicy("regular");
+    app.dock?.show();
+    const dockIcon = createAppIcon();
+    if (!dockIcon.isEmpty()) app.dock?.setIcon(dockIcon);
+  }
   if (SMOKE_TEST) {
     app.quit();
     return;
@@ -2839,6 +2970,16 @@ ipcMain.handle("leaderboard:sync", (_event, options?: { force?: boolean }) =>
 );
 ipcMain.handle("leaderboard:get", (_event, range?: unknown) => leaderboardService.getLeaderboard(range));
 ipcMain.handle("leaderboard:get-all", () => leaderboardService.getLeaderboards());
+// A renderer that just fetched fresh leaderboard data publishes it so the
+// other window (menu bar popover ↔ dashboard) updates without its own fetch.
+ipcMain.on("leaderboard:publish", (event, collection: LeaderboardCollection) => {
+  if (!collection || typeof collection !== "object" || !collection.ranges) return;
+  for (const window of [petWindow, managerWindow, menuBarWindow]) {
+    if (!window || window.isDestroyed()) continue;
+    if (window.webContents === event.sender) continue;
+    window.webContents.send("bonsai:leaderboard-data", collection);
+  }
+});
 ipcMain.handle("social:friends", () => leaderboardService.getSocialFriends());
 ipcMain.handle("social:request-friend", (_event, input) => leaderboardService.requestSocialFriend(input));
 ipcMain.handle("social:accept-friend", (_event, userId: string) => leaderboardService.acceptSocialFriend(userId));
@@ -2920,6 +3061,25 @@ ipcMain.handle(
     return { canceled: false, filePath: result.filePath };
   },
 );
+ipcMain.handle("window:show-manager", () => {
+  showManager();
+});
+ipcMain.handle("window:open-settings", () => {
+  openManagerSettings();
+});
+ipcMain.handle("window:open-menubar-settings", () => {
+  openManagerSettings("menubar");
+});
+ipcMain.handle("window:open-manager-tab", (_event, tab: unknown) => {
+  if (tab !== "home" && tab !== "achievements" && tab !== "leaderboard") return;
+  openManagerTab(tab);
+});
+ipcMain.handle("menubar:toggle-popover", () => {
+  toggleMenuBarPopover();
+});
+ipcMain.handle("menubar:hide-popover", () => {
+  hideMenuBarPopover();
+});
 
 ipcMain.on("achievements:toast-ready", (event) => {
   if (!achievementToastWindow || achievementToastWindow.isDestroyed()) return;

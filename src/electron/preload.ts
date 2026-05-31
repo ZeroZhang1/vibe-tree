@@ -52,6 +52,7 @@ const api = {
     ipcRenderer.invoke("leaderboard:sync", options) as Promise<LeaderboardStatus>,
   getLeaderboard: (range: LeaderboardRange) => ipcRenderer.invoke("leaderboard:get", range) as Promise<LeaderboardData>,
   getLeaderboards: () => ipcRenderer.invoke("leaderboard:get-all") as Promise<LeaderboardCollection>,
+  publishLeaderboards: (collection: LeaderboardCollection) => ipcRenderer.send("leaderboard:publish", collection),
   getSocialFriends: () => ipcRenderer.invoke("social:friends") as Promise<SocialFriendList>,
   requestSocialFriend: (input: CreateSocialFriendInput) =>
     ipcRenderer.invoke("social:request-friend", input) as Promise<SocialFriend>,
@@ -87,6 +88,13 @@ const api = {
     ipcRenderer.invoke("achievements:reconcile", input) as Promise<AchievementState>,
   saveShareImage: (input: { filename: string; pngBase64: string }) =>
     ipcRenderer.invoke("share:save-image", input) as Promise<{ canceled: boolean; filePath?: string }>,
+  showManager: () => ipcRenderer.invoke("window:show-manager") as Promise<void>,
+  openManagerSettings: () => ipcRenderer.invoke("window:open-settings") as Promise<void>,
+  openMenubarComponentSettings: () => ipcRenderer.invoke("window:open-menubar-settings") as Promise<void>,
+  openManagerTab: (tab: "home" | "achievements" | "leaderboard") =>
+    ipcRenderer.invoke("window:open-manager-tab", tab) as Promise<void>,
+  toggleMenuBarPopover: () => ipcRenderer.invoke("menubar:toggle-popover") as Promise<void>,
+  hideMenuBarPopover: () => ipcRenderer.invoke("menubar:hide-popover") as Promise<void>,
   showLevelToast: (input: { from: number; to: number }) => ipcRenderer.send("level:toast", input),
   notifyAchievementToastReady: () => ipcRenderer.send("achievements:toast-ready"),
   notifyAchievementToastDrained: () => ipcRenderer.send("achievements:toast-drained"),
@@ -106,10 +114,15 @@ const api = {
     ipcRenderer.on("bonsai:open-add-token", listener);
     return () => ipcRenderer.removeListener("bonsai:open-add-token", listener);
   },
-  onOpenSettings: (callback: () => void) => {
-    const listener = () => callback();
+  onOpenSettings: (callback: (category?: string | null) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, category?: string | null) => callback(category);
     ipcRenderer.on("bonsai:open-settings", listener);
     return () => ipcRenderer.removeListener("bonsai:open-settings", listener);
+  },
+  onOpenDashboardTab: (callback: (tab: "home" | "achievements" | "leaderboard") => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, tab: "home" | "achievements" | "leaderboard") => callback(tab);
+    ipcRenderer.on("bonsai:open-dashboard-tab", listener);
+    return () => ipcRenderer.removeListener("bonsai:open-dashboard-tab", listener);
   },
   onUsageStatus: (callback: (status: UsageStatus) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: UsageStatus) => callback(status);
@@ -125,6 +138,11 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, status: LeaderboardStatus) => callback(status);
     ipcRenderer.on("bonsai:leaderboard-status", listener);
     return () => ipcRenderer.removeListener("bonsai:leaderboard-status", listener);
+  },
+  onLeaderboardData: (callback: (collection: LeaderboardCollection) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, collection: LeaderboardCollection) => callback(collection);
+    ipcRenderer.on("bonsai:leaderboard-data", listener);
+    return () => ipcRenderer.removeListener("bonsai:leaderboard-data", listener);
   },
   onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => {
     const listener = (

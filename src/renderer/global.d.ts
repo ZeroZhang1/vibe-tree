@@ -25,6 +25,7 @@ import type {
   UsageStatus,
   WindowBounds,
 } from "../shared/types";
+import type { DashboardTab } from "./types";
 
 declare global {
   interface Window {
@@ -48,6 +49,7 @@ declare global {
       syncLeaderboard: (options?: { force?: boolean }) => Promise<LeaderboardStatus>;
       getLeaderboard: (range: LeaderboardRange) => Promise<LeaderboardData>;
       getLeaderboards: () => Promise<LeaderboardCollection>;
+      publishLeaderboards: (collection: LeaderboardCollection) => void;
       getSocialFriends: () => Promise<SocialFriendList>;
       requestSocialFriend: (input: CreateSocialFriendInput) => Promise<SocialFriend>;
       acceptSocialFriend: (userId: string) => Promise<SocialFriend>;
@@ -72,6 +74,12 @@ declare global {
       updateAchievementStats: (stats: Record<string, unknown>) => Promise<AchievementState>;
       reconcileAchievements: (input: { version: number; unlockedIds: string[]; stats?: Record<string, unknown> }) => Promise<AchievementState>;
       saveShareImage: (input: { filename: string; pngBase64: string }) => Promise<{ canceled: boolean; filePath?: string }>;
+      showManager: () => Promise<void>;
+      openManagerSettings: () => Promise<void>;
+      openMenubarComponentSettings: () => Promise<void>;
+      openManagerTab: (tab: DashboardTab) => Promise<void>;
+      toggleMenuBarPopover: () => Promise<void>;
+      hideMenuBarPopover: () => Promise<void>;
       showLevelToast: (input: { from: number; to: number }) => void;
       notifyAchievementToastReady: () => void;
       notifyAchievementToastDrained: () => void;
@@ -79,10 +87,12 @@ declare global {
       onLedger: (callback: (ledger: LedgerFile) => void) => () => void;
       onExpanded: (callback: (expanded: boolean) => void) => () => void;
       onOpenAddToken: (callback: () => void) => () => void;
-      onOpenSettings: (callback: () => void) => () => void;
+      onOpenSettings: (callback: (category?: string | null) => void) => () => void;
+      onOpenDashboardTab: (callback: (tab: DashboardTab) => void) => () => void;
       onUsageStatus: (callback: (status: UsageStatus) => void) => () => void;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       onLeaderboardStatus: (callback: (status: LeaderboardStatus) => void) => () => void;
+      onLeaderboardData: (callback: (collection: LeaderboardCollection) => void) => () => void;
       onAchievements: (callback: (state: AchievementState, unlocked: AchievementUnlock[]) => void) => () => void;
       onPreviewAchievementToast: (callback: (id: string) => void) => () => void;
       onAchievementToast: (callback: (payload: { ids?: string[]; items?: TreeToastItem[]; placement: ToastPlacement }) => void) => () => void;

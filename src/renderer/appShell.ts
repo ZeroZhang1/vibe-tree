@@ -18,6 +18,99 @@ export function appShellHtml(viewMode: ViewMode) {
         <button class="pet-hitbox" id="petHitbox" type="button" aria-label="打开管理窗口" data-i18n-aria="openManager"></button>
       </section>
     </main>
+	  `;
+  }
+  if (viewMode === "menubar") {
+    return `
+    <main class="menubar-root" data-weather="clear" data-active="false">
+      <section class="menubar-panel" aria-label="Vibe Tree">
+        <header class="menubar-topbar">
+          <div class="menubar-brand">
+            <p class="eyebrow">Vibe Tree</p>
+            <span class="menubar-lv-chip" id="menubarLevelChip">Lv.1</span>
+          </div>
+          <div class="menubar-weather">
+            <span class="menubar-live-dot" id="menubarLiveDot" aria-hidden="true"></span>
+            <span id="menubarWeatherText">—</span>
+          </div>
+        </header>
+
+        <div class="menubar-hero-growth">
+          <div class="menubar-hero-main">
+            <span class="menubar-hero-label" data-i18n="metricToday">今日成长</span>
+            <strong class="menubar-hero-value" id="menubarTodayText">+0</strong>
+          </div>
+          <div class="menubar-hero-ctx" id="menubarTodayCtx"></div>
+        </div>
+
+        <section class="menubar-progress">
+          <div class="menubar-progress-row">
+            <span id="menubarNextLevelText">距离 Lv.2</span>
+            <strong id="menubarProgressPercent">0%</strong>
+          </div>
+          <div class="source-meter" aria-hidden="true"><span id="menubarProgressBar"></span></div>
+          <p id="menubarProgressText">0 / 0 token</p>
+        </section>
+
+        <div class="menubar-slot">
+          <article class="menubar-viz active" data-viz="rhythm">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarRhythmTitle">24h 节奏</span>
+              <span class="menubar-viz-meta" id="menubarRhythmMeta"></span>
+            </div>
+            <div class="menubar-rhythm-bars" id="menubarRhythmBars" aria-hidden="true"></div>
+            <div class="menubar-rhythm-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="sync">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarSyncTitle">同养小树</span>
+              <button class="menubar-action" id="menubarSyncButton" type="button" data-i18n="menubarSyncAction">同步</button>
+            </div>
+            <div class="menubar-sync-list" id="menubarSyncList"></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="activity">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarActivityTitle">Agent 状态</span>
+              <span class="menubar-viz-meta" id="menubarActivityMeta"></span>
+            </div>
+            <div class="menubar-activity-list" id="menubarActivityList"></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="rank">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="leaderboard">排行榜</span>
+              <button class="menubar-action" id="menubarRankRefreshButton" type="button" data-i18n="refreshLeaderboard">刷新榜单</button>
+            </div>
+            <div class="menubar-rank-list" id="menubarRankList"></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="sources">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarTodaySources">今日来源</span>
+              <span class="menubar-viz-meta" id="menubarSourceSummary"></span>
+            </div>
+            <div class="menubar-source-list" id="menubarSourceList"></div>
+          </article>
+
+          <article class="menubar-viz" data-viz="speed">
+            <div class="menubar-viz-head">
+              <span class="menubar-viz-title" data-i18n="menubarSpeedTitle">实时速率</span>
+              <span class="menubar-viz-meta" id="menubarSpeedMeta"></span>
+            </div>
+            <div class="menubar-wave" id="menubarWave" aria-hidden="true"></div>
+            <div class="menubar-speed-foot">
+              <span id="menubarSpeedWindow">近 5 分钟</span>
+              <span class="menubar-speed-peak" id="menubarSpeedPeak"></span>
+              <strong id="menubarSpeedTotal">+0</strong>
+            </div>
+          </article>
+        </div>
+
+        <div class="menubar-dots" id="menubarDots" role="tablist" aria-label="可视化切换"></div>
+      </section>
+    </main>
   `;
   }
   if (viewMode === "manager") {
@@ -330,6 +423,7 @@ export function appShellHtml(viewMode: ViewMode) {
           <div class="settings-layout">
             <nav class="settings-nav" id="settingsNav" role="tablist" aria-label="设置分类" data-i18n-aria="settingsCategoriesAria">
               <button id="settingsCategoryBasicTab" type="button" role="tab" aria-selected="true" aria-controls="settingsCategoryBasic" data-settings-category-button="basic" data-i18n="settingsCategoryBasic">基础</button>
+              <button id="settingsCategoryMenubarTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategoryMenubar" data-settings-category-button="menubar" data-i18n="settingsCategoryMenubar">浮窗</button>
               <button id="settingsCategorySyncTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategorySync" data-settings-category-button="sync" data-i18n="settingsCategorySync">同步</button>
               <button id="settingsCategoryUpdatesTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategoryUpdates" data-settings-category-button="updates" data-i18n="settingsCategoryUpdates">更新</button>
               <button id="settingsCategorySourcesTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategorySources" data-settings-category-button="sources" data-i18n="settingsCategorySources">路径</button>
@@ -442,6 +536,14 @@ export function appShellHtml(viewMode: ViewMode) {
                       <small data-i18n="themeSoftNote">暖色低对比，看起来更柔和</small>
                     </button>
                   </div>
+                </section>
+              </div>
+
+              <div class="settings-category-panel" id="settingsCategoryMenubar" role="tabpanel" aria-labelledby="settingsCategoryMenubarTab" data-settings-category-panel="menubar" hidden>
+                <section class="settings-section">
+                  <h4 data-i18n="settingsMenubarTitle">菜单栏浮窗组件</h4>
+                  <p class="settings-hint" data-i18n="settingsMenubarHint">勾选要在菜单栏浮窗显示的组件，用箭头调整顺序。至少保留一个。</p>
+                  <div class="menubar-component-list" id="menubarComponentList"></div>
                 </section>
               </div>
 
