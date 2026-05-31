@@ -54,6 +54,7 @@ declare global {
       saveShareImage: (input: { filename: string; pngBase64: string }) => Promise<{ canceled: boolean; filePath?: string }>;
       showManager: () => Promise<void>;
       openManagerSettings: () => Promise<void>;
+      openMenubarComponentSettings: () => Promise<void>;
       openManagerTab: (tab: DashboardTab) => Promise<void>;
       toggleMenuBarPopover: () => Promise<void>;
       hideMenuBarPopover: () => Promise<void>;
@@ -64,7 +65,7 @@ declare global {
       onLedger: (callback: (ledger: LedgerFile) => void) => () => void;
       onExpanded: (callback: (expanded: boolean) => void) => () => void;
       onOpenAddToken: (callback: () => void) => () => void;
-      onOpenSettings: (callback: () => void) => () => void;
+      onOpenSettings: (callback: (category?: string | null) => void) => () => void;
       onOpenDashboardTab: (callback: (tab: DashboardTab) => void) => () => void;
       onUsageStatus: (callback: (status: UsageStatus) => void) => () => void;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;

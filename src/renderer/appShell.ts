@@ -326,6 +326,7 @@ export function appShellHtml(viewMode: ViewMode) {
           <div class="settings-layout">
             <nav class="settings-nav" id="settingsNav" role="tablist" aria-label="设置分类" data-i18n-aria="settingsCategoriesAria">
               <button id="settingsCategoryBasicTab" type="button" role="tab" aria-selected="true" aria-controls="settingsCategoryBasic" data-settings-category-button="basic" data-i18n="settingsCategoryBasic">基础</button>
+              <button id="settingsCategoryMenubarTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategoryMenubar" data-settings-category-button="menubar" data-i18n="settingsCategoryMenubar">浮窗</button>
               <button id="settingsCategorySyncTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategorySync" data-settings-category-button="sync" data-i18n="settingsCategorySync">同步</button>
               <button id="settingsCategoryUpdatesTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategoryUpdates" data-settings-category-button="updates" data-i18n="settingsCategoryUpdates">更新</button>
               <button id="settingsCategorySourcesTab" type="button" role="tab" aria-selected="false" aria-controls="settingsCategorySources" data-settings-category-button="sources" data-i18n="settingsCategorySources">路径</button>
@@ -438,6 +439,14 @@ export function appShellHtml(viewMode: ViewMode) {
                       <small data-i18n="themeSoftNote">暖色低对比，看起来更柔和</small>
                     </button>
                   </div>
+                </section>
+              </div>
+
+              <div class="settings-category-panel" id="settingsCategoryMenubar" role="tabpanel" aria-labelledby="settingsCategoryMenubarTab" data-settings-category-panel="menubar" hidden>
+                <section class="settings-section">
+                  <h4 data-i18n="settingsMenubarTitle">菜单栏浮窗组件</h4>
+                  <p class="settings-hint" data-i18n="settingsMenubarHint">勾选要在菜单栏浮窗显示的组件，用箭头调整顺序。至少保留一个。</p>
+                  <div class="menubar-component-list" id="menubarComponentList"></div>
                 </section>
               </div>
 

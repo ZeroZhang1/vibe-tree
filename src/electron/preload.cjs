@@ -35,6 +35,7 @@ const api = {
   saveShareImage: (input) => ipcRenderer.invoke("share:save-image", input),
   showManager: () => ipcRenderer.invoke("window:show-manager"),
   openManagerSettings: () => ipcRenderer.invoke("window:open-settings"),
+  openMenubarComponentSettings: () => ipcRenderer.invoke("window:open-menubar-settings"),
   openManagerTab: (tab) => ipcRenderer.invoke("window:open-manager-tab", tab),
   toggleMenuBarPopover: () => ipcRenderer.invoke("menubar:toggle-popover"),
   hideMenuBarPopover: () => ipcRenderer.invoke("menubar:hide-popover"),
@@ -58,7 +59,7 @@ const api = {
     return () => ipcRenderer.removeListener("bonsai:open-add-token", listener);
   },
   onOpenSettings: (callback) => {
-    const listener = () => callback();
+    const listener = (_event, category) => callback(category);
     ipcRenderer.on("bonsai:open-settings", listener);
     return () => ipcRenderer.removeListener("bonsai:open-settings", listener);
   },

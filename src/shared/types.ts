@@ -144,6 +144,8 @@ export interface Settings {
   silentStartup: boolean;
   proxyUrl?: string;
   enabledSourceIds: string[];
+  // Ordered list of visible menu bar popover component ids, in display order.
+  menubarVizIds: string[];
   windowPosition?: {
     x: number;
     y: number;

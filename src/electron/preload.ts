@@ -61,6 +61,7 @@ const api = {
     ipcRenderer.invoke("share:save-image", input) as Promise<{ canceled: boolean; filePath?: string }>,
   showManager: () => ipcRenderer.invoke("window:show-manager") as Promise<void>,
   openManagerSettings: () => ipcRenderer.invoke("window:open-settings") as Promise<void>,
+  openMenubarComponentSettings: () => ipcRenderer.invoke("window:open-menubar-settings") as Promise<void>,
   openManagerTab: (tab: "home" | "achievements" | "leaderboard") =>
     ipcRenderer.invoke("window:open-manager-tab", tab) as Promise<void>,
   toggleMenuBarPopover: () => ipcRenderer.invoke("menubar:toggle-popover") as Promise<void>,
@@ -84,8 +85,8 @@ const api = {
     ipcRenderer.on("bonsai:open-add-token", listener);
     return () => ipcRenderer.removeListener("bonsai:open-add-token", listener);
   },
-  onOpenSettings: (callback: () => void) => {
-    const listener = () => callback();
+  onOpenSettings: (callback: (category?: string | null) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, category?: string | null) => callback(category);
     ipcRenderer.on("bonsai:open-settings", listener);
     return () => ipcRenderer.removeListener("bonsai:open-settings", listener);
   },

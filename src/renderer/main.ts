@@ -339,6 +339,7 @@ const settingsCloseButton = document.querySelector<HTMLButtonElement>("#settings
 const settingsBackdrop = document.querySelector<HTMLElement>("#settingsBackdrop");
 const settingsModal = document.querySelector<HTMLElement>("#settingsModal");
 const settingsNav = document.querySelector<HTMLElement>("#settingsNav");
+const menubarComponentList = document.querySelector<HTMLElement>("#menubarComponentList");
 const scaleSelect = document.querySelector<HTMLSelectElement>("#scaleSelect");
 const fontScaleSelect = document.querySelector<HTMLSelectElement>("#fontScaleSelect");
 const launchOnStartupInput = document.querySelector<HTMLInputElement>("#launchOnStartupInput");
@@ -381,7 +382,7 @@ const treeStartFeedback = document.querySelector<HTMLElement>("#treeStartFeedbac
 const treeStartTreeImage = document.querySelector<HTMLImageElement>("#treeStartTreeImage");
 const cloudSyncStatusText = document.querySelector<HTMLElement>("#cloudSyncStatusText");
 const cloudSyncActionButton = document.querySelector<HTMLButtonElement>("#cloudSyncActionButton");
-const SETTINGS_CATEGORY_IDS = ["basic", "sync", "updates", "sources"] as const;
+const SETTINGS_CATEGORY_IDS = ["basic", "menubar", "sync", "updates", "sources"] as const;
 type SettingsCategory = (typeof SETTINGS_CATEGORY_IDS)[number];
 let activeSettingsCategory: SettingsCategory = "basic";
 const cloudSyncDeviceList = document.querySelector<HTMLElement>("#cloudSyncDeviceList");
@@ -590,7 +591,13 @@ function bindMenubarEvents() {
   });
   if (menubarDots) {
     menubarDots.addEventListener("click", (event) => {
-      const dot = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-viz-index]");
+      const target = event.target as HTMLElement;
+      // Trailing "+" jumps to the dashboard settings where components are managed.
+      if (target.closest("#menubarVizAdd")) {
+        void window.bonsai.openMenubarComponentSettings();
+        return;
+      }
+      const dot = target.closest<HTMLButtonElement>("[data-viz-index]");
       if (!dot) return;
       const index = Number(dot.dataset.vizIndex);
       if (Number.isInteger(index)) setMenubarViz(index);
@@ -870,7 +877,13 @@ async function boot() {
 
   bindEvents();
   if (viewMode === "manager") {
-    window.bonsai.onOpenSettings(() => setSettingsOpen(true));
+    bindMenubarComponentSettings();
+    window.bonsai.onOpenSettings((category) => {
+      setSettingsOpen(true);
+      if (category != null && isSettingsCategory(category)) {
+        activateSettingsCategory(category);
+      }
+    });
     window.bonsai.onOpenDashboardTab((tab) => {
       dashboardTab = tab;
       setSettingsOpen(false);
@@ -896,6 +909,8 @@ async function boot() {
     ledger = nextLedger;
     appLanguage = normalizeLanguage(ledger.settings.language);
     applyI18n();
+    // The visible component set lives in settings; rebuild the pager when it changes.
+    if (viewMode === "menubar") refreshMenubarViz();
     render();
   });
   window.bonsai.onUsageStatus((nextStatus) => {
@@ -1736,7 +1751,10 @@ async function syncLeaderboard(options: { force?: boolean } = {}) {
 
 function setSettingsOpen(open: boolean) {
   if (!settingsModal) return;
-  if (open) activateSettingsCategory(activeSettingsCategory);
+  if (open) {
+    activateSettingsCategory(activeSettingsCategory);
+    renderMenubarComponentSettings();
+  }
   settingsModal.classList.toggle("open", open);
   settingsModal.setAttribute("aria-hidden", String(!open));
 }
@@ -1764,6 +1782,94 @@ function focusAdjacentSettingsCategory(offset: 1 | -1) {
   const nextCategory = SETTINGS_CATEGORY_IDS[nextIndex];
   activateSettingsCategory(nextCategory);
   document.querySelector<HTMLButtonElement>(`[data-settings-category-button="${nextCategory}"]`)?.focus();
+}
+
+// Visible components first (in saved order), then the hidden ones in default order.
+function orderedMenubarComponentsForSettings(): { id: MenubarVizId; visible: boolean }[] {
+  const visible = menubarVisibleIds();
+  const visibleSet = new Set(visible);
+  const hidden = MENUBAR_VIZ_IDS.filter((id) => !visibleSet.has(id));
+  return [
+    ...visible.map((id) => ({ id, visible: true })),
+    ...hidden.map((id) => ({ id, visible: false })),
+  ];
+}
+
+function renderMenubarComponentSettings() {
+  if (!menubarComponentList) return;
+  const rows = orderedMenubarComponentsForSettings();
+  const visibleCount = rows.filter((row) => row.visible).length;
+  menubarComponentList.innerHTML = rows
+    .map((row, index) => {
+      const label = escapeHtml(t(MENUBAR_VIZ_LABEL_KEYS[row.id]));
+      // Keep at least one: the last remaining visible component can't be unchecked.
+      const lockOff = row.visible && visibleCount <= 1;
+      // Reorder only applies within the visible block.
+      const prevVisible = index > 0 && rows[index - 1].visible;
+      const nextVisible = index + 1 < rows.length && rows[index + 1].visible;
+      const canUp = row.visible && prevVisible;
+      const canDown = row.visible && nextVisible;
+      const lockTitle = lockOff ? ` title="${escapeHtml(t("settingsMenubarKeepOne"))}"` : "";
+      return `
+        <div class="menubar-component-row${row.visible ? "" : " is-hidden"}" data-viz-id="${row.id}">
+          <label class="menubar-component-toggle"${lockTitle}>
+            <input type="checkbox" data-menubar-toggle="${row.id}"${row.visible ? " checked" : ""}${lockOff ? " disabled" : ""} />
+            <span>${label}</span>
+          </label>
+          <div class="menubar-component-actions">
+            <button type="button" class="menubar-component-move" data-menubar-move="up" data-viz-id="${row.id}" aria-label="${escapeHtml(t("settingsMenubarMoveUp"))}"${canUp ? "" : " disabled"}>↑</button>
+            <button type="button" class="menubar-component-move" data-menubar-move="down" data-viz-id="${row.id}" aria-label="${escapeHtml(t("settingsMenubarMoveDown"))}"${canDown ? "" : " disabled"}>↓</button>
+          </div>
+        </div>`;
+    })
+    .join("");
+}
+
+async function updateMenubarVizIds(next: MenubarVizId[]) {
+  if (next.length === 0) return;
+  ledger = await window.bonsai.updateSettings({ menubarVizIds: next });
+  renderMenubarComponentSettings();
+}
+
+function toggleMenubarComponent(id: MenubarVizId, on: boolean) {
+  const current = menubarVisibleIds();
+  if (on) {
+    if (current.includes(id)) return;
+    // Add back in canonical position relative to other visible items.
+    const next = MENUBAR_VIZ_IDS.filter((vizId) => vizId === id || current.includes(vizId));
+    void updateMenubarVizIds([...next]);
+  } else {
+    if (current.length <= 1) return;
+    void updateMenubarVizIds(current.filter((vizId) => vizId !== id));
+  }
+}
+
+function moveMenubarComponent(id: MenubarVizId, direction: "up" | "down") {
+  const current = menubarVisibleIds();
+  const index = current.indexOf(id);
+  if (index < 0) return;
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (target < 0 || target >= current.length) return;
+  const next = [...current];
+  [next[index], next[target]] = [next[target], next[index]];
+  void updateMenubarVizIds(next);
+}
+
+function bindMenubarComponentSettings() {
+  if (!menubarComponentList) return;
+  menubarComponentList.addEventListener("change", (event) => {
+    const input = (event.target as HTMLElement).closest<HTMLInputElement>("[data-menubar-toggle]");
+    if (!input) return;
+    const id = input.dataset.menubarToggle as MenubarVizId;
+    toggleMenubarComponent(id, input.checked);
+  });
+  menubarComponentList.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-menubar-move]");
+    if (!button || button.disabled) return;
+    const id = button.dataset.vizId as MenubarVizId;
+    const direction = button.dataset.menubarMove === "up" ? "up" : "down";
+    moveMenubarComponent(id, direction);
+  });
 }
 
 async function exportShareImage() {
@@ -2759,8 +2865,28 @@ function render() {
 }
 
 const MENUBAR_VIZ_IDS = ["rhythm", "sync", "activity", "rank", "sources", "speed"] as const;
+type MenubarVizId = (typeof MENUBAR_VIZ_IDS)[number];
+// Map each component id to its existing display-name i18n key (reused from the popover headers).
+const MENUBAR_VIZ_LABEL_KEYS: Record<MenubarVizId, string> = {
+  rhythm: "menubarRhythmTitle",
+  sync: "menubarSyncTitle",
+  activity: "menubarActivityTitle",
+  rank: "leaderboard",
+  sources: "menubarTodaySources",
+  speed: "menubarSpeedTitle",
+};
+
+// Visible components in display order, from settings, validated against the
+// known ids. Falls back to the full set so the popover is never blank.
+function menubarVisibleIds(): MenubarVizId[] {
+  const allowed = new Set<string>(MENUBAR_VIZ_IDS);
+  const stored = ledger?.settings.menubarVizIds;
+  const ids = Array.isArray(stored)
+    ? [...new Set(stored.filter((id): id is MenubarVizId => allowed.has(id)))]
+    : [];
+  return ids.length > 0 ? ids : [...MENUBAR_VIZ_IDS];
+}
 const MENUBAR_SCROLLABLE_SELECTOR = ".menubar-rank-list, .menubar-sync-list, .menubar-activity-list";
-const MENUBAR_VIZ_COUNT = MENUBAR_VIZ_IDS.length;
 const MENUBAR_LEADERBOARD_RANGE: LeaderboardRange = "24h";
 let menubarVizIndex = 0;
 let menubarDragState: { pointerId: number; startX: number; startY: number } | null = null;
@@ -2779,20 +2905,38 @@ function scheduleMenubarRender() {
 
 function buildMenubarDots() {
   if (!menubarDots) return;
-  menubarDots.innerHTML = Array.from({ length: MENUBAR_VIZ_COUNT }, (_unused, index) => {
-    const active = index === menubarVizIndex ? " active" : "";
-    return `<button type="button" class="menubar-dot${active}" role="tab" data-viz-index="${index}" aria-label="${index + 1}"></button>`;
-  }).join("");
+  const visible = menubarVisibleIds();
+  const dots = visible
+    .map((_id, index) => {
+      const active = index === menubarVizIndex ? " active" : "";
+      return `<button type="button" class="menubar-dot${active}" role="tab" data-viz-index="${index}" aria-label="${index + 1}"></button>`;
+    })
+    .join("");
+  // Trailing "+" opens the dashboard settings where components are managed.
+  const add = `<button type="button" class="menubar-dot-add" id="menubarVizAdd" aria-label="${escapeHtml(t("menubarManageComponents"))}" title="${escapeHtml(t("menubarManageComponents"))}">+</button>`;
+  menubarDots.innerHTML = dots + add;
 }
 
 function setMenubarViz(index: number) {
-  menubarVizIndex = ((index % MENUBAR_VIZ_COUNT) + MENUBAR_VIZ_COUNT) % MENUBAR_VIZ_COUNT;
-  document.querySelectorAll<HTMLElement>(".menubar-viz").forEach((panel, panelIndex) => {
-    panel.classList.toggle("active", panelIndex === menubarVizIndex);
+  const visible = menubarVisibleIds();
+  const count = visible.length;
+  menubarVizIndex = ((index % count) + count) % count;
+  const activeId = visible[menubarVizIndex];
+  // DOM keeps all panels in fixed order; show the one whose id is active in the
+  // visible list, hide the rest (including components turned off in settings).
+  document.querySelectorAll<HTMLElement>(".menubar-viz").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.viz === activeId);
   });
   menubarDots?.querySelectorAll<HTMLElement>(".menubar-dot").forEach((dot, dotIndex) => {
     dot.classList.toggle("active", dotIndex === menubarVizIndex);
   });
+}
+
+// Rebuild dots and re-clamp the active page after the visible component set
+// changes (e.g. the user toggled/reordered components in settings).
+function refreshMenubarViz() {
+  buildMenubarDots();
+  setMenubarViz(menubarVizIndex);
 }
 
 function menubarDayTotal(dayKey: string) {

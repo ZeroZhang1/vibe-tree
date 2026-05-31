@@ -77,6 +77,9 @@ const USER_DATA_DIR_OVERRIDE = process.env.VIBE_TREE_USER_DATA_DIR?.trim();
 if (USER_DATA_DIR_OVERRIDE) app.setPath("userData", USER_DATA_DIR_OVERRIDE);
 const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes", "cloud"] as const;
 const LOCAL_STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
+// Menu bar popover components, in their canonical default order. Must mirror
+// MENUBAR_VIZ_IDS in the renderer.
+const MENUBAR_VIZ_IDS = ["rhythm", "sync", "activity", "rank", "sources", "speed"] as const;
 const APP_ICON_PATHS = [
   join(__dirname, "../renderer/assets/app-icon.png"),
   join(__dirname, "../renderer/assets/app-icon.ico"),
@@ -114,6 +117,7 @@ const DEFAULT_SETTINGS: Settings = {
   silentStartup: false,
   proxyUrl: undefined,
   enabledSourceIds: [...STAT_SOURCE_IDS],
+  menubarVizIds: [...MENUBAR_VIZ_IDS],
   windowPosition: undefined,
 };
 
@@ -135,6 +139,7 @@ let petWindow: BrowserWindow | null = null;
 let managerWindow: BrowserWindow | null = null;
 let managerRendererReady = false;
 let pendingOpenSettings = false;
+let pendingSettingsCategory: string | null = null;
 let pendingDashboardTab: "home" | "achievements" | "leaderboard" | null = null;
 let menuBarWindow: BrowserWindow | null = null;
 let achievementToastWindow: BrowserWindow | null = null;
@@ -458,7 +463,13 @@ function readDeviceSettings(legacySettings: Partial<Settings> | undefined, hasLo
     settings = normalizeSettings({ ...settings, treeStartMode: "new" });
     migratedTreeStartMode = true;
   }
-  if (!stored || stored.language === undefined || stored.enabledSourceIds === undefined || migratedTreeStartMode) {
+  if (
+    !stored ||
+    stored.language === undefined ||
+    stored.enabledSourceIds === undefined ||
+    stored.menubarVizIds === undefined ||
+    migratedTreeStartMode
+  ) {
     writeDeviceSettings(settings);
   }
   return settings;
@@ -593,6 +604,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     silentStartup: Boolean(settings.silentStartup),
     proxyUrl: cleanProxyUrl(settings.proxyUrl),
     enabledSourceIds: normalizeEnabledSourceIds(settings.enabledSourceIds),
+    menubarVizIds: normalizeMenubarVizIds(settings.menubarVizIds),
     scale,
     badgeFrontMetric: normalizeBadgeMetric(settings.badgeFrontMetric, "level"),
     badgeBackMetric: normalizeBadgeMetric(settings.badgeBackMetric, "total"),
@@ -661,6 +673,16 @@ function normalizeEnabledSourceIds(value: unknown): string[] {
   if (hadAllLegacySources && !normalized.includes("pi")) normalized.splice(2, 0, "pi");
   if (!normalized.includes("cloud")) normalized.push("cloud");
   return normalized;
+}
+
+// Visible menu bar components, in order. Drops unknown ids, de-dupes, and
+// falls back to the full default set when the result would be empty so the
+// popover is never blank.
+function normalizeMenubarVizIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...MENUBAR_VIZ_IDS];
+  const allowed = new Set<string>(MENUBAR_VIZ_IDS);
+  const normalized = [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))];
+  return normalized.length > 0 ? normalized : [...MENUBAR_VIZ_IDS];
 }
 
 function cleanProxyUrl(value: unknown) {
@@ -1147,8 +1169,9 @@ function showManager() {
   refreshTrayMenu();
 }
 
-function openManagerSettings() {
+function openManagerSettings(category?: string) {
   pendingOpenSettings = true;
+  pendingSettingsCategory = category ?? null;
   showManager();
   flushManagerCommands();
 }
@@ -1166,8 +1189,9 @@ function flushManagerCommands() {
     pendingDashboardTab = null;
   }
   if (pendingOpenSettings) {
-    managerWindow.webContents.send("bonsai:open-settings");
+    managerWindow.webContents.send("bonsai:open-settings", pendingSettingsCategory);
     pendingOpenSettings = false;
+    pendingSettingsCategory = null;
   }
 }
 
@@ -1314,7 +1338,7 @@ function showPetContextMenu() {
   const menu = Menu.buildFromTemplate([
     {
       label: mainText("openSettings"),
-      click: openManagerSettings,
+      click: () => openManagerSettings(),
     },
     {
       label: ledger.settings.locked ? mainText("unlockPet") : mainText("lockPet"),
@@ -1407,7 +1431,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     {
       label: mainText("openSettings"),
-      click: openManagerSettings,
+      click: () => openManagerSettings(),
     },
     {
       label: mainText("recoverPet"),
@@ -3019,6 +3043,9 @@ ipcMain.handle("window:show-manager", () => {
 });
 ipcMain.handle("window:open-settings", () => {
   openManagerSettings();
+});
+ipcMain.handle("window:open-menubar-settings", () => {
+  openManagerSettings("menubar");
 });
 ipcMain.handle("window:open-manager-tab", (_event, tab: unknown) => {
   if (tab !== "home" && tab !== "achievements" && tab !== "leaderboard") return;
