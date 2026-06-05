@@ -28,6 +28,7 @@ import {
   startClaudeSessionWatcher,
   startGeminiSessionWatcher,
   startHermesSessionWatcher,
+  startKimiSessionWatcher,
   startOpenClawSessionWatcher,
   startOpenCodeSessionWatcher,
   startPiSessionWatcher,
@@ -75,7 +76,7 @@ const APP_ID = "com.vibetree.app";
 const SMOKE_TEST = process.env.VIBE_TREE_SMOKE_TEST === "1";
 const USER_DATA_DIR_OVERRIDE = process.env.VIBE_TREE_USER_DATA_DIR?.trim();
 if (USER_DATA_DIR_OVERRIDE) app.setPath("userData", USER_DATA_DIR_OVERRIDE);
-const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes", "cloud"] as const;
+const STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes", "kimi", "cloud"] as const;
 const LOCAL_STAT_SOURCE_IDS = ["codex", "openclaw", "pi", "opencode", "claude", "gemini", "hermes"] as const;
 // Menu bar popover components, in their canonical default order. Must mirror
 // MENUBAR_VIZ_IDS in the renderer.
@@ -170,6 +171,7 @@ let piSessionWatcher: ReturnType<typeof startPiSessionWatcher> | null = null;
 let opencodeSessionWatcher: ReturnType<typeof startOpenCodeSessionWatcher> | null = null;
 let geminiSessionWatcher: ReturnType<typeof startGeminiSessionWatcher> | null = null;
 let hermesSessionWatcher: ReturnType<typeof startHermesSessionWatcher> | null = null;
+let kimiSessionWatcher: ReturnType<typeof startKimiSessionWatcher> | null = null;
 let codexSessionStatus: UsageStatus["codexSession"] = {
   running: false,
   sessionsRoot: "",
@@ -219,6 +221,14 @@ let geminiSessionStatus: UsageStatus["geminiSession"] = {
   importHistory: false,
 };
 let hermesSessionStatus: UsageStatus["hermesSession"] = {
+  running: false,
+  sessionsRoot: "",
+  exists: false,
+  filesWatched: 0,
+  eventsImported: 0,
+  importHistory: false,
+};
+let kimiSessionStatus: UsageStatus["kimiSession"] = {
   running: false,
   sessionsRoot: "",
   exists: false,
@@ -621,6 +631,7 @@ function normalizeSettings(settings: Partial<Settings>): Settings {
     opencodeSessionsDir: cleanPath(settings.opencodeSessionsDir),
     geminiSessionsDir: cleanPath(settings.geminiSessionsDir),
     hermesSessionsDir: cleanPath(settings.hermesSessionsDir),
+    kimiSessionsDir: cleanPath(settings.kimiSessionsDir),
   };
 }
 
@@ -1499,6 +1510,10 @@ function refreshTrayMenu() {
       label: sourceStatusLabel("Hermes", hermesSessionStatus, "hermes-session"),
       enabled: false,
     },
+    {
+      label: sourceStatusLabel("Kimi Code", kimiSessionStatus, "kimi-session"),
+      enabled: false,
+    },
     { type: "separator" },
     {
       label: mainText("petSize"),
@@ -1729,7 +1744,8 @@ function updateSettings(partial: Partial<Settings>) {
     previous.piSessionsDir !== ledger.settings.piSessionsDir ||
     previous.opencodeSessionsDir !== ledger.settings.opencodeSessionsDir ||
     previous.geminiSessionsDir !== ledger.settings.geminiSessionsDir ||
-    previous.hermesSessionsDir !== ledger.settings.hermesSessionsDir
+    previous.hermesSessionsDir !== ledger.settings.hermesSessionsDir ||
+    previous.kimiSessionsDir !== ledger.settings.kimiSessionsDir
   ) {
     restartUsageWatchers();
   }
@@ -2151,6 +2167,7 @@ function getUsageStatus(): UsageStatus {
     opencodeSession: opencodeSessionStatus,
     geminiSession: geminiSessionStatus,
     hermesSession: hermesSessionStatus,
+    kimiSession: kimiSessionStatus,
   };
 }
 
@@ -2899,6 +2916,16 @@ function startUsageWatchers() {
       broadcast("bonsai:usage-status", getUsageStatus());
     },
   });
+  kimiSessionWatcher = startKimiSessionWatcher({
+    ...common,
+    sessionsRoot: ledger.settings.kimiSessionsDir,
+    onUsage: appendUsageEvent,
+    onStatus: (status) => {
+      kimiSessionStatus = status;
+      refreshTrayMenu();
+      broadcast("bonsai:usage-status", getUsageStatus());
+    },
+  });
 }
 
 function stopUsageWatchers() {
@@ -2909,6 +2936,7 @@ function stopUsageWatchers() {
   opencodeSessionWatcher?.close();
   geminiSessionWatcher?.close();
   hermesSessionWatcher?.close();
+  kimiSessionWatcher?.close();
   codexSessionWatcher = null;
   claudeSessionWatcher = null;
   openclawSessionWatcher = null;
@@ -2916,6 +2944,7 @@ function stopUsageWatchers() {
   opencodeSessionWatcher = null;
   geminiSessionWatcher = null;
   hermesSessionWatcher = null;
+  kimiSessionWatcher = null;
 }
 
 function restartUsageWatchers() {
